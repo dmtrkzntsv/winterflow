@@ -25,6 +25,15 @@ func main() {
 		}
 		return
 	}
+	// Hidden subcommand for local development (make generate-agent-certs): a
+	// CA-signed agent certificate for a given server id.
+	if len(os.Args) > 1 && os.Args[1] == "dev-agent-cert" {
+		if err := runDevAgentCert(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	// Hidden subcommand for the hub installer: redeem a join token for the
 	// hub's certificate (exit 2: the control plane refused the token).
 	if len(os.Args) > 1 && os.Args[1] == "join" {

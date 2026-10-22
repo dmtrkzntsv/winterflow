@@ -450,18 +450,6 @@ func (c *ServerConfig) GetIngressTrustedProxies() []string {
 	return out
 }
 
-func (c *ServerConfig) GetHubCASubject() string {
-	return os.Getenv("HUB_CA_SUBJECT")
-}
-
-func (c *ServerConfig) GetHubServerSubject() string {
-	return os.Getenv("HUB_SERVER_SUBJECT")
-}
-
-func (c *ServerConfig) GetHubCertExtPath() string {
-	return os.Getenv("HUB_CERT_EXT_PATH")
-}
-
 func (c *ServerConfig) GetHubCertDir() string {
 	return os.Getenv("HUB_CERT_DIR")
 }
@@ -490,14 +478,6 @@ func (c *ServerConfig) GetHubCertPath() string {
 	return path.Join(c.GetHubCertDir(), c.GetHubCertFilename())
 }
 
-func (c *ServerConfig) GetHubCSRFilename() string {
-	return "hub.csr"
-}
-
-func (c *ServerConfig) GetHubFullchainFilename() string {
-	return "hub_fullchain.crt"
-}
-
 func (c *ServerConfig) GetHubKeyFilename() string {
 	return "hub.key"
 }
@@ -520,10 +500,6 @@ func (c *ServerConfig) GetAgentKeyFilename() string {
 
 func (c *ServerConfig) GetAgentKeyPath() string {
 	return path.Join(c.GetHubCertDir(), c.GetAgentKeyFilename())
-}
-
-func (c *ServerConfig) GetAgentCSRFilename() string {
-	return "agent.csr"
 }
 
 // GetAgentCACertPath returns the path to the CA certificate the agent uses to

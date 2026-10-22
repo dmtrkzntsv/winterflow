@@ -512,3 +512,80 @@ None of this applies to standalone (in-process bridge, one built-in agent).
 - How the shared-helper sync test marks the shared blocks.
 - Contract tests, OpenAPI, `.env.example` updates follow the repo rules
   (CLAUDE.md).
+
+## Part C — certificate hardening (added 2026-10-21)
+
+From a review of certificate generation and use. Decided with the owner:
+fix the two real weaknesses, tighten constraints, tell operators to back up
+the CA, and remove the legacy standalone certificate code. Renewal / CA
+rollover and an offline root are separate later projects.
+
+**Hub certificate pinning and revocation.** Agents today trust any
+CA-signed server certificate for the hub name they dial, so a leaked hub key
+is valid for 10 years and re-joining does not invalidate it.
+- The API records every hub certificate it trusts in a `hub_certificates`
+  table (`fingerprint` PK = lowercase hex SHA-256 of the DER, `hub_id`,
+  `created_at`, `retired_at` NULL).
+- A joined hub's certificate is recorded when `POST /api/v1/hub/enroll`
+  issues it; issuing a new one for the same hub id retires the older ones.
+- The control plane's own hub certificate (made locally by `winterflow-hub
+  pki`) is recorded by a new hidden `winterflow-api hub-trust --cert <path>`
+  command that the control-plane installer runs after `pki` (idempotent; it
+  retires older certificates of that hub id).
+- `winterflow-api hub-retire --hub <id> | --fingerprint <fp>` retires
+  certificates by hand (a leaked key, a removed hub).
+- The active set (all non-retired fingerprints; a handful) is returned as
+  `hub_fingerprints` in the enrollment `status` answer (claimed) and in every
+  `POST /api/v1/agent/hub` answer. The agent stores it next to the hub
+  address in `hub.json` (enrollment writes it too).
+- The agent's TLS config checks, after normal CA verification, that the
+  hub's leaf certificate fingerprint is in the stored set. A mismatch fails
+  the connection and makes the agent ask the API (same 30 s floor) to refresh
+  the set; while connected it also refreshes every 6 hours, so a retired
+  certificate stops being accepted within 6 hours. An answer holding an
+  entry that is not a 64-character hex fingerprint is ignored (the stored
+  set is kept).
+- The agent also asks at start, before its first connection (unless the API
+  answered within the 30 s floor, so a restart loop does not hammer it), so
+  an agent that was down while a certificate was retired does not use the
+  stale set. `hub.json` keeps the time of the last answer (`refreshed_at`),
+  and the 6-hour refresh is counted from it, so restarts do not reset it.
+- Pinned is sticky: `hub.json` carries `pinned: true` once a non-empty set
+  was stored (by enrollment or any ask; a file written before the flag that
+  holds a set reads as pinned). From then on an empty set means "trust no
+  hub": every hub certificate is refused, a connected agent drops its
+  stream, and the agent keeps asking (30 s floor) until the API names a
+  certificate again. So retiring every active certificate never falls back
+  to CA-only checks that a leaked key would pass. Enrollment starts the
+  state over (pinned only when its claimed set is not empty).
+- An agent that has never been pinned (installed before Part C, or under an
+  API that trusts no hub certificate yet) keeps CA-only verification (plus
+  the hub marker) and fetches the set on its next ask.
+
+**Hub-only certificates.** The Redis certificate and a hub certificate are
+both CA-signed server certificates, and Redis's carries the host's own name,
+so the Redis key could pose as the control plane's hub.
+- Hub certificates (both `EnsureHubPKI`'s and `SignHubCSR`'s) carry a URI SAN
+  `winterflow-hub:<hub_id>`; agents require it (in addition to the
+  fingerprint pin). Rerunning `pki` reissues an existing hub certificate that
+  lacks it.
+- The Redis certificate no longer lists the host's own name unless it is
+  given with `--redis-host`.
+
+**Constraints.** The CA gets `MaxPathLen 0`; issued certificates never
+outlive the CA (`NotAfter` capped at the CA's); CA creation is atomic;
+`winterflow-agent enroll` checks its certificate chains to the returned CA.
+
+**Backups.** The control-plane installer's finish message and the docs name
+`/var/lib/winterflow-control/pki/ca.key` and `ca.crt` as the files to back
+up; losing them means re-joining every hub and re-enrolling every agent.
+
+**Standalone and legacy code.** Standalone only needs the agent key (for
+secrets) and a certificate for its server row; it regenerated a CA on every
+boot because the extension file it expects never exists. Standalone gets an
+atomic `EnsureAgentIdentity` (P-256 key + self-signed certificate with
+CN = server id, created once, kept); the legacy `Generator`/`Manager`, the
+`HUB_CA_SUBJECT` / `HUB_SERVER_SUBJECT` / `HUB_CERT_EXT_PATH` settings, the
+fullchain and CSR files go, and `make generate-hub-certs` /
+`generate-agent-certs` are replaced by targets that use `winterflow-hub pki`
+and a dev agent certificate signed with CN = a given server id.

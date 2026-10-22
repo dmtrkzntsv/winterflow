@@ -26,6 +26,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	grpcagent "winterflow/internal/infra/transport/grpc/agent"
 )
 
 // Exit codes.
@@ -43,10 +45,14 @@ const maxTransient = 40
 
 type options struct {
 	url, certDir, envOut, hostname string
-	pollEvery                      time.Duration
-	sleep                          func(context.Context, time.Duration)
-	backoff                        func(attempt int) time.Duration
-	out                            io.Writer
+	// dataDir is the agent's AGENT_DATA_DIR: hub.json (the hub and the
+	// trusted hub certificates) goes there. Empty skips it (the agent then
+	// checks the CA and the hub marker only until its first ask).
+	dataDir   string
+	pollEvery time.Duration
+	sleep     func(context.Context, time.Duration)
+	backoff   func(attempt int) time.Duration
+	out       io.Writer
 }
 
 // Main runs the subcommand and returns the process exit code.
@@ -59,6 +65,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&o.certDir, "cert-dir", "", "directory for agent.key, agent.crt and ca.crt (required)")
 	fs.StringVar(&o.envOut, "env-out", "", "file receiving the agent's environment lines (required)")
 	fs.StringVar(&o.hostname, "hostname", host, "name shown next to the code")
+	fs.StringVar(&o.dataDir, "data-dir", "", "the agent's data directory (AGENT_DATA_DIR), receiving hub.json")
 	if err := fs.Parse(args); err != nil {
 		return ExitError
 	}
@@ -237,6 +244,8 @@ func generateKey(path, hostname string) (string, error) {
 var (
 	hostRe     = regexp.MustCompile(`^[A-Za-z0-9.:-]+$`)
 	serverIDRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+	// fingerprintRe is a hub certificate fingerprint: hex SHA-256.
+	fingerprintRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // checkServerValues refuses hub host, port and server id values that are not
@@ -265,12 +274,20 @@ func store(o options, st statusResult, keyPath string) error {
 	if _, err := tls.X509KeyPair([]byte(st.Certificate), keyPEM); err != nil {
 		return fmt.Errorf("the returned certificate does not match this agent's key: %w", err)
 	}
+	if err := verifyChain(st.Certificate, st.CACertificate); err != nil {
+		return err
+	}
 	host, port, err := net.SplitHostPort(st.HubAddr)
 	if err != nil {
 		return fmt.Errorf("invalid hub address %q: %w", st.HubAddr, err)
 	}
 	if err := checkServerValues(host, port, st.ServerID); err != nil {
 		return err
+	}
+	for _, fp := range st.HubFingerprints {
+		if !fingerprintRe.MatchString(strings.ToLower(fp)) {
+			return fmt.Errorf("invalid hub certificate fingerprint %q", fp)
+		}
 	}
 	if err := writeFile(filepath.Join(o.certDir, "ca.crt"), []byte(st.CACertificate), 0o644); err != nil {
 		return err
@@ -279,8 +296,37 @@ func store(o options, st statusResult, keyPath string) error {
 	if err := writeFile(o.envOut, []byte(env), 0o600); err != nil {
 		return err
 	}
+	if o.dataDir != "" {
+		// The hub and the certificates the API trusts for it (atomic, 0600),
+		// replacing any state of an earlier enrollment: the agent is pinned
+		// (an empty set later trusts no hub) only when the set is not empty.
+		if err := grpcagent.NewHubStore(o.dataDir).Reset(host, port, st.HubFingerprints); err != nil {
+			return err
+		}
+	}
 	// The certificate goes last: its presence marks the agent as enrolled.
 	return writeFile(filepath.Join(o.certDir, "agent.crt"), []byte(st.Certificate), 0o644)
+}
+
+// verifyChain checks the agent certificate chains to the returned CA for
+// client authentication.
+func verifyChain(certPEM, caPEM string) error {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return errors.New("the returned certificate is not PEM")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("the returned certificate is invalid: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(caPEM)) {
+		return errors.New("the returned CA certificate is invalid")
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		return fmt.Errorf("the returned certificate does not chain to the returned CA: %w", err)
+	}
+	return nil
 }
 
 // writeFile writes to a temp name beside path and renames it into place.

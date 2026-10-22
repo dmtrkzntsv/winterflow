@@ -44,9 +44,6 @@ func TestSimpleEnvGetters(t *testing.T) {
 		{"GetJwtSecret", "JWT_SECRET", c.GetJwtSecret},
 		{"GetHubHost", "HUB_HOST", c.GetHubHost},
 		{"GetHubPort", "HUB_PORT", c.GetHubPort},
-		{"GetHubCASubject", "HUB_CA_SUBJECT", c.GetHubCASubject},
-		{"GetHubServerSubject", "HUB_SERVER_SUBJECT", c.GetHubServerSubject},
-		{"GetHubCertExtPath", "HUB_CERT_EXT_PATH", c.GetHubCertExtPath},
 		{"GetHubCertDir", "HUB_CERT_DIR", c.GetHubCertDir},
 	}
 	for _, tt := range tests {

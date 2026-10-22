@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -64,7 +66,7 @@ func EnsureHubPKI(dir string, hubHosts []string) (bool, error) {
 		}
 		changed = true
 	}
-	serverChanged, err := EnsureServerCert(dir, "hub", hubHosts)
+	serverChanged, err := ensureServerCert(dir, "hub", hubHosts, []*url.URL{HubURI(hubHosts[0])})
 	if err != nil {
 		return false, err
 	}
@@ -77,6 +79,12 @@ func EnsureHubPKI(dir string, hubHosts []string) (bool, error) {
 // the CA, expired, or when its SANs differ from hosts. It reports whether
 // anything was written.
 func EnsureServerCert(dir, base string, hosts []string) (bool, error) {
+	return ensureServerCert(dir, base, hosts, nil)
+}
+
+// ensureServerCert is EnsureServerCert with URI SANs; a certificate whose URI
+// set differs is reissued too.
+func ensureServerCert(dir, base string, hosts []string, uris []*url.URL) (bool, error) {
 	if len(hosts) == 0 {
 		return false, fmt.Errorf("at least one host is required")
 	}
@@ -87,12 +95,15 @@ func EnsureServerCert(dir, base string, hosts []string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if err := checkCAValid(caCert, time.Now()); err != nil {
+		return false, err
+	}
 	certPath, keyPath := filepath.Join(dir, base+".crt"), filepath.Join(dir, base+".key")
 
 	dns, ips := splitHosts(hosts)
 	if fileExists(certPath) && fileExists(keyPath) {
 		if cur, _, err := loadCertificate(certPath); err == nil &&
-			cur.CheckSignatureFrom(caCert) == nil && sansEqual(cur, dns, ips) && time.Now().Before(cur.NotAfter) {
+			cur.CheckSignatureFrom(caCert) == nil && sansEqual(cur, dns, ips) && urisEqual(cur, uris) && time.Now().Before(cur.NotAfter) {
 			if _, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
 				return false, nil
 			}
@@ -115,12 +126,13 @@ func EnsureServerCert(dir, base string, hosts []string) (bool, error) {
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: hosts[0]},
 		NotBefore:             time.Now().Add(-time.Hour),
-		NotAfter:              time.Now().AddDate(hubPKIValidityYears, 0, 0),
+		NotAfter:              capToCA(time.Now().AddDate(hubPKIValidityYears, 0, 0), caCert),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 		DNSNames:              dns,
 		IPAddresses:           ips,
+		URIs:                  uris,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
@@ -167,13 +179,16 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func createCA(certPath, keyPath string) error {
-	if err := GeneratePrivateKey(keyPath); err != nil {
-		return err
-	}
-	key, err := loadECPrivateKey(keyPath)
+// createCA writes a new CA, key then certificate, each by a rename. A
+// failure leaves neither file, so a half-present CA never results.
+func createCA(certPath, keyPath string) (err error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return err
+		return fmt.Errorf("generate CA key: %w", err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return fmt.Errorf("marshal CA key: %w", err)
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -187,6 +202,8 @@ func createCA(certPath, keyPath string) error {
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 		BasicConstraintsValid: true,
 		IsCA:                  true,
+		MaxPathLen:            0,
+		MaxPathLenZero:        true,
 	}
 	if id, err := subjectKeyID(&key.PublicKey); err == nil {
 		tmpl.SubjectKeyId = id
@@ -195,7 +212,49 @@ func createCA(certPath, keyPath string) error {
 	if err != nil {
 		return fmt.Errorf("create CA certificate: %w", err)
 	}
-	return saveCertificate(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), certPath)
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
+		return fmt.Errorf("create PKI directory: %w", err)
+	}
+	if err := writeFileAtomic(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			os.Remove(keyPath)
+		}
+	}()
+	return writeFileAtomic(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+}
+
+func subjectKeyID(pub crypto.PublicKey) ([]byte, error) {
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, fmt.Errorf("marshal public key: %w", err)
+	}
+	sum := sha1.Sum(pubKeyBytes)
+	return sum[:], nil
+}
+
+func urisEqual(c *x509.Certificate, want []*url.URL) bool {
+	a := make([]string, 0, len(c.URIs))
+	for _, u := range c.URIs {
+		a = append(a, u.String())
+	}
+	b := make([]string, 0, len(want))
+	for _, u := range want {
+		b = append(b, u.String())
+	}
+	sort.Strings(a)
+	sort.Strings(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func fileExists(p string) bool {

@@ -22,6 +22,7 @@ import (
 
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
+	certpkg "winterflow/pkg/cert"
 )
 
 const (
@@ -56,23 +57,33 @@ type Signer interface {
 	CACertPEM() string
 }
 
+// CertTruster records an issued hub certificate as trusted (the Trust
+// slice of port.HubCertRepository).
+type CertTruster interface {
+	Trust(ctx context.Context, hubID, fingerprint string, now time.Time) error
+}
+
+var _ CertTruster = port.HubCertRepository(nil)
+
 // UseCase issues and redeems hub join tokens.
 type UseCase struct {
 	repo   port.HubTokenRepository
+	certs  CertTruster
 	signer Signer
 	live   HubLister
 	now    func() time.Time
 }
 
-// New builds the use case. live is the hub list Redeem checks the new
-// hub's id against (nil only where nothing is redeemed, e.g. the
-// hub-token subcommand: Redeem then refuses every request); a nil now
-// means time.Now.
-func New(repo port.HubTokenRepository, signer Signer, live HubLister, now func() time.Time) *UseCase {
+// New builds the use case. certs records each issued certificate as
+// trusted, and live is the hub list Redeem checks the new hub's id
+// against; both are nil only where nothing is redeemed (the hub-token
+// subcommand: Redeem then refuses every request). A nil now means
+// time.Now.
+func New(repo port.HubTokenRepository, certs CertTruster, signer Signer, live HubLister, now func() time.Time) *UseCase {
 	if now == nil {
 		now = time.Now
 	}
-	return &UseCase{repo: repo, signer: signer, live: live, now: now}
+	return &UseCase{repo: repo, certs: certs, signer: signer, live: live, now: now}
 }
 
 func hashToken(t string) string {
@@ -160,8 +171,14 @@ func validateCSR(csrPEM string) error {
 // Redeem consumes the token and signs the hub's CSR for the host of
 // publicAddr, which is also the hub id. The address and CSR are checked,
 // and the id refused while a live hub uses it (ErrHubLive), before the
-// token is spent, so a typo does not burn it.
+// token is spent, so a typo does not burn it. The signed certificate is
+// recorded as trusted (retiring the hub id's older ones) before it is
+// returned; when that fails the token is already spent and the hub needs
+// a new one.
 func (u *UseCase) Redeem(ctx context.Context, token, csrPEM, publicAddr string) (certPEM, caPEM string, err error) {
+	if u.certs == nil {
+		return "", "", errors.New("no hub certificate registry to record the certificate in")
+	}
 	hubID, err := hubHost(publicAddr)
 	if err != nil {
 		return "", "", err
@@ -182,6 +199,13 @@ func (u *UseCase) Redeem(ctx context.Context, token, csrPEM, publicAddr string) 
 	certPEM, _, err = u.signer.SignHub(csrPEM, hubID, []string{hubID})
 	if err != nil {
 		return "", "", fmt.Errorf("sign hub certificate: %w", err)
+	}
+	fp, err := certpkg.Fingerprint(certPEM)
+	if err != nil {
+		return "", "", fmt.Errorf("fingerprint hub certificate: %w", err)
+	}
+	if err := u.certs.Trust(ctx, hubID, fp, u.now()); err != nil {
+		return "", "", fmt.Errorf("trust hub certificate (the join token is spent): %w", err)
 	}
 	return certPEM, u.signer.CACertPEM(), nil
 }

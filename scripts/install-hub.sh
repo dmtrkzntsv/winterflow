@@ -24,7 +24,11 @@
 #
 # A rerun on a joined hub is an update: no token needed, the certificate and
 # settings are kept (options you pass override the kept settings), the binary
-# is replaced and the service restarted. Stopping the service drains the hub
+# is replaced and the service restarted. A rerun with a token joins again: a
+# new key and certificate replace the old pair and the control plane retires
+# the hub's older certificates (a leaked key). A certificate from before the
+# hub marker (no winterflow-hub: URI, which agents now require) must be
+# reissued this way: such a rerun without a token stops and asks for one. Stopping the service drains the hub
 # first: it tells its agents to move to other hubs and waits up to 2 minutes
 # for them to leave (not at all when no other hub can take them).
 #
@@ -43,8 +47,9 @@
 #
 # Options:
 #   --token TOKEN        One-time join token (wfh_...). Required on the first
-#                        install. WINTERFLOW_HUB_TOKEN in the environment works
-#                        too and keeps it out of the process list.
+#                        install; on a rerun it joins again with a new key.
+#                        WINTERFLOW_HUB_TOKEN in the environment works too and
+#                        keeps it out of the process list.
 #   --public-addr H:P    Address agents dial, host:port (a DNS name or IPv4).
 #                        Its host goes into the hub's certificate and is the
 #                        hub's id. Required on the first install; cannot change
@@ -108,6 +113,7 @@ DRY_RUN=0
 UNINSTALL=0
 PURGE=0
 JOINED=0
+REJOIN=0
 CPU_QUOTA=""
 MEMORY_MAX=""
 
@@ -399,7 +405,20 @@ download_binary() {
 
 # --- Join (certificate) -------------------------------------------------------
 
-enroll() {
+# hub_cert_marked FILE: true when the first certificate in FILE carries the
+# winterflow-hub: URI SAN agents require. The URI is plain bytes in the DER,
+# so decoding the PEM and counting it is enough (no openssl needed; grep -c
+# reads all of its input, so pipefail sees no SIGPIPE).
+hub_cert_marked() {
+    local n
+    n="$(awk '/-----BEGIN CERTIFICATE-----/ { on = 1; next } /-----END CERTIFICATE-----/ { exit } on' "$1" 2>/dev/null \
+        | base64 -d 2>/dev/null | grep -acF 'winterflow-hub:')" || true
+    [ "${n:-0}" -gt 0 ]
+}
+
+# enroll_once: one `winterflow-hub join`. Sets ENROLL_ERR and returns the
+# status on failure; the caller decides whether that ends the install.
+enroll_once() {
     # Make (or keep) the key and redeem the token: `winterflow-hub join`
     # posts the request, checks that the certificate matches the key and
     # chains to the CA, and stores ca.crt and hub.crt. The token reaches it
@@ -409,12 +428,42 @@ enroll() {
         --public-addr "$HUB_PUBLIC_ADDR" --cert-dir "$CERT_DIR" 2>&1)" || st=$?
     case "$st" in
         0) ;;
-        2) die "${out} (a token works once and expires after an hour; ask for a new one)" ;;
-        *) die "joining the control plane failed: ${out}" ;;
+        2) ENROLL_ERR="${out} (a token works once and expires after an hour; ask for a new one)"; return 1 ;;
+        *) ENROLL_ERR="joining the control plane failed: ${out}"; return 1 ;;
     esac
     chown root:"$HUB_USER" "${CERT_DIR}/hub.key" "${CERT_DIR}/hub.crt" "${CERT_DIR}/ca.crt"
     chmod 640 "${CERT_DIR}/hub.key"
     log "$out"
+}
+
+enroll() {
+    enroll_once || die "$ENROLL_ERR"
+}
+
+# rejoin: a running hub announces this host's hub id, which the control plane
+# refuses to reissue while it is live (the refusal does not spend the token).
+# Stop the hub first (stopping drains it and withdraws its entry), join, and
+# start it again whatever the outcome, so the old certificate keeps serving
+# when the join fails. A withdraw that did not happen expires within 90 s, so
+# a "live hub" refusal is retried for up to 100 s.
+rejoin() {
+    local tries=0
+    log "Stopping winterflow-hub (the control plane refuses a new certificate while it is live)"
+    systemctl stop winterflow-hub 2>/dev/null || true
+    while ! enroll_once; do
+        case "$ENROLL_ERR" in
+            *"a live hub already uses this host"*)
+                if [ "$tries" -lt 10 ]; then
+                    tries=$((tries + 1))
+                    log "The hub's entry has not expired yet; retrying in 10 s (${tries}/10)"
+                    sleep 10
+                    continue
+                fi ;;
+        esac
+        log "Starting winterflow-hub again with its previous certificate"
+        systemctl start winterflow-hub 2>/dev/null || true
+        die "$ENROLL_ERR"
+    done
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
@@ -521,13 +570,15 @@ EOF
 render_plan() {
     echo "user: ${HUB_USER} (system user, no login shell)"
     echo "install ${HUB_DEST} (root, 0755)"
-    if [ "$JOINED" -eq 1 ]; then
+    if [ "$JOINED" -eq 1 ] && [ "$REJOIN" -eq 0 ]; then
         echo "joined: ${CERT_DIR}/hub.crt exists; certificate and key kept, no token needed"
     else
+        [ "$REJOIN" -eq 0 ] || echo "rejoin: a new hub.key and hub.crt replace the old pair once the join succeeds; the control plane retires this hub's older certificates"
         echo "${HUB_DEST} join --api-url ${API_URL} --public-addr ${HUB_PUBLIC_ADDR} --cert-dir ${CERT_DIR}   (token on stdin, hidden)"
         echo "  POST ${API_URL}/api/v1/hub/enroll {token, csr, public_addr}; hub.key made here and never sent"
         echo "  checks the certificate matches the key and chains to the CA, then stores ca.crt and hub.crt"
         echo "  ${CERT_DIR}: root:${HUB_USER} 0750; hub.key 0640"
+        [ "$REJOIN" -eq 0 ] || echo "  rejoin: systemctl stop winterflow-hub before the join (the control plane refuses while it is live; retried up to 100 s), systemctl start winterflow-hub if the join fails"
     fi
     echo "systemctl enable winterflow-hub; systemctl restart winterflow-hub (stopping drains first, up to 2 minutes when another hub can take its agents)"
 }
@@ -718,9 +769,13 @@ main() {
     HUB_PORT="${HUB_PORT:-${HUB_PUBLIC_ADDR##*:}}"
     CPU_QUOTA="$(default_cpu_quota)"
     MEMORY_MAX="$(default_memory_max)"
-    if [ "$JOINED" -eq 1 ] && [ -n "$JOIN_TOKEN" ]; then
-        warn "this hub has already joined; the token is not used"
-        JOIN_TOKEN=""
+    if [ "$JOINED" -eq 1 ]; then
+        if [ -n "$JOIN_TOKEN" ]; then
+            # A token on a rerun reissues the key and certificate.
+            REJOIN=1
+        elif ! hub_cert_marked "${CERT_DIR}/hub.crt"; then
+            die "this hub's certificate (${CERT_DIR}/hub.crt) has no winterflow-hub: URI, which agents now require; a join token is required to reissue it: ask the control plane's operator for a hub join token and rerun with --token (or WINTERFLOW_HUB_TOKEN)"
+        fi
     fi
 
     sysd_ver="$(systemctl --version 2>/dev/null | awk 'NR==1{print $2; exit}')"
@@ -777,6 +832,9 @@ main() {
 
     if [ "$JOINED" -eq 0 ]; then
         enroll
+    elif [ "$REJOIN" -eq 1 ]; then
+        log "Joining again with the token: a new key and certificate replace the old pair"
+        rejoin
     else
         log "Already joined (${CERT_DIR}/hub.crt): keeping the certificate"
     fi

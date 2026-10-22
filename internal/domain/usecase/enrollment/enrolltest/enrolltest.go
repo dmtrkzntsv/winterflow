@@ -56,3 +56,11 @@ func (p Picker) Pick(context.Context) (model.Hub, error) { return p.Hub, p.Err }
 
 // DefaultHub is the hub a Picker{Hub: DefaultHub} hands out.
 var DefaultHub = model.Hub{ID: "hub-01.test", PublicAddr: "hub-01.test:443"}
+
+// Pins answers a fixed trusted hub certificate set, or Err when set.
+type Pins struct {
+	Fingerprints []string
+	Err          error
+}
+
+func (p Pins) Active(context.Context) ([]string, error) { return p.Fingerprints, p.Err }

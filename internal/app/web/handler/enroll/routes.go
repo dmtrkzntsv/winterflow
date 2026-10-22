@@ -13,7 +13,6 @@ import (
 // mounts them only where an enrollment usecase is wired.
 func (h *Handler) Routes(g api.Guards) []api.Route {
 	mw := []api.Middleware{g.EnrollLimit}
-	errs := []int{http.StatusBadRequest}
 	return []api.Route{
 		{
 			Method: http.MethodPost, Path: "/api/v1/agent/enroll", Handler: h.Start, Auth: api.Public,
@@ -31,7 +30,10 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 		{
 			Method: http.MethodPost, Path: "/api/v1/agent/enroll/status", Handler: h.Status, Auth: api.Public, Middleware: mw,
 			Summary: "Poll an enrollment; once claimed it carries the signed certificate", Tag: "enroll",
-			Request: PollRequest{}, Response: StatusResponse{}, Errors: errs,
+			Description: "Once claimed, `hub_fingerprints` lists the lowercase hex SHA-256 (of the DER) of " +
+				"every hub certificate the API trusts; the agent pins it. 503 when that set cannot be read (poll again).",
+			Request: PollRequest{}, Response: StatusResponse{},
+			Errors: []int{http.StatusBadRequest, http.StatusServiceUnavailable},
 		},
 	}
 }

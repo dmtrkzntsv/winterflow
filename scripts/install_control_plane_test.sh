@@ -153,12 +153,16 @@ plan="$(section "$out" plan)"
 assert_contains "pki: hub host and redis names" "$plan" "winterflow-hub pki --dir /var/lib/winterflow-control/pki --host hub-01.example.com"
 assert_contains "pki: redis on loopback" "$plan" "--redis-host 127.0.0.1"
 assert_contains "pki: tailscale name" "$plan" "--redis-host cp.tail1234.ts.net"
+fq="$(hostname -f 2>/dev/null || hostname)"
+assert_not_contains "redis_sans_exclude_fqdn_by_default" "$plan" "--redis-host $fq"
 assert_contains "pki: CA key owned by the api user" "$plan" "ca.key: winterflow-api 0600"
 assert_contains "pki: hub gets only the CA cert and its pair" "$plan" "/var/lib/winterflow-control/hub-certs: ca.crt hub.crt hub.key"
 assert_contains "postgres: role created only if absent" "$plan" "create role and database 'winterflow' if absent"
 assert_contains "finish: proxy target" "$out" "127.0.0.1:8090"
 assert_contains "finish: open the hub port" "$out" "TCP 50051"
 assert_contains "finish: url" "$out" "https://flow.example.com"
+assert_contains "finish: back up the CA" "$out" "Back up /var/lib/winterflow-control/pki/ca.key and ca.crt"
+assert_contains "pki: hub-trust step in the plan" "$plan" "winterflow-api hub-trust --cert /var/lib/winterflow-control/pki/hub.crt"
 assert_not_contains "finish: no all-interfaces caveat" "$out" "every interface"
 assert_not_contains "state never under the agent's data dir" "$out" "/var/lib/winterflow/"
 assert_not_contains "state never under the agent's data dir (script)" "$src" '/var/lib/winterflow"'
@@ -286,7 +290,9 @@ exec "$real_install" "\${args[@]}"
 STUB
         printf '#!/bin/sh\necho "systemctl $*" >> "%s/calls"\ncase "$1" in --version) echo "systemd 255";; cat) [ ! -e "%s/no-$2" ] || exit 1;; esac\nexit 0\n' "$r" "$r" > "$bin/systemctl"
         printf '#!/bin/sh\necho "apt-get $*" >> "%s/calls"\nexit 0\n' "$r" > "$bin/apt-get"
-        printf '#!/bin/sh\nshift 3\nexec "$@"\n' > "$bin/runuser"
+        # runuser: logs its argv (a secret must never be in it), then runs
+        # the command after --.
+        printf '#!/bin/sh\necho "runuser $*" >> "%s/runuser-args"\nwhile [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n' "$r" > "$bin/runuser"
         printf '#!/bin/sh\nshift\nexec "$@"\n' > "$bin/timeout"
         printf '#!/bin/sh\necho "Redis server v=7.0.15 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64"\n' > "$bin/redis-server"
         printf '#!/bin/sh\necho PONG\n' > "$bin/redis-cli"
@@ -328,12 +334,31 @@ while [ $# -gt 0 ]; do case "$1" in --dir) dir="$2"; shift 2 ;; *) echo "$1 $2" 
 for f in ca hub redis; do echo "$f cert" > "$dir/$f.crt"; echo "$f key" > "$dir/$f.key"; done
 echo changed
 STUB
-        printf '#!/bin/sh\nexit 0\n' > "$r/r2/winterflow-api-linux-amd64"
+        # fake winterflow-api: only hub-trust. It logs its arguments and the
+        # database it was given; marker files beside the pki dir make it
+        # refuse once as retired (retire-once) or always fail (trust-fail).
+        cat > "$r/r2/winterflow-api-linux-amd64" <<'STUB'
+#!/bin/sh
+if [ "$1" = hub-retire ]; then
+    base="$(dirname "$HUB_CERT_DIR")"
+    echo "$* DATABASE_URL=$DATABASE_URL" >> "$base/hub-retire-calls"
+    if [ -e "$base/retire-fail" ]; then echo "hub-retire: boom"; exit 1; fi
+    if [ -e "$base/retire-none" ]; then echo "hub-retire: no active hub certificate of hub \"$3\" to retire"; exit 1; fi
+    echo "retired 1 hub certificate(s)"; exit 0
+fi
+[ "$1" = hub-trust ] || exit 0
+shift
+cert="$2"; d="$(dirname "$cert")"; base="$(dirname "$d")"
+echo "hub-trust $* DATABASE_URL=$DATABASE_URL HUB_CERT_DIR=$HUB_CERT_DIR cert=$(cat "$cert")" >> "$base/hub-trust-calls"
+if [ -e "$base/trust-fail" ]; then echo "hub-trust: boom"; exit 1; fi
+if [ -e "$base/retire-once" ]; then rm "$base/retire-once"; echo "hub-trust: this hub certificate was retired; issue a new one"; exit 1; fi
+echo "trusted hub certificate"
+STUB
         (cd "$r/r2" && sha256sum winterflow-api-linux-amd64 winterflow-hub-linux-amd64 > SHA256SUMS)
         chmod +x "$bin"/*
         mkdir -p "$r/etc" "$r/usr/local/bin" "$r/etc/systemd/system" "$r/etc/redis" "$r/var/lib/redis"
         printf 'ID=debian\n' > "$r/etc/os-release"
-        : > "$r/calls"; : > "$r/curl-args"; : > "$r/curl-stdin"
+        : > "$r/calls"; : > "$r/curl-args"; : > "$r/curl-stdin"; : > "$r/runuser-args"
     }
     run_cp() {
         # run_cp ROOT [args] -> output in RUN_OUT, status in RUN_STATUS
@@ -380,6 +405,17 @@ STUB
     assert_contains "real run: services restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-api winterflow-hub"
     assert_not_contains "real run: nothing installed with apt" "$(cat "$r1/calls")" "apt-get install"
     assert_contains "real run: finish names the proxy target" "$RUN_OUT" "127.0.0.1:8080"
+    assert_contains "real run: finish says to back up the CA" "$RUN_OUT" "Back up $r1/var/lib/winterflow-control/pki/ca.key and ca.crt"
+    assert_contains "real run: finish says what losing the CA costs" "$RUN_OUT" "re-joining every hub and re-enrolling every agent"
+    trust_calls="$(cat "$r1/var/lib/winterflow-control/hub-trust-calls")"
+    assert_contains "real run: hub-trust on the hub certificate" "$trust_calls" "hub-trust --cert $r1/var/lib/winterflow-control/pki/hub.crt"
+    assert_contains "real run: hub-trust gets the API database" "$trust_calls" "DATABASE_URL=postgres://winterflow:${pg_pw}@127.0.0.1:5432/winterflow"
+    assert_contains "real run: hub-trust gets the CA dir" "$trust_calls" "HUB_CERT_DIR=$r1/var/lib/winterflow-control/pki"
+    [ "$(grep -c . "$r1/var/lib/winterflow-control/hub-trust-calls")" -eq 1 ] && pass "real run: hub-trust runs once" || fail "real run: hub-trust runs once" "$trust_calls"
+    assert_contains "real run: hub-trust runs as the api user" "$(cat "$r1/runuser-args")" "runuser -u winterflow-api -- $r1/usr/local/bin/winterflow-api hub-trust"
+    assert_not_contains "real run: postgres password never in runuser's argv" "$(cat "$r1/runuser-args")" "$pg_pw"
+    assert_not_contains "real run: DATABASE_URL never in runuser's argv" "$(cat "$r1/runuser-args")" "DATABASE_URL"
+    [ ! -e "$r1/var/lib/winterflow-control/hub-retire-calls" ] && pass "real run: no hub-retire on a first install" || fail "real run: no hub-retire on a first install" "$(cat "$r1/var/lib/winterflow-control/hub-retire-calls")"
 
     # Rerun: same secrets, the existing role is kept, unchanged Redis is not restarted.
     : > "$r1/calls"; : > "$r1/db"
@@ -396,6 +432,59 @@ STUB
     run_cp "$r1" --redis-bind 10.1.1.1
     assert_contains "rerun: new redis bind written" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "bind 127.0.0.1 10.1.1.1"
     assert_contains "rerun: changed redis config restarts redis" "$(cat "$r1/calls")" "systemctl restart redis-server@winterflow.service"
+
+    # A retired hub certificate is reissued once, then trusted.
+    : > "$r1/calls"; : > "$r1/var/lib/winterflow-control/hub-trust-calls"; : > "$r1/var/lib/winterflow-control/retire-once"
+    echo "old" > "$r1/var/lib/winterflow-control/pki/pki-args"
+    run_cp "$r1"
+    [ "$RUN_STATUS" -eq 0 ] && pass "retired cert: installer succeeds" || fail "retired cert: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
+    [ "$(grep -c . "$r1/var/lib/winterflow-control/hub-trust-calls")" -eq 2 ] && pass "retired cert: trusted again after reissue" || fail "retired cert: trusted again after reissue" "$(cat "$r1/var/lib/winterflow-control/hub-trust-calls")"
+    [ "$(grep -c -- '--host cp.example.com' "$r1/var/lib/winterflow-control/pki/pki-args")" -eq 2 ] && pass "retired cert: pki ran twice" || fail "retired cert: pki ran twice" "$(cat "$r1/var/lib/winterflow-control/pki/pki-args")"
+    assert_contains "retired cert: says it is reissuing" "$RUN_OUT" "was retired; issuing a new one"
+
+    # Any other hub-trust failure stops the install with its message.
+    : > "$r1/var/lib/winterflow-control/trust-fail"; : > "$r1/calls"
+    run_cp "$r1"
+    [ "$RUN_STATUS" -ne 0 ] && pass "hub-trust failure: installer fails" || fail "hub-trust failure: installer fails" "status 0"
+    assert_contains "hub-trust failure: names the step and the error" "$RUN_OUT" "winterflow-api hub-trust failed: hub-trust: boom"
+    assert_not_contains "hub-trust failure: services not restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-api"
+    rm -f "$r1/var/lib/winterflow-control/trust-fail"
+
+    # A changed --hub-addr retires the previous hub id's certificates after
+    # trusting the new one; the password stays out of every argv.
+    cpd="$r1/var/lib/winterflow-control"
+    : > "$r1/runuser-args"; rm -f "$cpd/hub-retire-calls"
+    run_cp "$r1" --hub-addr Hub-New.example.com:50051
+    [ "$RUN_STATUS" -eq 0 ] && pass "changed hub id: installer succeeds" || fail "changed hub id: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
+    assert_contains "changed hub id: old id retired" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "hub-retire --hub cp.example.com DATABASE_URL=postgres://winterflow:${pg_pw}@"
+    [ "$(grep -n 'hub-trust' "$r1/runuser-args" | tail -1 | cut -d: -f1)" -lt "$(grep -n 'hub-retire' "$r1/runuser-args" | cut -d: -f1)" ] \
+        && pass "changed hub id: retire after trust" || fail "changed hub id: retire after trust" "$(cat "$r1/runuser-args")"
+    assert_not_contains "changed hub id: password never in runuser's argv" "$(cat "$r1/runuser-args")" "$pg_pw"
+    [ -z "$(kept "$r1" RETIRE_HUB_IDS)" ] && pass "changed hub id: nothing left to retire" || fail "changed hub id: nothing left to retire" "$(kept "$r1" RETIRE_HUB_IDS)"
+    rm -f "$cpd/hub-retire-calls"
+    run_cp "$r1"
+    [ ! -e "$cpd/hub-retire-calls" ] && pass "unchanged hub id: no retire" || fail "unchanged hub id: no retire" "$(cat "$cpd/hub-retire-calls")"
+
+    # A failed retire is kept and retried by the next run; "nothing to
+    # retire" counts as done; moving back to an old id never retires it.
+    : > "$cpd/retire-fail"
+    run_cp "$r1" --hub-addr hub-third.example.com:50051
+    [ "$RUN_STATUS" -eq 0 ] && pass "failed retire: installer still succeeds" || fail "failed retire: installer still succeeds" "status $RUN_STATUS: $RUN_OUT"
+    assert_contains "failed retire: warns" "$RUN_OUT" "could not retire the certificates of the previous hub id hub-new.example.com"
+    [ "$(kept "$r1" RETIRE_HUB_IDS)" = "hub-new.example.com" ] && pass "failed retire: kept for the next run" || fail "failed retire: kept for the next run" "$(kept "$r1" RETIRE_HUB_IDS)"
+    rm -f "$cpd/retire-fail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none"
+    run_cp "$r1"
+    assert_contains "failed retire: retried" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "hub-retire --hub hub-new.example.com"
+    [ -z "$(kept "$r1" RETIRE_HUB_IDS)" ] && pass "nothing to retire: done" || fail "nothing to retire: done" "$(kept "$r1" RETIRE_HUB_IDS)"
+    rm -f "$cpd/retire-none" "$cpd/hub-retire-calls"; : > "$cpd/retire-fail"
+    run_cp "$r1" --hub-addr cp.example.com:50051
+    [ "$(kept "$r1" RETIRE_HUB_IDS)" = "hub-third.example.com" ] && pass "moved back: only the left id pending" || fail "moved back: only the left id pending" "$(kept "$r1" RETIRE_HUB_IDS)"
+    rm -f "$cpd/retire-fail" "$cpd/hub-retire-calls"
+    run_cp "$r1" --hub-addr hub-third.example.com:50051
+    [ -z "$(kept "$r1" RETIRE_HUB_IDS)" ] || fail "moved back again: current id never pending" "$(kept "$r1" RETIRE_HUB_IDS)"
+    assert_not_contains "moved back again: current id never retired" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "--hub hub-third.example.com"
+    assert_contains "moved back again: old id retired" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "--hub cp.example.com"
+    run_cp "$r1" --hub-addr cp.example.com:50051
 
     # Real uninstall: units and binaries go, data and config stay.
     : > "$r1/calls"

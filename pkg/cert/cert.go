@@ -1,7 +1,6 @@
 package cert
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -11,185 +10,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
-	"log"
 	"math/big"
 	"net"
-	"os"
-	"path/filepath"
+	"net/url"
+	"strings"
 	"time"
 )
-
-// GeneratePrivateKey generates a new ECDSA P-256 private key and saves it to the specified path
-func GeneratePrivateKey(keyPath string) error {
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(keyPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory for private key: %v", err)
-	}
-
-	// Generate ECDSA P-256 private key
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("failed to generate ECDSA private key: %v", err)
-	}
-
-	keyBytes, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return fmt.Errorf("failed to marshal ECDSA private key: %v", err)
-	}
-
-	// Convert to PEM format
-	privateKeyPEM := &pem.Block{
-		Type:  "EC PRIVATE KEY",
-		Bytes: keyBytes,
-	}
-
-	// Create file
-	keyFile, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to create private key file: %v", err)
-	}
-	defer keyFile.Close()
-
-	// Write PEM to file
-	if err := pem.Encode(keyFile, privateKeyPEM); err != nil {
-		return fmt.Errorf("failed to write private key to file: %v", err)
-	}
-
-	return nil
-}
-
-// CreateCSR creates a Certificate Signing Request with the given private key and saves it to the specified path
-func CreateCSR(certificateID string, privateKeyPath, csrPath string) (string, error) {
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(csrPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create directory for CSR: %v", err)
-	}
-
-	// Read private key
-	keyData, err := os.ReadFile(privateKeyPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read private key: %v", err)
-	}
-
-	// Parse private key (prime256v1 ECDSA only)
-	block, _ := pem.Decode(keyData)
-	if block == nil {
-		return "", fmt.Errorf("failed to parse private key PEM")
-	}
-
-	if block.Type != "EC PRIVATE KEY" {
-		return "", fmt.Errorf("unsupported private key type: %s (only EC P-256 is allowed)", block.Type)
-	}
-
-	parsedKey, err := x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse EC private key: %v", err)
-	}
-
-	if parsedKey.Curve != elliptic.P256() {
-		return "", fmt.Errorf("unsupported EC curve %s: expected P-256", parsedKey.Curve.Params().Name)
-	}
-
-	// Create CSR template
-	template := x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: certificateID,
-		},
-	}
-
-	// Create CSR
-	csrBytes, err := x509.CreateCertificateRequest(rand.Reader, &template, parsedKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to create CSR: %v", err)
-	}
-
-	// Convert to PEM format
-	csrPEM := &pem.Block{
-		Type:  "CERTIFICATE REQUEST",
-		Bytes: csrBytes,
-	}
-
-	// Create file
-	csrFile, err := os.OpenFile(csrPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return "", fmt.Errorf("failed to create CSR file: %v", err)
-	}
-	defer csrFile.Close()
-
-	// Write PEM to file
-	if err := pem.Encode(csrFile, csrPEM); err != nil {
-		return "", fmt.Errorf("failed to write CSR to file: %v", err)
-	}
-
-	// Convert CSR to string for API submission
-	var csrBuffer bytes.Buffer
-	if err := pem.Encode(&csrBuffer, csrPEM); err != nil {
-		return "", fmt.Errorf("failed to encode CSR to string: %v", err)
-	}
-
-	log.Printf("[DEBUG] Created CSR at: %s with Common Name: %s", csrPath, certificateID)
-	return csrBuffer.String(), nil
-}
-
-// SignCSR issues a certificate from a PEM-encoded CSR using the provided CA materials.
-// validityYears defines how many years from now the certificate should remain valid.
-func SignCSR(csrData string, caCert *x509.Certificate, caKey crypto.Signer, validityYears int) (string, string, time.Time, error) {
-	if caCert == nil {
-		return "", "", time.Time{}, fmt.Errorf("CA certificate is required")
-	}
-	if caKey == nil {
-		return "", "", time.Time{}, fmt.Errorf("CA private key is required")
-	}
-	if validityYears <= 0 {
-		return "", "", time.Time{}, fmt.Errorf("validityYears must be positive")
-	}
-
-	csrBlock, _ := pem.Decode([]byte(csrData))
-	if csrBlock == nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to decode CSR PEM")
-	}
-
-	csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to parse CSR: %w", err)
-	}
-
-	if err := csr.CheckSignature(); err != nil {
-		return "", "", time.Time{}, fmt.Errorf("invalid CSR signature: %w", err)
-	}
-
-	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
-	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
-	}
-
-	expiresAt := time.Now().AddDate(validityYears, 0, 0)
-	template := x509.Certificate{
-		SerialNumber:          serialNumber,
-		Subject:               csr.Subject,
-		NotBefore:             time.Now(),
-		NotAfter:              expiresAt,
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, caCert, csr.PublicKey, caKey)
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to create certificate: %w", err)
-	}
-
-	certPEM := pem.EncodeToMemory(&pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certDER,
-	})
-
-	return string(certPEM), csr.Subject.CommonName, expiresAt, nil
-}
 
 // SignCSRAs issues a client-auth-only certificate for a CSR's public key with
 // the subject set to exactly CN=commonName; the CSR's own subject is ignored.
@@ -213,7 +41,10 @@ func SignCSRAs(csrPEM, commonName string, caCert *x509.Certificate, caKey crypto
 		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	now := time.Now()
-	expiresAt := now.AddDate(validityYears, 0, 0)
+	if err := checkCAValid(caCert, now); err != nil {
+		return "", time.Time{}, err
+	}
+	expiresAt := capToCA(now.AddDate(validityYears, 0, 0), caCert)
 	template := x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: commonName},
@@ -273,7 +104,10 @@ func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, 
 		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	now := time.Now()
-	expiresAt := now.AddDate(validityYears, 0, 0)
+	if err := checkCAValid(caCert, now); err != nil {
+		return "", time.Time{}, err
+	}
+	expiresAt := capToCA(now.AddDate(validityYears, 0, 0), caCert)
 	template := x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: hubID},
@@ -282,6 +116,7 @@ func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, 
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
+		URIs:                  []*url.URL{HubURI(hubID)},
 	}
 	for _, h := range hosts {
 		if ip := net.ParseIP(h); ip != nil {
@@ -308,4 +143,48 @@ func Fingerprint(certPEM string) (string, error) {
 	}
 	sum := sha256.Sum256(block.Bytes)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// HubURIPrefix starts the URI SAN that marks a certificate as a hub's.
+const HubURIPrefix = "winterflow-hub:"
+
+// HubURI is the URI SAN a hub certificate carries: winterflow-hub:<id>, lower
+// case (hub ids are).
+func HubURI(hubID string) *url.URL {
+	return &url.URL{Scheme: "winterflow-hub", Opaque: strings.ToLower(hubID)}
+}
+
+// HubIDFromCert returns the hub id in c's winterflow-hub URI SAN.
+func HubIDFromCert(c *x509.Certificate) (string, bool) {
+	for _, u := range c.URIs {
+		if u.Scheme == "winterflow-hub" && u.Opaque != "" {
+			return u.Opaque, true
+		}
+	}
+	return "", false
+}
+
+// ErrCAExpired: the CA's validity has ended (or not begun), so a
+// certificate it signed would be invalid from the start.
+var ErrCAExpired = errors.New("the CA certificate has expired")
+
+// checkCAValid refuses to sign with a CA outside its validity window
+// (ErrCAExpired) instead of issuing a leaf that is already expired.
+func checkCAValid(ca *x509.Certificate, now time.Time) error {
+	if now.After(ca.NotAfter) {
+		return fmt.Errorf("%w (on %s): issue a new CA, then re-join every hub and re-enroll every agent", ErrCAExpired, ca.NotAfter.UTC().Format(time.DateOnly))
+	}
+	if now.Before(ca.NotBefore) {
+		return fmt.Errorf("the CA certificate is not valid before %s (is the clock right?)", ca.NotBefore.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+// capToCA returns t, or the CA's NotAfter when that is earlier: no leaf
+// outlives its issuer.
+func capToCA(t time.Time, ca *x509.Certificate) time.Time {
+	if ca != nil && t.After(ca.NotAfter) {
+		return ca.NotAfter
+	}
+	return t
 }

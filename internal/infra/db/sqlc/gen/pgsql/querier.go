@@ -103,6 +103,7 @@ type Querier interface {
 	GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash string) (AgentEnrollment, error)
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
+	GetHubCertificate(ctx context.Context, fingerprint string) (GetHubCertificateRow, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
 	GetLiveTemplateInstance(ctx context.Context, arg GetLiveTemplateInstanceParams) (TemplateInstance, error)
 	// The pending or created instance an app is, with its template's name
@@ -136,6 +137,8 @@ type Querier interface {
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
 	// Agent enrollments (code-based pairing).
 	InsertEnrollment(ctx context.Context, arg InsertEnrollmentParams) error
+	// Hub certificates the API trusts (agents pin the active set).
+	InsertHubCertificate(ctx context.Context, arg InsertHubCertificateParams) error
 	// One-time hub join tokens (hashed at rest).
 	InsertHubJoinToken(ctx context.Context, arg InsertHubJoinTokenParams) error
 	// metric_samples: monitoring time series (see migration 0010).
@@ -169,6 +172,7 @@ type Querier interface {
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
 	IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error)
+	ListActiveHubCertificates(ctx context.Context) ([]string, error)
 	ListAlertDirectoryApps(ctx context.Context) ([]ListAlertDirectoryAppsRow, error)
 	ListAlertDirectoryServers(ctx context.Context) ([]ListAlertDirectoryServersRow, error)
 	// ListAlertEvents pages an org's history newest first; an empty filter
@@ -241,6 +245,10 @@ type Querier interface {
 	// own servers, oldest first: what a template_upgrade rollout of the org may
 	// still touch.
 	ListUpgradableInstances(ctx context.Context, arg ListUpgradableInstancesParams) ([]TemplateInstance, error)
+	// LockHubCertificates serializes Trust per hub id: a transaction-scoped
+	// advisory lock, so two concurrent Trusts of one hub id cannot both leave
+	// their certificate active (each would miss the other's uncommitted row).
+	LockHubCertificates(ctx context.Context, hubID string) error
 	// LockOrganizationMember re-reads and row-locks the caller's membership
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
@@ -267,6 +275,9 @@ type Querier interface {
 	ReplaceEnrollmentCode(ctx context.Context, arg ReplaceEnrollmentCodeParams) (int64, error)
 	RequestRolloutStop(ctx context.Context, arg RequestRolloutStopParams) (int64, error)
 	ResolveAlertState(ctx context.Context, arg ResolveAlertStateParams) (int64, error)
+	RetireHubCertificateByFingerprint(ctx context.Context, arg RetireHubCertificateByFingerprintParams) (int64, error)
+	RetireHubCertificatesByHub(ctx context.Context, arg RetireHubCertificatesByHubParams) (int64, error)
+	RetireOtherHubCertificates(ctx context.Context, arg RetireOtherHubCertificatesParams) error
 	// The app was deleted outside the instance routes: its instance's key
 	// stays retired.
 	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error

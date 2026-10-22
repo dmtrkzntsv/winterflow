@@ -39,6 +39,9 @@ type statusResult struct {
 	Certificate   string     `json:"certificate"`
 	CACertificate string     `json:"ca_certificate"`
 	HubAddr       string     `json:"hub_addr"`
+	// HubFingerprints are the hub certificates the API trusts (lower-case
+	// hex SHA-256 of the DER); empty when it trusts none yet.
+	HubFingerprints []string `json:"hub_fingerprints"`
 }
 
 type envelope struct {

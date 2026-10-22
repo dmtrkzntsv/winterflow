@@ -116,6 +116,10 @@ assert_contains "env: api port applied" "$out" "API_PORT=9090"
 assert_contains "env: sqlite database" "$out" "DATABASE_URL=sqlite:///var/lib/winterflow/winterflow.sqlite"
 assert_contains "env: jwt secret placeholder (not generated in dry-run)" "$out" "JWT_SECRET=<generated-at-install-time>"
 assert_contains "env: ingress documented as off by default" "$out" "#INGRESS_ENABLED=false"
+assert_contains "env: agent identity directory" "$out" "HUB_CERT_DIR=/var/lib/winterflow/data/hub-certs"
+assert_not_contains "env: no legacy CA subject" "$out" "HUB_CA_SUBJECT"
+assert_not_contains "env: no legacy server subject" "$out" "HUB_SERVER_SUBJECT"
+assert_not_contains "env: no legacy extensions file" "$out" "HUB_CERT_EXT_PATH"
 # The installer must never write an active (uncommented) enable line.
 if grep -qE '^INGRESS_ENABLED=true' <<<"$out"; then
     fail "env: ingress is never enabled by the installer" "found uncommented INGRESS_ENABLED=true"

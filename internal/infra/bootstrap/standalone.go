@@ -8,7 +8,6 @@ import (
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/agent/backup"
 	agentsrv "winterflow/internal/infra/agent/service"
-	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
@@ -23,8 +22,9 @@ import (
 )
 
 // BootstrapStandalone wires the single-process topology: SQLite-backed services
-// plus a local certificate manager. On first run it generates the server
-// certificate and self-registers the embedded agent, printing the pairing code.
+// and the embedded agent. Until a server is claimed it keeps the agent's
+// identity (agent.key + agent.crt in HUB_CERT_DIR; no CA or hub certificate:
+// nothing dials a hub) and one claimable registration for it.
 //
 // The app pipeline runs entirely in-process: an in-memory bus carries the same
 // command/response messages the distributed topology uses, an in-process bridge
@@ -37,11 +37,6 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	dbconn, err := db.Open(log, cfg.GetDbURL())
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
-	}
-
-	certmanager, err := cert.NewManager(cfg, log)
-	if err != nil {
-		log.Fatalf("Failed to create certificate manager: %v", err)
 	}
 
 	// Identical core wiring to the distributed API; Redis is replaced by an
@@ -113,17 +108,13 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// Auto-update for git-sourced apps.
 	go appagent.RunSourcePoller(ctx, orchestrator, appagent.AfterSourceUpdate(ctx, backups.Reload, ingressManager, log), log)
 
-	if !cert.IsServerCertificateGenerated(certmanager) {
-		certmanager.GenerateServer(true)
-	}
-
 	// Standalone keeps exactly one claimable registration for its embedded
 	// agent until a server is claimed. Gating on "is a server claimed?" (rather
 	// than "do certs exist?") means an expired or leftover registration is
 	// replaced with a fresh one on boot, so the box stays claimable. Once
 	// claimed, the first login's auto-claim materialized the server and this is
 	// skipped.
-	agentservice := agentsrv.NewAgentService(log, certmanager, serverRepo)
+	agentservice := agentsrv.NewAgentService(log, cfg.GetHubCertDir(), serverRepo)
 	claimed, err := serverRepo.HasAnyServer(context.TODO())
 	if err != nil {
 		log.Fatalf("Failed to check server registration state: %v", err)

@@ -109,6 +109,12 @@ REDIS_USER="redis"
 WEB_URL=""
 API_PORT=""
 HUB_PUBLIC_ADDR=""
+# The hub address the last run recorded (empty on a first install): a
+# changed hub id retires the old id's certificates. RETIRE_HUB_IDS are the
+# old ids still to retire (kept in the state file until done, so a run that
+# fails before the retire does not forget them).
+PREV_HUB_ADDR=""
+RETIRE_HUB_IDS=""
 HUB_CAPACITY=""
 REDIS_BIND=""
 REDIS_HOSTS=""
@@ -343,8 +349,11 @@ load_state() {
     if [ "$API_PORT_SET" -eq 0 ]; then
         v="$(state_value API_PORT)"; [ -z "$v" ] || API_PORT="$v"
     fi
-    if [ "$HUB_ADDR_SET" -eq 0 ]; then
-        v="$(state_value HUB_PUBLIC_ADDR)"; [ -z "$v" ] || HUB_PUBLIC_ADDR="$v"
+    PREV_HUB_ADDR="$(state_value HUB_PUBLIC_ADDR)"
+    RETIRE_HUB_IDS="$(state_value RETIRE_HUB_IDS)"
+    for w in $RETIRE_HUB_IDS; do valid_host "$w" || die "${STATE_FILE}: RETIRE_HUB_IDS has an invalid name '${w}'"; done
+    if [ "$HUB_ADDR_SET" -eq 0 ] && [ -n "$PREV_HUB_ADDR" ]; then
+        HUB_PUBLIC_ADDR="$PREV_HUB_ADDR"
     fi
     if [ "$CAPACITY_SET" -eq 0 ]; then
         v="$(state_value HUB_CAPACITY)"; [ -z "$v" ] || HUB_CAPACITY="$v"
@@ -520,6 +529,7 @@ HUB_PUBLIC_ADDR=${HUB_PUBLIC_ADDR}
 HUB_CAPACITY=${HUB_CAPACITY}
 REDIS_BIND=${REDIS_BIND}
 REDIS_HOSTS=${REDIS_HOSTS}
+RETIRE_HUB_IDS=${RETIRE_HUB_IDS}
 EOF
 }
 
@@ -726,9 +736,10 @@ hub_pki_hosts() { uniq_words "${HUB_PUBLIC_ADDR%:*}" "$FQDN"; }
 
 redis_pki_hosts() {
     # 127.0.0.1 because the API and the local hub dial Redis there (the
-    # client checks it against the certificate), plus each bind address.
+    # client checks it against the certificate), plus each bind address and
+    # --redis-host; the host's own name is not added.
     # shellcheck disable=SC2086 # word lists by design
-    uniq_words 127.0.0.1 "$FQDN" $REDIS_HOSTS $REDIS_BIND
+    uniq_words 127.0.0.1 $REDIS_HOSTS $REDIS_BIND
 }
 
 pki_args() {
@@ -750,6 +761,11 @@ render_plan() {
     echo "runuser -u ${API_USER} -- winterflow-hub pki $(pki_args | paste -sd ' ' -)"
     echo "  ${PKI_DIR}: ${API_USER} 0700; ca.key: ${API_USER} 0600 (only the API reads the CA key)"
     echo "  ${HUB_CERT_DIR}: ca.crt hub.crt hub.key copied, root:${HUB_USER}, key 0640"
+    echo "runuser -u ${API_USER} -- winterflow-api hub-trust --cert ${PKI_DIR}/hub.crt (API env: DATABASE_URL, HUB_CERT_DIR passed in the environment; after PostgreSQL is ready; a retired certificate is reissued once)"
+    local id
+    for id in $RETIRE_HUB_IDS; do
+        echo "runuser -u ${API_USER} -- winterflow-api hub-retire --hub ${id} (the previous hub id; after hub-trust)"
+    done
     echo "  ${REDIS_TLS_DIR}: ca.crt redis.crt redis.key copied, root:${REDIS_USER}, key 0640"
     echo "postgres: create role and database '${DB_NAME}' if absent (password from ${STATE_FILE})"
     echo "systemctl enable ${REDIS_SERVICE}; restart it when its config or certificate changed"
@@ -768,6 +784,7 @@ Next steps (this installer does not touch Caddy or the firewall):
        }
   2. Open TCP ${hub_port} so agents can reach the hub at ${HUB_PUBLIC_ADDR}.
   3. Open ${WEB_URL} and create the first account.
+  4. Back up ${PKI_DIR}/ca.key and ca.crt. Losing them means re-joining every hub and re-enrolling every agent.
 EOF
 }
 
@@ -838,10 +855,18 @@ provision_postgres() {
     fi
 }
 
-issue_pki() {
-    # The CA is created once and kept; hub and Redis certificates are
-    # (re)issued when their names change. Run as the API user, so ca.key is
-    # owned by it from the start.
+copy_hub_certs() {
+    # The hub gets copies of the CA certificate and its own pair only (it is
+    # restarted on every run, so no change tracking).
+    install -d -m 750 -o root -g "$HUB_USER" "$HUB_CERT_DIR"
+    put_file "$HUB_CERT_DIR/ca.crt" 644 root "$HUB_USER" < "$PKI_DIR/ca.crt"
+    put_file "$HUB_CERT_DIR/hub.crt" 644 root "$HUB_USER" < "$PKI_DIR/hub.crt"
+    put_file "$HUB_CERT_DIR/hub.key" 640 root "$HUB_USER" < "$PKI_DIR/hub.key"
+}
+
+run_pki() {
+    # winterflow-hub pki as the API user, so ca.key is owned by it from the
+    # start.
     local args=() line
     while IFS= read -r line; do args+=("$line"); done < <(pki_args)
     install -d -m 700 -o "$API_USER" -g "$API_USER" "$PKI_DIR"
@@ -850,13 +875,99 @@ issue_pki() {
     chown -R "$API_USER:$API_USER" "$PKI_DIR"
     chmod 700 "$PKI_DIR"
     chmod 600 "$PKI_DIR"/*.key
+}
 
-    # The hub gets copies of the CA certificate and its own pair only (it is
-    # restarted on every run, so no change tracking).
-    install -d -m 750 -o root -g "$HUB_USER" "$HUB_CERT_DIR"
-    put_file "$HUB_CERT_DIR/ca.crt" 644 root "$HUB_USER" < "$PKI_DIR/ca.crt"
-    put_file "$HUB_CERT_DIR/hub.crt" 644 root "$HUB_USER" < "$PKI_DIR/hub.crt"
-    put_file "$HUB_CERT_DIR/hub.key" 640 root "$HUB_USER" < "$PKI_DIR/hub.key"
+env_value() {
+    # env_value FILE KEY — the value of KEY=... in an env file.
+    sed -n "s/^$2=//p" "$1" | tail -n 1
+}
+
+api_cmd() {
+    # api_cmd ARGS... — winterflow-api ARGS as the API user with the API's
+    # database and CA dir; API_STATUS and API_OUT hold the result. The values
+    # travel in the environment (runuser without --login keeps it), never on
+    # a command line, where the Postgres password in DATABASE_URL would show
+    # in /proc/<pid>/cmdline.
+    API_STATUS=0
+    API_OUT="$(
+        DATABASE_URL="$(env_value "$API_ENV_FILE" DATABASE_URL)"
+        HUB_CERT_DIR="$(env_value "$API_ENV_FILE" HUB_CERT_DIR)"
+        export DATABASE_URL HUB_CERT_DIR
+        runuser -u "$API_USER" -- "$API_DEST" "$@" 2>&1
+    )" || API_STATUS=$?
+}
+
+hub_trust() {
+    # winterflow-api hub-trust on the hub certificate; HUB_TRUST_STATUS and
+    # HUB_TRUST_OUT hold the result.
+    api_cmd hub-trust --cert "$PKI_DIR/hub.crt"
+    HUB_TRUST_STATUS="$API_STATUS"
+    HUB_TRUST_OUT="$API_OUT"
+}
+
+hub_id_of() {
+    # hub_id_of HOST:PORT — the hub id: the host, lower-cased.
+    printf '%s' "${1%:*}" | tr '[:upper:]' '[:lower:]'
+}
+
+note_hub_change() {
+    # A changed hub id adds the old one to RETIRE_HUB_IDS; the current id
+    # never stays there (a hub moved back to an old name).
+    local old new w list=""
+    new="$(hub_id_of "$HUB_PUBLIC_ADDR")"
+    if [ -n "$PREV_HUB_ADDR" ]; then
+        old="$(hub_id_of "$PREV_HUB_ADDR")"
+        # shellcheck disable=SC2086 # a word list
+        [ "$old" = "$new" ] || RETIRE_HUB_IDS="$(uniq_words $RETIRE_HUB_IDS "$old")"
+    fi
+    for w in $RETIRE_HUB_IDS; do [ "$w" = "$new" ] || list="$list $w"; done
+    RETIRE_HUB_IDS="${list# }"
+}
+
+retire_previous_hubs() {
+    # After a changed --hub-addr the old hub id's certificates are no longer
+    # this hub's: retire them (after the new one is trusted), so agents stop
+    # accepting them. An id with nothing left to retire is done too; any
+    # other failure warns and is retried on the next run.
+    [ -n "$RETIRE_HUB_IDS" ] || return 0
+    local id left=""
+    for id in $RETIRE_HUB_IDS; do
+        api_cmd hub-retire --hub "$id"
+        if [ "$API_STATUS" -eq 0 ]; then
+            log "Retired the certificates of the previous hub id ${id}: ${API_OUT}"
+        elif grep -q "no active hub certificate" <<<"$API_OUT"; then
+            log "The previous hub id ${id} has no active certificates"
+        else
+            warn "could not retire the certificates of the previous hub id ${id} (retried on the next run): ${API_OUT}"
+            left="$left $id"
+        fi
+    done
+    RETIRE_HUB_IDS="${left# }"
+    put_file "$STATE_FILE" 600 root root < <(render_state)
+}
+
+trust_hub_cert() {
+    # Records the control plane's hub certificate as trusted, so agents pin
+    # it. Needs the database. A certificate retired earlier (its key leaked,
+    # say) is refused: issue a new one, once, and trust that.
+    hub_trust
+    if [ "$HUB_TRUST_STATUS" -ne 0 ] && grep -q "was retired" <<<"$HUB_TRUST_OUT"; then
+        warn "the hub certificate was retired; issuing a new one"
+        rm -f "$PKI_DIR/hub.crt" "$PKI_DIR/hub.key"
+        run_pki
+        copy_hub_certs
+        hub_trust
+    fi
+    [ "$HUB_TRUST_STATUS" -eq 0 ] \
+        || die "winterflow-api hub-trust failed: ${HUB_TRUST_OUT}"
+    retire_previous_hubs
+}
+
+issue_pki() {
+    # The CA is created once and kept; hub and Redis certificates are
+    # (re)issued when their names change.
+    run_pki
+    copy_hub_certs
 
     # Redis (user redis) gets the CA certificate and its pair.
     REDIS_CHANGED=0
@@ -1054,6 +1165,7 @@ main() {
 
     if [ "$DRY_RUN" -eq 1 ]; then
         check_settings
+        note_hub_change
         detect_arch
         log "Dry run: printing generated files and commands, changing nothing."
         echo
@@ -1129,6 +1241,7 @@ main() {
     [ -n "$POSTGRES_PASSWORD" ] || POSTGRES_PASSWORD="$(random_hex)"
     [ -n "$REDIS_PASSWORD" ] || REDIS_PASSWORD="$(random_hex)"
     [ -n "$JWT_SECRET" ] || JWT_SECRET="$(random_hex)"
+    note_hub_change
     [ -d "$CONFIG_DIR" ] || install -d -m 755 -o root -g root "$CONFIG_DIR"
     put_file "$STATE_FILE" 600 root root < <(render_state)
     log "Settings and secrets kept in ${STATE_FILE}"
@@ -1152,11 +1265,14 @@ main() {
     start_redis
     provision_postgres
 
-    # --- Config and units -----------------------------------------------------
-
     log "Writing ${API_ENV_FILE} and ${HUB_ENV_FILE}"
     put_file "$API_ENV_FILE" 600 root root < <(render_api_env)
     put_file "$HUB_ENV_FILE" 600 root root < <(render_hub_env)
+
+    log "Trusting the hub certificate"
+    trust_hub_cert
+
+    # --- Config and units -----------------------------------------------------
 
     if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
         if [ -f "$JOURNAL_CONF" ]; then

@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/usecase/agentauth"
+	"winterflow/internal/domain/usecase/hubpins"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/pkg/agentsig"
 	"winterflow/pkg/logger"
@@ -29,7 +30,22 @@ var (
 	ErrUnauthorized = errors.New("signature does not verify")
 	// ErrStaleRequest: the timestamp is more than MaxSkew off (400).
 	ErrStaleRequest = errors.New("timestamp is more than 5 minutes off")
+	// ErrPinsUnavailable: the trusted hub certificate set could not be
+	// read (503; the agent asks again).
+	ErrPinsUnavailable = hubpins.ErrUnavailable
 )
+
+// Pins is the trusted hub certificate set the answers carry.
+type Pins = hubpins.Source
+
+// Answer is where the agent should connect: the hub's address, whether the
+// server was just moved there, and the fingerprints (lowercase hex SHA-256
+// of the DER) of every hub certificate the API trusts, which the agent pins.
+type Answer struct {
+	HubAddr         string
+	Moved           bool
+	HubFingerprints []string
+}
 
 // Servers is the slice of port.ServerRepository the usecase uses.
 type Servers interface {
@@ -54,41 +70,63 @@ type UseCase struct {
 	servers  Servers
 	registry HubLister
 	picker   Picker
+	pins     Pins
 	log      *logger.Logger
 	now      func() time.Time
 }
 
-func New(servers Servers, registry HubLister, picker Picker, log *logger.Logger) *UseCase {
-	return &UseCase{servers: servers, registry: registry, picker: picker, log: log, now: time.Now}
+func New(servers Servers, registry HubLister, picker Picker, pins Pins, log *logger.Logger) *UseCase {
+	return &UseCase{servers: servers, registry: registry, picker: picker, pins: pins, log: log, now: time.Now}
 }
 
 // Where verifies the agent's signature over (serverID, ts, nonce) against
-// the server's active certificate (refused once it has expired) and the timestamp against MaxSkew, then
-// answers the address of the hub the agent should connect to. moved is false
+// the server's active certificate (refused once it has expired) and the
+// timestamp against MaxSkew, then answers the address of the hub the agent
+// should connect to, with the trusted hub certificate set (read before
+// anything is moved; ErrPinsUnavailable when it cannot be). Moved is false
 // when the server's hub is listed and not draining (the agent's trouble is
 // its own network); otherwise a hub other than the current one is picked
 // and the server moved to it, and when another replica moved it first, that
 // replica's hub is the answer. hubs.ErrNoHub is passed through.
-func (u *UseCase) Where(ctx context.Context, serverID string, ts int64, nonce, sig string) (string, bool, error) {
+func (u *UseCase) Where(ctx context.Context, serverID string, ts int64, nonce, sig string) (Answer, error) {
+	if err := u.verify(ctx, serverID, ts, nonce, sig); err != nil {
+		return Answer{}, err
+	}
+	fps, err := hubpins.Active(ctx, u.pins)
+	if err != nil {
+		return Answer{}, err
+	}
+	addr, moved, err := u.locate(ctx, serverID)
+	if err != nil {
+		return Answer{}, err
+	}
+	return Answer{HubAddr: addr, Moved: moved, HubFingerprints: fps}, nil
+}
+
+func (u *UseCase) verify(ctx context.Context, serverID string, ts int64, nonce, sig string) error {
 	stored, err := u.servers.ActiveServerCertificate(ctx, serverID)
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
-			return "", false, ErrUnauthorized
+			return ErrUnauthorized
 		}
-		return "", false, fmt.Errorf("read certificate: %w", err)
+		return fmt.Errorf("read certificate: %w", err)
 	}
 	certPEM := agentauth.CertPEM(stored)
 	if agentsig.Verify(certPEM, agentsig.Payload(serverID, ts, nonce), sig) != nil {
-		return "", false, ErrUnauthorized
+		return ErrUnauthorized
 	}
 	if expired(certPEM, u.now()) {
-		return "", false, ErrUnauthorized
+		return ErrUnauthorized
 	}
 	now := u.now().Unix()
 	skew := int64(MaxSkew / time.Second)
 	if ts < now-skew || ts > now+skew {
-		return "", false, ErrStaleRequest
+		return ErrStaleRequest
 	}
+	return nil
+}
+
+func (u *UseCase) locate(ctx context.Context, serverID string) (string, bool, error) {
 	current, err := u.servers.ServerHub(ctx, serverID)
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {

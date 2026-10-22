@@ -16,7 +16,6 @@ import (
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
-	"winterflow/internal/infra/cert"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
@@ -24,6 +23,7 @@ import (
 	"winterflow/internal/infra/transport/grpc/proto"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	hubsreg "winterflow/internal/infra/transport/redis/hubs"
+	pkgcert "winterflow/pkg/cert"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -35,17 +35,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const extCnf = `[v3_ext]
-basicConstraints = CA:FALSE
-keyUsage         = digitalSignature, keyEncipherment
-extendedKeyUsage = serverAuth
+// issueHubCert makes HUB_CERT_DIR hold a CA and a hub certificate (with the
+// winterflow-hub URI SAN agents require) for localhost and 127.0.0.1.
+func issueHubCert(t *testing.T, cfg *config.ServerConfig) {
+	t.Helper()
+	if _, err := pkgcert.EnsureHubPKI(cfg.GetHubCertDir(), []string{"localhost", "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
-subjectAltName   = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-IP.1 = 127.0.0.1
-`
+// issueAgentCert writes a fresh agent key and a certificate with CN = cn,
+// signed by the CA in HUB_CERT_DIR, where dialHub reads them.
+func issueAgentCert(t *testing.T, cfg *config.ServerConfig, cn string) {
+	t.Helper()
+	if err := pkgcert.IssueAgentCert(cfg.GetHubCertDir(), cfg.GetHubCertDir(), cn); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // freePort grabs an ephemeral port and releases it for the hub to bind.
 func freePort(t *testing.T) string {
@@ -99,15 +105,8 @@ type e2eEnv struct {
 func startHub(t *testing.T, agentCN string, auth hub.Authorizer) *e2eEnv {
 	t.Helper()
 	dir := t.TempDir()
-	extPath := filepath.Join(dir, "ext.cnf")
-	if err := os.WriteFile(extPath, []byte(extCnf), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	t.Setenv("HUB_CERT_DIR", filepath.Join(dir, "certs"))
-	t.Setenv("HUB_CERT_EXT_PATH", extPath)
-	t.Setenv("HUB_CA_SUBJECT", "/C=CA/O=Test/CN=Test CA")
-	t.Setenv("HUB_SERVER_SUBJECT", "/C=CA/O=Test/CN=localhost")
 	t.Setenv("HUB_HOST", "127.0.0.1")
 	t.Setenv("HUB_PORT", freePort(t))
 	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
@@ -116,14 +115,8 @@ func startHub(t *testing.T, agentCN string, auth hub.Authorizer) *e2eEnv {
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "e2e"})
 	cfg := config.NewServerConfig("distributed")
 
-	cm, err := cert.NewManager(cfg, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cm.GenerateServer(true)
-	if _, err := cm.GenerateAgent(agentCN); err != nil {
-		t.Fatal(err)
-	}
+	issueHubCert(t, cfg)
+	issueAgentCert(t, cfg, agentCN)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -561,13 +554,7 @@ func TestSecondStreamReplacesFirst(t *testing.T) {
 // different, CA-valid certificate) over the files dialHub reads.
 func reissueAgentCert(t *testing.T, env *e2eEnv, cn string) {
 	t.Helper()
-	cm, err := cert.NewManager(env.cfg, env.log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := cm.GenerateAgent(cn); err != nil {
-		t.Fatal(err)
-	}
+	issueAgentCert(t, env.cfg, cn)
 }
 
 func TestStreamRejectsOtherCertWithSameCN(t *testing.T) {
@@ -673,26 +660,13 @@ func serveHub(t *testing.T, ctx context.Context, log *logger.Logger, cfg *config
 // to B reaches it.
 func TestDrainMovesAgentToAnotherHub(t *testing.T) {
 	dir := t.TempDir()
-	extPath := filepath.Join(dir, "ext.cnf")
-	if err := os.WriteFile(extPath, []byte(extCnf), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("HUB_CERT_DIR", filepath.Join(dir, "certs"))
-	t.Setenv("HUB_CERT_EXT_PATH", extPath)
-	t.Setenv("HUB_CA_SUBJECT", "/C=CA/O=Test/CN=Test CA")
-	t.Setenv("HUB_SERVER_SUBJECT", "/C=CA/O=Test/CN=localhost")
 	t.Setenv("AGENT_DATA_DIR", filepath.Join(dir, "agent-data"))
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "e2e"})
 	cfg := config.NewServerConfig("distributed")
-	cm, err := cert.NewManager(cfg, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cm.GenerateServer(true)
+	issueHubCert(t, cfg)
 	const agentID = "srv-move"
-	if _, err := cm.GenerateAgent(agentID); err != nil {
-		t.Fatal(err)
-	}
+	issueAgentCert(t, cfg, agentID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

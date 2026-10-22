@@ -17,6 +17,7 @@ import (
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
+	"winterflow/internal/infra/db/repository/hubcert"
 	"winterflow/internal/infra/db/repository/hubtoken"
 	"winterflow/pkg/logger"
 )
@@ -38,7 +39,11 @@ func newHandler(t *testing.T) (*Handler, *hubjoin.UseCase) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := hubjoin.New(repo, enrolltest.Signer(t), noHubs{}, nil)
+	certs, err := hubcert.New(conn.Tx, conn.Driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := hubjoin.New(repo, certs, enrolltest.Signer(t), noHubs{}, nil)
 	return NewHandler(&Deps{Logger: log, Joiner: uc}), uc
 }
 

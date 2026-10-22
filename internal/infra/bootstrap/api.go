@@ -56,9 +56,9 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	if err != nil {
 		log.Fatalf("load the CA: %v", err)
 	}
-	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, nil)
-	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, signer, registry, nil)
-	deps.AgentHub = agenthub.New(servers, registry, deps.HubPicker, log)
+	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, deps.HubCertRepository, nil)
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, signer, registry, nil)
+	deps.AgentHub = agenthub.New(servers, registry, deps.HubPicker, deps.HubCertRepository, log)
 	StartRollouts(ctx, deps)
 	StartCatalog(ctx, deps)
 	return deps

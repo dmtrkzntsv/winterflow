@@ -51,10 +51,18 @@ func TestAgentHubRoute(t *testing.T) {
 			Header: http.Header{agentsig.Header: {sig}}})
 	}
 
-	// Its hub is live: stay.
+	// Its hub is live: stay. Nothing trusted yet: an empty set.
 	var out agenthub.WhereResponse
+	ask(time.Now().Unix(), "n0", key).expect(t, http.StatusOK).data(t, &out)
+	if out.HubFingerprints == nil || len(out.HubFingerprints) != 0 {
+		t.Fatalf("no pins: %+v", out)
+	}
+	const pin = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := e.deps.HubCertRepository.Trust(e.dbCtx(t), enrolltest.DefaultHub.ID, pin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	ask(time.Now().Unix(), "n1", key).expect(t, http.StatusOK).data(t, &out)
-	if out.HubAddr != enrolltest.DefaultHub.PublicAddr || out.Moved {
+	if out.HubAddr != enrolltest.DefaultHub.PublicAddr || out.Moved || len(out.HubFingerprints) != 1 || out.HubFingerprints[0] != pin {
 		t.Fatalf("stay: %+v", out)
 	}
 
@@ -65,7 +73,7 @@ func TestAgentHubRoute(t *testing.T) {
 	// Its hub drains: the server is moved to the other one, and stays there.
 	e.hubs.setDraining(enrolltest.DefaultHub.ID)
 	ask(time.Now().Unix(), "n4", key).expect(t, http.StatusOK).data(t, &out)
-	if out.HubAddr != "hub-02.test:443" || !out.Moved {
+	if out.HubAddr != "hub-02.test:443" || !out.Moved || len(out.HubFingerprints) != 1 {
 		t.Fatalf("moved: %+v", out)
 	}
 	if hub, err := e.deps.ServerRepository.ServerHub(e.dbCtx(t), serverID); err != nil || hub != "hub-02.test" {

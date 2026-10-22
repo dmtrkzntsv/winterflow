@@ -78,7 +78,53 @@ root needed), `--uninstall`.
 
 Rerunning keeps the CA, passwords, JWT secret and data, updates the binaries
 and units, and restarts the services. A changed `--hub-addr` reissues the hub
-certificate (the CA is kept). Pass `--version vYYMMDD.N` to pin a release.
+certificate (the CA is kept) and, once the new one is trusted, retires the
+old hub id's certificates (`winterflow-api hub-retire`); a retire that fails
+only warns and is retried on the next run. Pass `--version vYYMMDD.N` to pin a release.
+
+### Upgrading to this version
+
+Rerun `install-control-plane.sh` and every `install-hub.sh` before agents
+update. Hub certificates now carry a `winterflow-hub:<id>` URI name, which
+`pki` and `join` add when they reissue the certificate; upgraded agents refuse
+a hub certificate without it. The control-plane installer reissues its own
+hub's certificate by itself and records it as trusted (`winterflow-api
+hub-trust`). A hub joined before this version has a certificate without the
+URI and no record on the control plane: rerun its `install-hub.sh` with a new
+join token (`--token` or `WINTERFLOW_HUB_TOKEN`, made with `hub-token`
+below); without one the rerun stops and asks for it. An agent's `hub.json`
+overrides later `HUB_HOST` edits in `agent.env`.
+
+The Redis certificate no longer lists the host's own name (FQDN). Joined hubs
+that reach Redis by that name need it back: rerun `install-control-plane.sh`
+with `--redis-host <fqdn>` (kept for later reruns). Hubs that use an address
+given with `--redis-bind`/`--redis-host` are not affected. An existing CA
+keeps its old path-length setting; nothing to do about it.
+
+## Back up the CA
+
+Back up `/var/lib/winterflow-control/pki/ca.key` and `ca.crt` (with the
+database and `/etc/winterflow`). Losing them means re-joining every hub and
+re-enrolling every agent: nothing else can sign certificates the agents
+accept. The installer repeats this when it finishes.
+
+## A hub key leaked or a hub removed
+
+On the control-plane host, with the API's environment:
+
+```sh
+sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-retire --hub <hub id>'
+```
+
+(`--fingerprint <sha256>` retires one certificate instead.) Agents stop
+accepting the retired certificate when they next ask the API for the set of
+certificates they pin: at their next start, and every 6 hours while
+connected. Rejoining the hub (rerun `install-hub.sh` on it with a new token)
+stops the hub briefly (it drains first), gives it a new key and certificate,
+retires its older ones and restarts it; if the join fails the hub is started
+again with its old certificate. Once an agent
+has pinned a set, retiring every certificate makes it refuse every hub until
+the API trusts one again; it does not fall back to checking the CA only.
 
 ## Uninstall
 
@@ -102,7 +148,7 @@ no data and joins the existing control plane.
    the command needs the API's environment, `DATABASE_URL` above all):
 
    ```sh
-   sudo bash -c 'set -a; . /etc/winterflow/control-plane.env; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-token'   # --ttl 30m for another lifetime
+   sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-token'   # --ttl 30m for another lifetime
    ```
 
    Whoever holds the token chooses the new hub's host name (any but one a
@@ -154,6 +200,11 @@ moves nobody and stops at once; its agents reconnect when it is back.
 
 Rerun `install-hub.sh` (no token needed): it replaces the binary and
 restarts the service, keeping the certificate and `/etc/winterflow/hub.env`.
+A rerun with a join token joins again instead: a new key and certificate
+replace the old pair (only once the join succeeds) and the control plane
+retires the hub's older certificates; do this after a hub key leaked, and
+for a certificate from before the hub URI (such a rerun refuses to go on
+without a token).
 `--uninstall` drains the hub and removes the unit and binary, keeping the
 certificate and settings so a rerun brings it back; `--uninstall --purge` also
 deletes the certificate, `hub.env`, data and user, after which the hub needs a

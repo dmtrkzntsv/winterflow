@@ -62,6 +62,7 @@ out_url="$(bash "$SCRIPT" --dry-run --url https://api.example.com/ 2>&1)" || fai
 assert_contains "agent_url_flag" "$out_url" "enroll --url https://api.example.com --cert-dir /var/lib/winterflow/certs"
 assert_not_contains "agent_url_flag: default not used" "$out_url" "api.winterflow.dev"
 assert_contains "enroll runs as the service user" "$out_url" "run as 'winterflow'"
+assert_contains "enroll gets the agent data dir" "$out_url" "--data-dir /var/lib/winterflow"
 
 # --- rerun --------------------------------------------------------------------
 
@@ -88,6 +89,7 @@ assert_not_contains "no old asset name" "$src" "winterflow-agent-%s"
 assert_contains "downloads are checksum-verified" "$src" "sha256sum -c"
 assert_contains "release download is HTTPS from the project repo" "$src" 'GITHUB_REPO="dmtrkzntsv/winterflow"'
 assert_contains "enroll output is not captured" "$src" '--cert-dir "$CERT_DIR" --env-out "$ENROLL_ENV"'
+assert_contains "enroll writes hub.json into AGENT_DATA_DIR" "$src" '--data-dir "$DATA_DIR"'
 assert_contains "unit is not enabled before enrollment" "$src" "written, not enabled until enrollment succeeded"
 
 # --- standalone asset name ----------------------------------------------------
@@ -133,9 +135,9 @@ STUB
 #!/bin/sh
 # fake winterflow-agent: only the enroll subcommand
 [ "\$1" = enroll ] || exit 9
-while [ \$# -gt 0 ]; do case "\$1" in --env-out) out="\$2"; shift 2 ;; --cert-dir) dir="\$2"; shift 2 ;; *) shift ;; esac; done
+while [ \$# -gt 0 ]; do case "\$1" in --env-out) out="\$2"; shift 2 ;; --cert-dir) dir="\$2"; shift 2 ;; --data-dir) data="\$2"; shift 2 ;; *) shift ;; esac; done
 echo "CODE: ABC123"
-if [ "$code" = 0 ]; then printf '%s' '$content' > "\$out"; : > "\$dir/agent.crt"; fi
+if [ "$code" = 0 ]; then printf '%s' '$content' > "\$out"; printf '{"host":"hub-01.winterflow.dev","port":"50051","fingerprints":[]}' > "\$data/hub.json"; : > "\$dir/agent.crt"; fi
 exit $code
 STUB
         chmod +x "$bin"/* "$r/fake/agent"
@@ -153,6 +155,7 @@ STUB
     [ "$RUN_STATUS" -eq 0 ] && pass "enroll exit 0: installer succeeds" || fail "enroll exit 0: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
     envf="$r1/etc/winterflow/agent.env"
     assert_contains "enroll exit 0: hub host merged" "$(cat "$envf" 2>/dev/null)" "HUB_HOST=hub-01.winterflow.dev"
+    [ -f "$r1/var/lib/winterflow/hub.json" ] && pass "enroll exit 0: hub.json in the data dir" || fail "enroll exit 0: hub.json in the data dir" "missing"
     assert_contains "enroll exit 0: base settings kept" "$(cat "$envf" 2>/dev/null)" "HUB_CERT_DIR="
     assert_contains "enroll exit 0: code shown live" "$RUN_OUT" "CODE: ABC123"
     assert_contains "enroll exit 0: unit enabled" "$(cat "$r1/calls")" "systemctl enable winterflow-agent"
@@ -189,7 +192,9 @@ STUB
         assert_contains "reenroll: ${f} backup holds the old file" "$(cat "$1" 2>/dev/null)" "old-"
     done
     # The old hub.json would override the new enrollment's HUB_HOST/HUB_PORT.
-    [ ! -e "$r2/var/lib/winterflow/hub.json" ] && pass "reenroll: hub.json set aside" || fail "reenroll: hub.json set aside" "still there"
+    # The new enrollment writes its own hub.json.
+    assert_not_contains "reenroll: hub.json set aside" "$(cat "$r2/var/lib/winterflow/hub.json" 2>/dev/null)" "old-hub"
+    assert_contains "reenroll: hub.json is the new enrollment's" "$(cat "$r2/var/lib/winterflow/hub.json" 2>/dev/null)" "hub-01.winterflow.dev"
     set -- "$r2/var/lib/winterflow/hub.json".old-*
     assert_contains "reenroll: hub.json backup holds the old hub" "$(cat "$1" 2>/dev/null)" "old-hub"
     env2="$(cat "$r2/etc/winterflow/agent.env")"

@@ -636,13 +636,15 @@ enroll_agent() {
     # code (0 enrolled, 2 gave up after 10 codes, 3 already enrolled, 1 other).
     # Its output (the code and instructions) goes straight to the terminal:
     # not captured, so it shows live, piped or not. Writes ENROLL_ENV; merging
-    # it into agent.env is a separate step (write_env_file).
+    # it into agent.env is a separate step (write_env_file). It also writes
+    # ${DATA_DIR}/hub.json (the hub and the hub certificates the API trusts).
     local status=0
     rm -f "$ENROLL_ENV"
     echo
     log "Enrolling this machine with ${API_URL}"
     run_as_service_user "$BINARY_DEST" enroll \
         --url "$API_URL" --cert-dir "$CERT_DIR" --env-out "$ENROLL_ENV" \
+        --data-dir "$DATA_DIR" \
         --hostname "$(hostname 2>/dev/null || echo winterflow-agent)" </dev/null || status=$?
     return "$status"
 }
@@ -801,14 +803,14 @@ main() {
             echo "re-enroll: ${SERVICE_NAME} is stopped; agent.crt, agent.key, ca.crt, hub.json and the"
             echo "HUB_HOST/HUB_PORT/AGENT_ID/WINTERFLOW_API_URL lines of ${ENV_FILE} are"
             echo "set aside as *.old-<timestamp>, then:"
-            echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file>"
+            echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file> --data-dir ${DATA_DIR}"
             echo "run as '${SERVICE_USER}'; on success ${SERVICE_NAME} is enabled and started"
         elif agent_enrolled; then
             echo "already enrolled: ${CERT_DIR}/agent.crt exists, enrollment is skipped"
             echo "the binary and unit are refreshed and ${SERVICE_NAME} is restarted"
             echo "to enroll again (after removing the server in Winterflow), rerun with --reenroll"
         else
-            echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file>"
+            echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file> --data-dir ${DATA_DIR}"
             echo "run as '${SERVICE_USER}'; on success ${SERVICE_NAME} is enabled and started"
         fi
         exit 0

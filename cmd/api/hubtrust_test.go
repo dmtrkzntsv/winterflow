@@ -261,13 +261,26 @@ func TestHubRetireRedisFailure(t *testing.T) {
 	}
 	down := &fakeUsers{openErr: errors.New("redis down")}
 	var out bytes.Buffer
-	if err := runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, down.open, log, &out); err == nil || !strings.Contains(err.Error(), "redis down") {
+	if err := runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, down.open, log, &out); err == nil || !strings.Contains(err.Error(), "redis down") || errors.Is(err, errNothingToRetire) {
 		t.Fatalf("err = %v", err)
 	}
+	// A rerun with nothing left to retire whose release fails again is a
+	// failure, not "nothing to retire" (the installer would drop the id
+	// while its Redis user remains).
+	err := runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, down.open, log, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no active hub certificate") || !strings.Contains(err.Error(), "redis down") || errors.Is(err, errNothingToRetire) {
+		t.Fatalf("rerun, redis still down: %v", err)
+	}
+	if got := subcommandFailed(log, "hub-retire", err); got != 1 {
+		t.Fatalf("rerun, redis still down: exit status %d, want 1", got)
+	}
 	users := &fakeUsers{}
-	err := runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, users.open, log, &bytes.Buffer{})
+	err = runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, users.open, log, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no active hub certificate") || len(users.Deleted) != 1 || users.Deleted[0] != "hub-01.winterflow.dev" {
 		t.Fatalf("rerun: %v, deleted %v", err, users.Deleted)
+	}
+	if !errors.Is(err, errNothingToRetire) || subcommandFailed(log, "hub-retire", err) != exitNothingToRetire {
+		t.Fatalf("rerun, user released: %v is not errNothingToRetire (exit %d)", err, subcommandFailed(log, "hub-retire", err))
 	}
 	// An unknown fingerprint does not contact Redis.
 	other := &fakeUsers{}
@@ -302,5 +315,8 @@ func TestHubRetireTypoSkipsRedis(t *testing.T) {
 	err := runHubRetire([]string{"--hub", "hub-99.winterflow.dev"}, url, users.open, log, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no active hub certificate") || users.opened != 0 {
 		t.Fatalf("err = %v (opened %d)", err, users.opened)
+	}
+	if !errors.Is(err, errNothingToRetire) {
+		t.Fatalf("typo: %v is not errNothingToRetire", err)
 	}
 }

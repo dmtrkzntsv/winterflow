@@ -184,13 +184,23 @@ func normalizeFingerprint(s string) (string, error) {
 // runHubRetire is the hidden `hub-retire --hub <id> | --fingerprint <fp>`
 // subcommand: it retires a hub's certificates (a removed hub) or one
 // certificate (a leaked key) and prints how many it retired; retiring none
-// is an error (exit status 1). A hub left with no active certificate also
+// is an error: exit status 3 (exitNothingToRetire) when nothing matched and
+// nothing failed, 1 for any other failure (a failed release of the Redis
+// user included, so a caller never takes it as done). A hub left with no active certificate also
 // loses its Redis user (deleted, its sessions disconnected, under the
 // per-hub lock so a hub joining at that moment keeps its new user), on a
 // rerun too, so a Redis failure after the retire is mended by running it
 // again. A hub id with no certificate on record never contacts Redis.
 // Agents stop accepting a retired certificate once they refresh their pin
 // set.
+// errNothingToRetire: hub-retire matched no active certificate and every
+// Redis user release it tried succeeded. main exits with
+// exitNothingToRetire for it, so the installer can tell it from a failure.
+var errNothingToRetire = errors.New("nothing to retire")
+
+// exitNothingToRetire is hub-retire's exit status for errNothingToRetire.
+const exitNothingToRetire = 3
+
 func runHubRetire(args []string, dbURL string, openUsers openUsersFunc, log *logger.Logger, out io.Writer) error {
 	fs := flag.NewFlagSet("hub-retire", flag.ContinueOnError)
 	hub := fs.String("hub", "", "retire every certificate of this hub id")
@@ -238,7 +248,11 @@ func runHubRetire(args []string, dbURL string, openUsers openUsersFunc, log *log
 		} else {
 			err = fmt.Errorf("no active hub certificate with fingerprint %s to retire (already retired, or a wrong fingerprint)", fp)
 		}
-		return errors.Join(err, delErr)
+		if delErr != nil {
+			// The Redis user is still there: not done, whatever matched.
+			return errors.Join(err, delErr)
+		}
+		return fmt.Errorf("%w: %w", errNothingToRetire, err)
 	}
 	if _, err := fmt.Fprintf(out, "retired %d hub certificate(s)\n", n); err != nil {
 		return err

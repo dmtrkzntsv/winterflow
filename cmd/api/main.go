@@ -51,6 +51,16 @@ func openHubUsers(cfg *config.ServerConfig) openUsersFunc {
 	}
 }
 
+// subcommandFailed logs a failed subcommand and returns its exit status:
+// exitNothingToRetire for a hub-retire that had nothing to do, else 1.
+func subcommandFailed(log *logger.Logger, name string, err error) int {
+	log.Error(fmt.Sprintf("%s: %v", name, err))
+	if errors.Is(err, errNothingToRetire) {
+		return exitNothingToRetire
+	}
+	return 1
+}
+
 func main() {
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
@@ -70,7 +80,7 @@ func main() {
 				log.Fatalf("invalid configuration: %v", err)
 			}
 			if err := run(os.Args[2:], cfg.GetDbURL(), log, os.Stdout); err != nil {
-				log.Fatalf("%s: %v", os.Args[1], err)
+				os.Exit(subcommandFailed(log, os.Args[1], err))
 			}
 			return
 		}

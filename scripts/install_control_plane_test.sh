@@ -362,7 +362,8 @@ if [ "$1" = hub-retire ]; then
     base="$(dirname "$HUB_CERT_DIR")"
     echo "$* DATABASE_URL=$DATABASE_URL $redis_env" >> "$base/hub-retire-calls"
     if [ -e "$base/retire-fail" ]; then echo "hub-retire: boom"; exit 1; fi
-    if [ -e "$base/retire-none" ]; then echo "hub-retire: no active hub certificate of hub \"$3\" to retire"; exit 1; fi
+    if [ -e "$base/retire-none-redisfail" ]; then printf 'hub-retire: no active hub certificate of hub "%s" to retire (already retired, or a wrong hub id)\nredis hub user: delete hub:%s: boom (rerun hub-retire to finish)\n' "$3" "$3"; exit 1; fi
+    if [ -e "$base/retire-none" ]; then echo "hub-retire: nothing to retire: no active hub certificate of hub \"$3\" to retire"; exit 3; fi
     echo "retired 1 hub certificate(s)"; exit 0
 fi
 [ "$1" = hub-trust ] || exit 0
@@ -545,7 +546,12 @@ STUB
     [ "$RUN_STATUS" -eq 0 ] && pass "failed retire: installer still succeeds" || fail "failed retire: installer still succeeds" "status $RUN_STATUS: $RUN_OUT"
     assert_contains "failed retire: warns" "$RUN_OUT" "could not retire the certificates of the previous hub id hub-new.example.com"
     [ "$(kept "$r1" RETIRE_HUB_IDS)" = "hub-new.example.com" ] && pass "failed retire: kept for the next run" || fail "failed retire: kept for the next run" "$(kept "$r1" RETIRE_HUB_IDS)"
-    rm -f "$cpd/retire-fail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none"
+    # Nothing left to retire but the Redis user's release failed: not done.
+    rm -f "$cpd/retire-fail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none-redisfail"
+    run_cp "$r1"
+    assert_contains "nothing to retire, release failed: warns" "$RUN_OUT" "could not retire the certificates of the previous hub id hub-new.example.com"
+    [ "$(kept "$r1" RETIRE_HUB_IDS)" = "hub-new.example.com" ] && pass "nothing to retire, release failed: kept for the next run" || fail "nothing to retire, release failed: kept for the next run" "$(kept "$r1" RETIRE_HUB_IDS)"
+    rm -f "$cpd/retire-none-redisfail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none"
     run_cp "$r1"
     assert_contains "failed retire: retried" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "hub-retire --hub hub-new.example.com"
     [ -z "$(kept "$r1" RETIRE_HUB_IDS)" ] && pass "nothing to retire: done" || fail "nothing to retire: done" "$(kept "$r1" RETIRE_HUB_IDS)"

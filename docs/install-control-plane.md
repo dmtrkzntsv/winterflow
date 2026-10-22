@@ -155,7 +155,9 @@ sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-a
 (`--fingerprint <sha256>` retires one certificate instead.) When the hub has
 no active certificate left, its Redis user is deleted too, cutting it off
 from the bus at once; the command needs Redis for that (the API's env has
-its settings), and if Redis was down a rerun finishes the deletion. Agents stop
+its settings), and if Redis was down a rerun finishes the deletion. It
+exits with status 3 when there was nothing to retire and nothing left to
+delete, 1 on any failure. Agents stop
 accepting the retired certificate when they next ask the API for the set of
 certificates they pin: at their next start, and every 6 hours while
 connected. Rejoining the hub (rerun `install-hub.sh` on it with a new token)

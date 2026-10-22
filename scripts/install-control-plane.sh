@@ -1014,15 +1014,17 @@ note_hub_change() {
 retire_previous_hubs() {
     # After a changed --hub-addr the old hub id's certificates are no longer
     # this hub's: retire them (after the new one is trusted), so agents stop
-    # accepting them. An id with nothing left to retire is done too; any
-    # other failure warns and is retried on the next run.
+    # accepting them. An id with nothing left to retire (exit status 3: no
+    # active certificate and its Redis user released) is done too; any other
+    # failure, "nothing to retire" with a failed release included, warns and
+    # is retried on the next run.
     [ -n "$RETIRE_HUB_IDS" ] || return 0
     local id left=""
     for id in $RETIRE_HUB_IDS; do
         api_cmd hub-retire --hub "$id"
         if [ "$API_STATUS" -eq 0 ]; then
             log "Retired the certificates of the previous hub id ${id}: ${API_OUT}"
-        elif grep -q "no active hub certificate" <<<"$API_OUT"; then
+        elif [ "$API_STATUS" -eq 3 ]; then
             log "The previous hub id ${id} has no active certificates"
         else
             warn "could not retire the certificates of the previous hub id ${id} (retried on the next run): ${API_OUT}"

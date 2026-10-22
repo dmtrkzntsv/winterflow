@@ -196,6 +196,18 @@ assert_contains "redis_instance_tls_only: binds loopback and extra" "$redis_conf
 assert_contains "redis_instance_tls_only: password auth, no client certs" "$redis_conf" "tls-auth-clients no"
 assert_contains "redis_instance_tls_only: cert readable by redis" "$redis_conf" "tls-key-file /etc/redis/winterflow-tls/redis.key"
 assert_contains "redis_instance_tls_only: own data dir" "$redis_conf" "dir /var/lib/redis/winterflow"
+assert_contains "redis users: aclfile in the data dir (redis can rewrite it)" "$redis_conf" "aclfile /var/lib/redis/winterflow/users.acl"
+acl_dry="$(section "$out" /var/lib/redis/winterflow/users.acl)"
+assert_contains "redis users: aclfile starts with the admin user" "$acl_dry" "user default on sanitize-payload #<sha256 of REDIS_PASSWORD> ~* &* +@all"
+hub_env_dry="$(section "$out" /etc/winterflow/control-plane-hub.env)"
+assert_contains "redis users: local hub logs in as its own user" "$hub_env_dry" "REDIS_USERNAME=hub:hub-01.example.com"
+assert_contains "redis users: local hub password from hub-trust" "$hub_env_dry" "REDIS_PASSWORD=<from hub-trust --redis-env-out>"
+api_env_dry="$(section "$out" /etc/winterflow/control-plane-api.env)"
+assert_not_contains "redis users: the API is the admin (no user name)" "$api_env_dry" "REDIS_USERNAME"
+assert_contains "redis users: the API keeps the admin password" "$api_env_dry" "REDIS_PASSWORD=<generated>"
+assert_contains "redis users: plan passes --redis-env-out" "$plan" "hub-trust --cert /var/lib/winterflow-control/pki/hub.crt --redis-env-out <temp file>"
+assert_contains "redis users: plan names the redis env" "$plan" "REDIS_ADDR, REDIS_PASSWORD, REDIS_TLS, REDIS_CA_CERT_PATH passed in the environment"
+assert_contains "redis users: plan names the hub user" "$plan" "hub's Redis user hub:hub-01.example.com"
 for f in "$api_env" "$hub_env"; do
     assert_contains "redis_instance_tls_only: env tls" "$f" "REDIS_TLS=true"
     assert_contains "redis_instance_tls_only: env addr" "$f" "REDIS_ADDR=127.0.0.1:6380"
@@ -237,7 +249,8 @@ fp() { printf '<kept sha256:%s>' "$(printf '%s' "$1" | sha256sum | cut -c1-8)"; 
 pg_fp="$(fp aaaa1111bbbb2222)"; redis_fp="$(fp cccc3333dddd4444)"; jwt_fp="$(fp eeee5555ffff6666)"
 assert_contains "rerun_keeps_password: postgres" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "postgres://winterflow:${pg_fp}@"
 assert_contains "rerun_keeps_password: redis api" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "REDIS_PASSWORD=${redis_fp}"
-assert_contains "rerun_keeps_password: redis hub" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=${redis_fp}"
+assert_not_contains "rerun: hub env never has the admin password" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=${redis_fp}"
+assert_contains "rerun: hub env user follows the kept hub" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_USERNAME=hub:hub-kept.example.com"
 assert_contains "rerun_keeps_password: redis conf" "$(section "$out_rerun" "/etc/redis/redis-winterflow.conf")" "requirepass ${redis_fp}"
 assert_contains "rerun_keeps_password: state file" "$(section "$out_rerun" "/etc/winterflow/control-plane.env")" "POSTGRES_PASSWORD=${pg_fp}"
 assert_contains "rerun keeps the jwt secret" "$out_rerun" "JWT_SECRET=${jwt_fp}"
@@ -294,7 +307,7 @@ STUB
         # the command after --.
         printf '#!/bin/sh\necho "runuser $*" >> "%s/runuser-args"\nwhile [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n' "$r" > "$bin/runuser"
         printf '#!/bin/sh\nshift\nexec "$@"\n' > "$bin/timeout"
-        printf '#!/bin/sh\necho "Redis server v=7.0.15 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64"\n' > "$bin/redis-server"
+        printf '#!/bin/sh\nv=7.0.15; [ ! -e "%s/redis-6" ] || v=6.0.16\necho "Redis server v=$v sha=00000000:0 malloc=jemalloc-5.3.0 bits=64"\n' "$r" > "$bin/redis-server"
         printf '#!/bin/sh\necho PONG\n' > "$bin/redis-cli"
         printf '#!/bin/sh\necho cp.example.com\n' > "$bin/hostname"
         printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n' > "$bin/uname"
@@ -330,29 +343,42 @@ STUB
 # fake winterflow-hub: only the pki subcommand
 [ "$1" = pki ] || exit 0
 shift
-while [ $# -gt 0 ]; do case "$1" in --dir) dir="$2"; shift 2 ;; *) echo "$1 $2" >> "$dir/pki-args"; shift 2 ;; esac; done
+host=""
+while [ $# -gt 0 ]; do case "$1" in --dir) dir="$2"; shift 2 ;; --host) [ -n "$host" ] || host="$2"; echo "$1 $2" >> "$dir/pki-args"; shift 2 ;; *) echo "$1 $2" >> "$dir/pki-args"; shift 2 ;; esac; done
 for f in ca hub redis; do echo "$f cert" > "$dir/$f.crt"; echo "$f key" > "$dir/$f.key"; done
+echo "host=$host" >> "$dir/hub.crt"
 echo changed
 STUB
-        # fake winterflow-api: only hub-trust. It logs its arguments and the
-        # database it was given; marker files beside the pki dir make it
-        # refuse once as retired (retire-once) or always fail (trust-fail).
+        # fake winterflow-api: only hub-trust and hub-retire. It logs its
+        # arguments and the database and Redis it was given; hub-trust writes
+        # the hub's Redis user (hub:<the certificate's host>, a new password
+        # each time) to --redis-env-out. Marker files beside the pki dir make
+        # it refuse once as retired (retire-once), always fail (trust-fail)
+        # or write a tampered (trust-badenv) or no (trust-noenv) env file.
         cat > "$r/r2/winterflow-api-linux-amd64" <<'STUB'
 #!/bin/sh
+redis_env="REDIS_ADDR=$REDIS_ADDR REDIS_PASSWORD=$REDIS_PASSWORD REDIS_TLS=$REDIS_TLS REDIS_CA_CERT_PATH=$REDIS_CA_CERT_PATH"
 if [ "$1" = hub-retire ]; then
     base="$(dirname "$HUB_CERT_DIR")"
-    echo "$* DATABASE_URL=$DATABASE_URL" >> "$base/hub-retire-calls"
+    echo "$* DATABASE_URL=$DATABASE_URL $redis_env" >> "$base/hub-retire-calls"
     if [ -e "$base/retire-fail" ]; then echo "hub-retire: boom"; exit 1; fi
-    if [ -e "$base/retire-none" ]; then echo "hub-retire: no active hub certificate of hub \"$3\" to retire"; exit 1; fi
+    if [ -e "$base/retire-none-redisfail" ]; then printf 'hub-retire: no active hub certificate of hub "%s" to retire (already retired, or a wrong hub id)\nredis hub user: delete hub:%s: boom (rerun hub-retire to finish)\n' "$3" "$3"; exit 1; fi
+    if [ -e "$base/retire-none" ]; then echo "hub-retire: nothing to retire: no active hub certificate of hub \"$3\" to retire"; exit 3; fi
     echo "retired 1 hub certificate(s)"; exit 0
 fi
 [ "$1" = hub-trust ] || exit 0
 shift
-cert="$2"; d="$(dirname "$cert")"; base="$(dirname "$d")"
-echo "hub-trust $* DATABASE_URL=$DATABASE_URL HUB_CERT_DIR=$HUB_CERT_DIR cert=$(cat "$cert")" >> "$base/hub-trust-calls"
+cert="$2"; out="$4"; d="$(dirname "$cert")"; base="$(dirname "$d")"
+echo "hub-trust $* DATABASE_URL=$DATABASE_URL HUB_CERT_DIR=$HUB_CERT_DIR $redis_env" >> "$base/hub-trust-calls"
 if [ -e "$base/trust-fail" ]; then echo "hub-trust: boom"; exit 1; fi
 if [ -e "$base/retire-once" ]; then rm "$base/retire-once"; echo "hub-trust: this hub certificate was retired; issue a new one"; exit 1; fi
-echo "trusted hub certificate"
+[ "$3" = --redis-env-out ] || { echo "hub-trust: no --redis-env-out"; exit 1; }
+n=$(( $(cat "$base/trust-n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$base/trust-n"
+host="$(sed -n 's/^host=//p' "$cert" | tr '[:upper:]' '[:lower:]')"
+if [ -e "$base/trust-noenv" ]; then :
+elif [ -e "$base/trust-badenv" ]; then printf 'REDIS_USERNAME=hub:%s\nREDIS_PASSWORD=hubpw-%s-abcdefghijkl\nLD_PRELOAD=/tmp/x.so\n' "$host" "$n" > "$out"
+else printf 'REDIS_USERNAME=hub:%s\nREDIS_PASSWORD=hubpw-%s-abcdefghijkl\n' "$host" "$n" > "$out"; fi
+echo "trusted hub certificate; Redis credentials written to $out"
 STUB
         (cd "$r/r2" && sha256sum winterflow-api-linux-amd64 winterflow-hub-linux-amd64 > SHA256SUMS)
         chmod +x "$bin"/*
@@ -381,7 +407,20 @@ STUB
     assert_contains "real run: database created" "$(cat "$r1/calls")" "createdb -O winterflow winterflow"
     assert_contains "real run: api env uses it" "$(cat "$r1/etc/winterflow/control-plane-api.env")" "postgres://winterflow:${pg_pw}@127.0.0.1:5432/winterflow"
     assert_contains "real run: redis conf password" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "requirepass ${redis_pw}"
-    assert_contains "real run: hub env password" "$(cat "$r1/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=${redis_pw}"
+    hub_env="$(cat "$r1/etc/winterflow/control-plane-hub.env")"
+    assert_not_contains "real run: hub env never has the admin password" "$hub_env" "$redis_pw"
+    assert_contains "real run: hub env has the hub's user" "$hub_env" "REDIS_USERNAME=hub:cp.example.com"
+    assert_contains "real run: hub env has the hub's password" "$hub_env" "REDIS_PASSWORD=hubpw-1-abcdefghijkl"
+    [ "$(stat -c %a "$r1/etc/winterflow/control-plane-hub.env")" = 600 ] && pass "real run: hub env 0600" || fail "real run: hub env 0600" "$(stat -c %a "$r1/etc/winterflow/control-plane-hub.env")"
+    assert_contains "real run: api env keeps the admin password" "$(cat "$r1/etc/winterflow/control-plane-api.env")" "REDIS_PASSWORD=${redis_pw}"
+    acl="$r1/var/lib/redis/winterflow/users.acl"
+    redis_hash="$(printf '%s' "$redis_pw" | sha256sum | cut -d' ' -f1)"
+    [ "$(cat "$acl" 2>/dev/null)" = "user default on sanitize-payload #${redis_hash} ~* &* +@all" ] \
+        && pass "real run: aclfile holds the admin user" || fail "real run: aclfile holds the admin user" "$(cat "$acl" 2>/dev/null)"
+    [ "$(stat -c %a "$acl")" = 600 ] && pass "real run: aclfile 0600" || fail "real run: aclfile 0600" "$(stat -c %a "$acl")"
+    assert_contains "real run: redis conf names the aclfile" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "aclfile $acl"
+    [ -z "$(ls -A "$r1/var/lib/winterflow-control/api")" ] || [ "$(ls -A "$r1/var/lib/winterflow-control/api")" = avatars ] \
+        && pass "real run: hub-trust's temp file removed" || fail "real run: hub-trust's temp file removed" "$(ls -A "$r1/var/lib/winterflow-control/api")"
     assert_not_contains "real run: secret never on curl's command line" "$(cat "$r1/curl-args")" "$SECRET"
     assert_contains "real run: secret passed on curl's stdin" "$(cat "$r1/curl-stdin")" "$SECRET"
     assert_contains "real run: sigv4" "$(cat "$r1/curl-args")" "--aws-sigv4 aws:amz:auto:s3"
@@ -411,6 +450,9 @@ STUB
     assert_contains "real run: hub-trust on the hub certificate" "$trust_calls" "hub-trust --cert $r1/var/lib/winterflow-control/pki/hub.crt"
     assert_contains "real run: hub-trust gets the API database" "$trust_calls" "DATABASE_URL=postgres://winterflow:${pg_pw}@127.0.0.1:5432/winterflow"
     assert_contains "real run: hub-trust gets the CA dir" "$trust_calls" "HUB_CERT_DIR=$r1/var/lib/winterflow-control/pki"
+    assert_contains "real run: hub-trust writes the hub's credentials" "$trust_calls" "--redis-env-out $r1/var/lib/winterflow-control/api/.hub-redis."
+    assert_contains "real run: hub-trust gets the API's Redis" "$trust_calls" "REDIS_ADDR=127.0.0.1:6380 REDIS_PASSWORD=${redis_pw} REDIS_TLS=true REDIS_CA_CERT_PATH=$r1/var/lib/winterflow-control/pki/ca.crt"
+    assert_not_contains "real run: redis password never in runuser's argv" "$(cat "$r1/runuser-args")" "$redis_pw"
     [ "$(grep -c . "$r1/var/lib/winterflow-control/hub-trust-calls")" -eq 1 ] && pass "real run: hub-trust runs once" || fail "real run: hub-trust runs once" "$trust_calls"
     assert_contains "real run: hub-trust runs as the api user" "$(cat "$r1/runuser-args")" "runuser -u winterflow-api -- $r1/usr/local/bin/winterflow-api hub-trust"
     assert_not_contains "real run: postgres password never in runuser's argv" "$(cat "$r1/runuser-args")" "$pg_pw"
@@ -428,6 +470,22 @@ STUB
     assert_contains "rerun: redis names kept" "$(kept "$r1" REDIS_HOSTS)" "cp.tail.ts.net"
     assert_contains "rerun: services restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-api winterflow-hub"
     assert_not_contains "rerun: unchanged redis not restarted" "$(cat "$r1/calls")" "systemctl restart redis-server@winterflow.service"
+    assert_contains "rerun: hub user reset, new password in the hub env" "$(cat "$r1/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=hubpw-2-abcdefghijkl"
+    # The aclfile keeps the hubs' users the API saved; a stale admin line
+    # is replaced (and Redis restarted to load it).
+    printf 'user default on sanitize-payload #%s ~* &* +@all\nuser hub:hub-02.example.com on sanitize-payload #abc ~hub:status:hub-02.example.com resetchannels -@all +get\n' "$redis_hash" > "$acl"
+    : > "$r1/calls"
+    run_cp "$r1"
+    assert_contains "rerun: hub users kept in the aclfile" "$(cat "$acl")" "user hub:hub-02.example.com on"
+    assert_not_contains "rerun: matching admin line, redis not restarted" "$(cat "$r1/calls")" "systemctl restart redis-server@winterflow.service"
+    printf 'user default on nopass ~* &* +@all\nuser hub:hub-02.example.com on sanitize-payload #abc ~hub:status:hub-02.example.com resetchannels -@all +get\n' > "$acl"
+    : > "$r1/calls"
+    run_cp "$r1"
+    [ "$(head -n 1 "$acl")" = "user default on sanitize-payload #${redis_hash} ~* &* +@all" ] \
+        && pass "rerun: stale admin line replaced" || fail "rerun: stale admin line replaced" "$(cat "$acl")"
+    assert_contains "rerun: hub users kept after the admin fix" "$(cat "$acl")" "user hub:hub-02.example.com on"
+    [ "$(grep -c '^user default ' "$acl")" -eq 1 ] && pass "rerun: one admin line" || fail "rerun: one admin line" "$(cat "$acl")"
+    assert_contains "rerun: fixed admin line restarts redis" "$(cat "$r1/calls")" "systemctl restart redis-server@winterflow.service"
     : > "$r1/calls"
     run_cp "$r1" --redis-bind 10.1.1.1
     assert_contains "rerun: new redis bind written" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "bind 127.0.0.1 10.1.1.1"
@@ -450,6 +508,20 @@ STUB
     assert_not_contains "hub-trust failure: services not restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-api"
     rm -f "$r1/var/lib/winterflow-control/trust-fail"
 
+    # Credentials that are tampered with or missing stop the install before
+    # the hub env is rewritten.
+    hub_env_before="$(cat "$r1/etc/winterflow/control-plane-hub.env")"
+    for m in trust-badenv trust-noenv; do
+        : > "$r1/var/lib/winterflow-control/$m"; : > "$r1/calls"
+        run_cp "$r1"
+        [ "$RUN_STATUS" -ne 0 ] && pass "${m}: installer fails" || fail "${m}: installer fails" "status 0"
+        assert_contains "${m}: says the credentials were refused" "$RUN_OUT" "the hub's Redis credentials were refused"
+        [ "$(cat "$r1/etc/winterflow/control-plane-hub.env")" = "$hub_env_before" ] && pass "${m}: hub env untouched" || fail "${m}: hub env untouched" "changed"
+        assert_not_contains "${m}: services not restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-api"
+        rm -f "$r1/var/lib/winterflow-control/$m"
+    done
+    assert_not_contains "tampered env: nothing of it reaches the hub env" "$(cat "$r1/etc/winterflow/control-plane-hub.env")" "LD_PRELOAD"
+
     # A changed --hub-addr retires the previous hub id's certificates after
     # trusting the new one; the password stays out of every argv.
     cpd="$r1/var/lib/winterflow-control"
@@ -457,6 +529,8 @@ STUB
     run_cp "$r1" --hub-addr Hub-New.example.com:50051
     [ "$RUN_STATUS" -eq 0 ] && pass "changed hub id: installer succeeds" || fail "changed hub id: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
     assert_contains "changed hub id: old id retired" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "hub-retire --hub cp.example.com DATABASE_URL=postgres://winterflow:${pg_pw}@"
+    assert_contains "changed hub id: retire gets the API's Redis (deletes the old user)" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "REDIS_ADDR=127.0.0.1:6380 REDIS_PASSWORD=${redis_pw} REDIS_TLS=true"
+    assert_contains "changed hub id: hub env names the new hub's user" "$(cat "$r1/etc/winterflow/control-plane-hub.env")" "REDIS_USERNAME=hub:hub-new.example.com"
     [ "$(grep -n 'hub-trust' "$r1/runuser-args" | tail -1 | cut -d: -f1)" -lt "$(grep -n 'hub-retire' "$r1/runuser-args" | cut -d: -f1)" ] \
         && pass "changed hub id: retire after trust" || fail "changed hub id: retire after trust" "$(cat "$r1/runuser-args")"
     assert_not_contains "changed hub id: password never in runuser's argv" "$(cat "$r1/runuser-args")" "$pg_pw"
@@ -472,7 +546,12 @@ STUB
     [ "$RUN_STATUS" -eq 0 ] && pass "failed retire: installer still succeeds" || fail "failed retire: installer still succeeds" "status $RUN_STATUS: $RUN_OUT"
     assert_contains "failed retire: warns" "$RUN_OUT" "could not retire the certificates of the previous hub id hub-new.example.com"
     [ "$(kept "$r1" RETIRE_HUB_IDS)" = "hub-new.example.com" ] && pass "failed retire: kept for the next run" || fail "failed retire: kept for the next run" "$(kept "$r1" RETIRE_HUB_IDS)"
-    rm -f "$cpd/retire-fail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none"
+    # Nothing left to retire but the Redis user's release failed: not done.
+    rm -f "$cpd/retire-fail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none-redisfail"
+    run_cp "$r1"
+    assert_contains "nothing to retire, release failed: warns" "$RUN_OUT" "could not retire the certificates of the previous hub id hub-new.example.com"
+    [ "$(kept "$r1" RETIRE_HUB_IDS)" = "hub-new.example.com" ] && pass "nothing to retire, release failed: kept for the next run" || fail "nothing to retire, release failed: kept for the next run" "$(kept "$r1" RETIRE_HUB_IDS)"
+    rm -f "$cpd/retire-none-redisfail" "$cpd/hub-retire-calls"; : > "$cpd/retire-none"
     run_cp "$r1"
     assert_contains "failed retire: retried" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "hub-retire --hub hub-new.example.com"
     [ -z "$(kept "$r1" RETIRE_HUB_IDS)" ] && pass "nothing to retire: done" || fail "nothing to retire: done" "$(kept "$r1" RETIRE_HUB_IDS)"
@@ -495,6 +574,7 @@ STUB
         && pass "uninstall: units and binaries removed" || fail "uninstall: units and binaries removed" "still there"
     [ -f "$r1/var/lib/winterflow-control/pki/ca.key" ] && [ -f "$r1/etc/winterflow/control-plane.env" ] && [ -f "$r1/etc/redis/redis-winterflow.conf" ] \
         && pass "uninstall: CA, state and redis config kept" || fail "uninstall: CA, state and redis config kept" "removed"
+    [ -f "$r1/var/lib/redis/winterflow/users.acl" ] && pass "uninstall: redis users kept" || fail "uninstall: redis users kept" "removed"
     assert_contains "uninstall: redis instance disabled" "$(cat "$r1/calls")" "systemctl disable --now redis-server@winterflow.service"
     [ ! -e "$r1/etc/systemd/system/redis-server@winterflow.service.d" ] && pass "uninstall: redis drop-in removed" || fail "uninstall: redis drop-in removed" "still there"
 
@@ -504,6 +584,13 @@ STUB
     [ "$RUN_STATUS" -ne 0 ] && pass "existing role without a kept password refused" || fail "existing role without a kept password refused" "status 0"
     assert_contains "existing role: says what to do" "$RUN_OUT" "has no POSTGRES_PASSWORD"
     assert_not_contains "existing role: password not changed" "$(cat "$r2/calls")" "ROLE"
+
+    # Redis 6 has no ACL selectors: refused before anything is installed.
+    r5="$tmp/real5"; mkdir -p "$r5"; make_stubs "$r5"; : > "$r5/redis-6"
+    run_cp "$r5"
+    [ "$RUN_STATUS" -ne 0 ] && pass "redis 6: refused" || fail "redis 6: refused" "status 0"
+    assert_contains "redis 6: says why" "$RUN_OUT" "Redis >= 7"
+    [ ! -e "$r5/usr/local/bin/winterflow-api" ] && pass "redis 6: nothing installed" || fail "redis 6: nothing installed" "binary installed"
 
     # A tampered download fails the checksum and installs nothing.
     r3="$tmp/real3"; mkdir -p "$r3"; make_stubs "$r3"

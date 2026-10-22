@@ -12,6 +12,7 @@ import (
 	"winterflow/internal/infra/transport/dispatch"
 	redisbus "winterflow/internal/infra/transport/redis/bus"
 	hubsreg "winterflow/internal/infra/transport/redis/hubs"
+	"winterflow/internal/infra/transport/redis/hubusers"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -57,7 +58,11 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 		log.Fatalf("load the CA: %v", err)
 	}
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, deps.HubCertRepository, nil)
-	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, signer, registry, nil)
+	// Hubs join with a token; each gets its own Redis user, managed over
+	// the API's own (admin) connection.
+	users := hubusers.New(rc)
+	checkHubUsersAdmin(ctx, log, users)
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, users, signer, registry, nil)
 	deps.AgentHub = agenthub.New(servers, registry, deps.HubPicker, deps.HubCertRepository, log)
 	StartRollouts(ctx, deps)
 	StartCatalog(ctx, deps)
@@ -72,4 +77,19 @@ func startResponseSubscriber(ctx context.Context, b bus.Bus, dispatcher *dispatc
 	bus.SubscribeJSON(ctx, b, cfg.GetBusResponseQueue(), log, func(ntf model.Notification) {
 		dispatcher.HandleResult(ntf)
 	})
+}
+
+// hubUsersChecker is hubusers.Users' startup check.
+type hubUsersChecker interface {
+	Check(ctx context.Context) error
+}
+
+// checkHubUsersAdmin logs an error when the API's Redis connection cannot
+// manage the hubs' users (a REDIS_USERNAME that is not the admin, a server
+// without an aclfile): every hub join would fail after spending its token.
+// Not fatal: the API serves everything else.
+func checkHubUsersAdmin(ctx context.Context, log *logger.Logger, users hubUsersChecker) {
+	if err := users.Check(ctx); err != nil {
+		log.Error("the API's Redis connection cannot manage the hubs' Redis users; hub joins will fail until REDIS_USERNAME/REDIS_PASSWORD name the admin user and the server has an aclfile", "error", err)
+	}
 }

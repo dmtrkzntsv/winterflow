@@ -103,7 +103,8 @@ func newEnv(t *testing.T) *env {
 		{ID: enrolltest.DefaultHub.ID, PublicAddr: enrolltest.DefaultHub.PublicAddr, Capacity: 100, Accepting: true},
 		{ID: "hub-02.test", PublicAddr: "hub-02.test:443", Capacity: 100, Accepting: true},
 	}}
-	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, enrolltest.Signer(t), live, nil)
+	// The suite has no Redis: hub users are kept in memory.
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, &enrolltest.RedisUsers{}, enrolltest.Signer(t), live, nil)
 	deps.AgentHub = agenthub.New(deps.ServerRepository, live, hubs.NewPicker(live, deps.ServerRepository, testLog), deps.HubCertRepository, testLog)
 	agent := newFakeAgent()
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {

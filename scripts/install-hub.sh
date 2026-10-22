@@ -3,34 +3,42 @@
 # Install a WinterFlow hub (the gRPC endpoint agents dial over mTLS) on its
 # own Debian or Ubuntu host, joined to an existing control plane.
 #
-# A hub holds no data. It talks to the control plane's Redis bus (TLS and a
-# password) and to agents (mTLS). This script:
+# A hub holds no data. It talks to the control plane's Redis bus (TLS, as
+# its own Redis user) and to agents (mTLS). This script:
 #   - downloads winterflow-hub from the release mirror (Cloudflare R2, private:
 #     needs WINTERFLOW_R2_ENDPOINT, WINTERFLOW_R2_ACCESS_KEY_ID and
 #     WINTERFLOW_R2_SECRET_ACCESS_KEY in the environment) and verifies it
 #     against SHA256SUMS,
 #   - makes the hub's private key here (it never leaves this machine), sends
 #     a certificate request with the one-time join token to the control
-#     plane's API and stores the certificate and the CA it gets back,
+#     plane's API and stores the certificate and the CA it gets back, with
+#     the hub's own Redis user (hub:<hub id>) and its password,
 #   - installs a hardened systemd unit winterflow-hub, run by the system user
 #     winterflow-hub.
 #
 # It does not touch the firewall, Caddy, or any global configuration. Open
 # the hub's TCP port yourself; the installer prints which.
 #
-# Get the join token and the Redis URL from the control plane's operator
-# (tokens are single use and expire after an hour). Settings are kept in
-# /etc/winterflow/hub.env (root only: it holds the Redis password).
+# Get the join token and the Redis address from the control plane's operator
+# (tokens are single use and expire after an hour). The Redis user and
+# password come from the join: no Redis password is ever given to a hub
+# machine by hand, and the control plane's admin password never leaves it.
+# Settings are kept in /etc/winterflow/hub.env (root only: it holds the
+# hub's Redis password).
 #
-# A rerun on a joined hub is an update: no token needed, the certificate and
-# settings are kept (options you pass override the kept settings), the binary
-# is replaced and the service restarted. A rerun with a token joins again: a
-# new key and certificate replace the old pair and the control plane retires
-# the hub's older certificates (a leaked key). A certificate from before the
-# hub marker (no winterflow-hub: URI, which agents now require) must be
-# reissued this way: such a rerun without a token stops and asks for one. Stopping the service drains the hub
-# first: it tells its agents to move to other hubs and waits up to 2 minutes
-# for them to leave (not at all when no other hub can take them).
+# A rerun on a joined hub is an update: no token needed, the certificate, the
+# Redis credentials and settings are kept (options you pass override the
+# kept settings), the binary is replaced and the service restarted. A rerun
+# with a token joins again: a new key and certificate replace the old pair,
+# the control plane retires the hub's older certificates (a leaked key) and
+# resets the hub's Redis password (the new one replaces the kept one). A
+# certificate from before the hub marker (no winterflow-hub: URI, which
+# agents now require), or a hub without a kept Redis user, must join again
+# this way: such a rerun without a token stops and asks for one. Retiring the
+# hub on the control plane (winterflow-api hub-retire) also deletes its Redis
+# user. Stopping the service drains the hub first: it tells its agents to
+# move to other hubs and waits up to 2 minutes for them to leave (not at all
+# when no other hub can take them).
 #
 # Logs go to the journald namespace "winterflow":
 #   journalctl --namespace winterflow -u winterflow-hub -f
@@ -39,9 +47,9 @@
 #   export WINTERFLOW_R2_ENDPOINT=https://<account_id>.r2.cloudflarestorage.com
 #   export WINTERFLOW_R2_ACCESS_KEY_ID=... WINTERFLOW_R2_SECRET_ACCESS_KEY=...
 #   sudo -E bash install-hub.sh --token wfh_... --public-addr hub-02.example.com:50051 \
-#       --redis-url 'rediss://:<password>@cp.example.com:6380'
-#   # or keep the secrets out of the process list:
-#   export WINTERFLOW_HUB_TOKEN=wfh_... WINTERFLOW_HUB_REDIS_URL='rediss://:<password>@cp.example.com:6380'
+#       --redis-addr cp.example.com:6380
+#   # or keep the token out of the process list:
+#   export WINTERFLOW_HUB_TOKEN=wfh_... WINTERFLOW_HUB_REDIS_ADDR=cp.example.com:6380
 #   sudo -E bash install-hub.sh --public-addr hub-02.example.com:50051
 #   sudo -E bash install-hub.sh                      # update a joined hub
 #
@@ -54,11 +62,11 @@
 #                        Its host goes into the hub's certificate and is the
 #                        hub's id. Required on the first install; cannot change
 #                        later (the certificate is for that name).
-#   --redis-url URL      The control plane's Redis, rediss://:<password>@host:port
-#                        (TLS only; redis:// is refused). Required on the first
-#                        install. Prefer WINTERFLOW_HUB_REDIS_URL in the
-#                        environment: a flag shows the password in the process
-#                        list.
+#   --redis-addr H:P     The control plane's Redis, host:port (always TLS,
+#                        checked against the CA the join returns). Required on
+#                        the first install. WINTERFLOW_HUB_REDIS_ADDR in the
+#                        environment works too. The hub's Redis user and
+#                        password come from the join.
 #   --capacity N         Agents this hub should carry (default: kept, else 1000).
 #   --listen-port PORT   Port to listen on when it differs from the public
 #                        address's port, e.g. behind a port forward (default:
@@ -98,12 +106,15 @@ R2_PROJECT="winterflow"
 DEFAULT_API_URL="https://api.winterflow.dev"
 
 JOIN_TOKEN="${WINTERFLOW_HUB_TOKEN:-}"
-REDIS_URL_ARG="${WINTERFLOW_HUB_REDIS_URL:-}"
+REDIS_ADDR_ARG="${WINTERFLOW_HUB_REDIS_ADDR:-}"
 API_URL="$DEFAULT_API_URL"
 HUB_PUBLIC_ADDR=""
 HUB_CAPACITY=""
 HUB_PORT=""
 REDIS_ADDR=""
+# The hub's own Redis user (hub:<hub id>) and password: from the join, kept
+# in hub.env.
+REDIS_USERNAME=""
 REDIS_PASSWORD=""
 R2_BUCKET="econumo"
 RELEASE_VERSION=""
@@ -114,6 +125,7 @@ UNINSTALL=0
 PURGE=0
 JOINED=0
 REJOIN=0
+ENROLL_JOINED=0
 CPU_QUOTA=""
 MEMORY_MAX=""
 
@@ -238,8 +250,18 @@ valid_token() {
 }
 
 valid_password() {
-    # What the env file and the URL can carry unquoted.
+    # What the env file can carry unquoted (the join's are base64url).
     printf '%s' "$1" | grep -qE '^[A-Za-z0-9._~-]{1,256}$'
+}
+
+valid_redis_user() {
+    # A hub's Redis user: hub:<hub id>, the id as the control plane spells it.
+    printf '%s' "$1" | grep -qE '^hub:[a-z0-9.-]{1,253}$'
+}
+
+hub_id_of() {
+    # hub_id_of HOST:PORT — the hub id: the host, lower-cased.
+    printf '%s' "${1%:*}" | tr '[:upper:]' '[:lower:]'
 }
 
 valid_api_url() {
@@ -250,29 +272,6 @@ valid_api_url() {
         *) return 1 ;;
     esac
     printf '%s' "$1" | grep -qE '^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'
-}
-
-parse_redis_url() {
-    # parse_redis_url URL -> sets REDIS_ADDR (host:port) and REDIS_PASSWORD.
-    # rediss://:<password>@host:port only: Redis without TLS is refused. The
-    # password is never printed.
-    local url="$1" rest cred hp
-    case "$url" in
-        rediss://*) ;;
-        redis://*) die "--redis-url must start with rediss:// (TLS); plain redis:// is refused" ;;
-        *) die "--redis-url must look like rediss://:<password>@host:port" ;;
-    esac
-    rest="${url#rediss://}"
-    rest="${rest%/}"
-    case "$rest" in *@*) ;; *) die "--redis-url needs a password: rediss://:<password>@host:port" ;; esac
-    cred="${rest%@*}"
-    hp="${rest##*@}"
-    cred="${cred#:}"
-    case "$cred" in *:*) die "--redis-url: expected rediss://:<password>@host:port (no user name)" ;; esac
-    valid_password "$cred" || die "--redis-url: the password may only use letters, digits and . _ ~ -"
-    valid_hostport "$hp" || die "--redis-url: expected host:port after the @"
-    REDIS_ADDR="$hp"
-    REDIS_PASSWORD="$cred"
 }
 
 is_debian_like() {
@@ -316,8 +315,18 @@ load_kept() {
     if [ -z "$REDIS_ADDR" ]; then
         v="$(env_value REDIS_ADDR)"
         [ -z "$v" ] || { valid_hostport "$v" || die "${ENV_FILE}: REDIS_ADDR is not host:port"; REDIS_ADDR="$v"; }
-        v="$(env_value REDIS_PASSWORD)"
-        [ -z "$v" ] || { valid_password "$v" || die "${ENV_FILE}: REDIS_PASSWORD has unsupported characters"; REDIS_PASSWORD="$v"; }
+    fi
+    v="$(env_value REDIS_USERNAME)"
+    [ -z "$v" ] || { valid_redis_user "$v" || die "${ENV_FILE}: REDIS_USERNAME is not a hub's Redis user (hub:<hub id>)"; REDIS_USERNAME="$v"; }
+    v="$(env_value REDIS_PASSWORD)"
+    [ -z "$v" ] || { valid_password "$v" || die "${ENV_FILE}: REDIS_PASSWORD has unsupported characters"; REDIS_PASSWORD="$v"; }
+    # The kept user must be this hub's (hub:<its id>); another hub's
+    # credentials are dropped, so the hub has to join again for its own.
+    if [ -n "$REDIS_USERNAME" ] && [ -n "$HUB_PUBLIC_ADDR" ] \
+        && [ "$REDIS_USERNAME" != "hub:$(hub_id_of "$HUB_PUBLIC_ADDR")" ]; then
+        warn "${ENV_FILE}: REDIS_USERNAME ${REDIS_USERNAME} is not this hub's Redis user (hub:$(hub_id_of "$HUB_PUBLIC_ADDR")); ignoring the kept Redis credentials"
+        REDIS_USERNAME=""
+        REDIS_PASSWORD=""
     fi
 }
 
@@ -416,24 +425,75 @@ hub_cert_marked() {
     [ "${n:-0}" -gt 0 ]
 }
 
+checked_redis_env() {
+    # checked_redis_env FILE — sets REDIS_USERNAME and REDIS_PASSWORD from the
+    # join's --redis-env-out file. It carries what the control plane sent,
+    # so root takes exactly the two keys with plain values: this hub's user
+    # and a password the env file can hold unquoted. Anything else, a missing
+    # or a repeated key fails the whole file (ENROLL_ERR says why).
+    local file="$1" content line key val seen=" " user="" pass=""
+    ENROLL_ERR="refusing the join's Redis credentials"
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        ENROLL_ERR="${ENROLL_ERR}: ${file} is missing or not a regular file"
+        return 1
+    fi
+    content="$(cat "$file")" || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        key="${line%%=*}"
+        val="${line#*=}"
+        case "$seen" in *" ${key} "*) ENROLL_ERR="${ENROLL_ERR}: ${key} repeated"; return 1 ;; esac
+        seen="${seen}${key} "
+        case "$key" in
+            REDIS_USERNAME)
+                [ "$val" = "hub:$(hub_id_of "$HUB_PUBLIC_ADDR")" ] \
+                    || { ENROLL_ERR="${ENROLL_ERR}: the user is not this hub's"; return 1; }
+                user="$val" ;;
+            REDIS_PASSWORD)
+                valid_password "$val" || { ENROLL_ERR="${ENROLL_ERR}: invalid password"; return 1; }
+                pass="$val" ;;
+            *) ENROLL_ERR="${ENROLL_ERR}: unexpected line"; return 1 ;;
+        esac
+    done <<<"$content"
+    if [ -z "$user" ] || [ -z "$pass" ]; then
+        ENROLL_ERR="${ENROLL_ERR}: REDIS_USERNAME or REDIS_PASSWORD missing"
+        return 1
+    fi
+    REDIS_USERNAME="$user"
+    REDIS_PASSWORD="$pass"
+}
+
 # enroll_once: one `winterflow-hub join`. Sets ENROLL_ERR and returns the
 # status on failure; the caller decides whether that ends the install.
 enroll_once() {
     # Make (or keep) the key and redeem the token: `winterflow-hub join`
     # posts the request, checks that the certificate matches the key and
-    # chains to the CA, and stores ca.crt and hub.crt. The token reaches it
-    # on stdin, never a command line.
-    local st=0 out
+    # chains to the CA, and stores ca.crt and hub.crt, then writes the hub's
+    # Redis user and password to a file in the root-only work dir (merged
+    # into hub.env after checks). The token reaches it on stdin, never a
+    # command line.
+    local st=0 out redis_env="${WORK_DIR}/redis.env"
+    ENROLL_JOINED=0
+    rm -f "$redis_env"
     out="$(printf '%s\n' "$JOIN_TOKEN" | "$HUB_DEST" join --api-url "$API_URL" \
-        --public-addr "$HUB_PUBLIC_ADDR" --cert-dir "$CERT_DIR" 2>&1)" || st=$?
+        --public-addr "$HUB_PUBLIC_ADDR" --cert-dir "$CERT_DIR" --redis-env-out "$redis_env" 2>&1)" || st=$?
     case "$st" in
         0) ;;
         2) ENROLL_ERR="${out} (a token works once and expires after an hour; ask for a new one)"; return 1 ;;
         *) ENROLL_ERR="joining the control plane failed: ${out}"; return 1 ;;
     esac
+    # The join went through: the new pair is stored and the control plane
+    # has reset the hub's Redis password.
+    ENROLL_JOINED=1
     chown root:"$HUB_USER" "${CERT_DIR}/hub.key" "${CERT_DIR}/hub.crt" "${CERT_DIR}/ca.crt"
     chmod 640 "${CERT_DIR}/hub.key"
     log "$out"
+    if ! checked_redis_env "$redis_env"; then
+        rm -f "$redis_env"
+        ENROLL_ERR="${ENROLL_ERR} (the token is spent: join again with a new one)"
+        return 1
+    fi
+    rm -f "$redis_env"
 }
 
 enroll() {
@@ -460,7 +520,13 @@ rejoin() {
                     continue
                 fi ;;
         esac
-        log "Starting winterflow-hub again with its previous certificate"
+        if [ "$ENROLL_JOINED" -eq 1 ]; then
+            # The join replaced the certificate and reset the Redis password,
+            # but its credentials were refused: the kept password is stale.
+            log "winterflow-hub's certificate was replaced, but the join's Redis credentials were refused and its previous Redis password no longer works; starting winterflow-hub again (it cannot reach Redis until you join again with a new token)"
+        else
+            log "Starting winterflow-hub again with its previous certificate"
+        fi
         systemctl start winterflow-hub 2>/dev/null || true
         die "$ENROLL_ERR"
     done
@@ -469,20 +535,29 @@ rejoin() {
 # --- Renderers (shared by install and --dry-run) ------------------------------
 
 secret_shown() {
-    # The Redis password in a real run; never in a dry run.
-    if [ "$DRY_RUN" -eq 1 ]; then printf '<hidden>'; else printf '%s' "$REDIS_PASSWORD"; fi
+    # The Redis password in a real run; never in a dry run (where a join
+    # would bring a new one).
+    if [ "$DRY_RUN" -eq 0 ]; then
+        printf '%s' "$REDIS_PASSWORD"
+    elif [ "$JOINED" -eq 0 ] || [ "$REJOIN" -eq 1 ]; then
+        printf '<from the join>'
+    else
+        printf '<hidden>'
+    fi
 }
 
 render_env() {
     cat <<EOF
 # WinterFlow hub (written by install-hub.sh; a rerun rewrites it from these
-# values and your options). Root only: holds the Redis password.
+# values and your options). Root only: holds the hub's Redis password (its
+# own user, from the join; a rejoin replaces it).
 LOG_LEVEL=info
 HUB_PUBLIC_ADDR=${HUB_PUBLIC_ADDR}
 HUB_PORT=${HUB_PORT}
 HUB_CAPACITY=${HUB_CAPACITY}
 HUB_CERT_DIR=${CERT_DIR}
 REDIS_ADDR=${REDIS_ADDR}
+REDIS_USERNAME=${REDIS_USERNAME:-hub:$(hub_id_of "$HUB_PUBLIC_ADDR")}
 REDIS_PASSWORD=$(secret_shown)
 REDIS_TLS=true
 REDIS_CA_CERT_PATH=${CERT_DIR}/ca.crt
@@ -574,9 +649,10 @@ render_plan() {
         echo "joined: ${CERT_DIR}/hub.crt exists; certificate and key kept, no token needed"
     else
         [ "$REJOIN" -eq 0 ] || echo "rejoin: a new hub.key and hub.crt replace the old pair once the join succeeds; the control plane retires this hub's older certificates"
-        echo "${HUB_DEST} join --api-url ${API_URL} --public-addr ${HUB_PUBLIC_ADDR} --cert-dir ${CERT_DIR}   (token on stdin, hidden)"
+        echo "${HUB_DEST} join --api-url ${API_URL} --public-addr ${HUB_PUBLIC_ADDR} --cert-dir ${CERT_DIR} --redis-env-out <temp file>   (token on stdin, hidden)"
         echo "  POST ${API_URL}/api/v1/hub/enroll {token, csr, public_addr}; hub.key made here and never sent"
         echo "  checks the certificate matches the key and chains to the CA, then stores ca.crt and hub.crt"
+        echo "  the answer's Redis user hub:$(hub_id_of "$HUB_PUBLIC_ADDR") and password (reset by every join) go to ${ENV_FILE}"
         echo "  ${CERT_DIR}: root:${HUB_USER} 0750; hub.key 0640"
         [ "$REJOIN" -eq 0 ] || echo "  rejoin: systemctl stop winterflow-hub before the join (the control plane refuses while it is live; retried up to 100 s), systemctl start winterflow-hub if the join fails"
     fi
@@ -683,7 +759,7 @@ uninstall() {
 
 check_settings() {
     [ -n "$HUB_PUBLIC_ADDR" ] || die "--public-addr host:port is required"
-    [ -n "$REDIS_ADDR" ] && [ -n "$REDIS_PASSWORD" ] || die "--redis-url (or WINTERFLOW_HUB_REDIS_URL) rediss://:<password>@host:port is required"
+    [ -n "$REDIS_ADDR" ] || die "--redis-addr (or WINTERFLOW_HUB_REDIS_ADDR) host:port is required: the control plane's Redis"
     if [ "$JOINED" -eq 0 ]; then
         [ -n "$JOIN_TOKEN" ] || die "--token is required on the first install (ask the control plane's operator for a hub join token)"
     fi
@@ -695,7 +771,8 @@ main() {
         case "$1" in
             --token)        JOIN_TOKEN="${2:?--token needs a value}"; shift 2 ;;
             --public-addr)  arg_public_addr="${2:?--public-addr needs host:port}"; shift 2 ;;
-            --redis-url)    REDIS_URL_ARG="${2:?--redis-url needs a URL}"; shift 2 ;;
+            --redis-addr)   REDIS_ADDR_ARG="${2:?--redis-addr needs host:port}"; shift 2 ;;
+            --redis-url)    die "--redis-url is gone: pass the address only, --redis-addr host:port (the hub's Redis user and password come from the join)" ;;
             --capacity)     HUB_CAPACITY="${2:?--capacity needs a number}"; shift 2 ;;
             --listen-port)  HUB_PORT="${2:?--listen-port needs a port}"; shift 2 ;;
             --api-url)      API_URL="${2:?--api-url needs a URL}"; shift 2 ;;
@@ -721,7 +798,12 @@ main() {
     [ "$PURGE" -eq 0 ] || [ "$UNINSTALL" -eq 1 ] || die "--purge only goes with --uninstall"
     valid_api_url "$API_URL" || die "--api-url must be https:// (http:// only for localhost), got: ${API_URL}"
     API_URL="${API_URL%/}"
-    [ -z "$REDIS_URL_ARG" ] || parse_redis_url "$REDIS_URL_ARG"
+    [ -z "${WINTERFLOW_HUB_REDIS_URL:-}" ] \
+        || die "WINTERFLOW_HUB_REDIS_URL is gone: set WINTERFLOW_HUB_REDIS_ADDR=host:port instead (the hub's Redis user and password come from the join)"
+    if [ -n "$REDIS_ADDR_ARG" ]; then
+        valid_hostport "$REDIS_ADDR_ARG" || die "--redis-addr must be host:port (a DNS name or IPv4; TLS is always used), got: ${REDIS_ADDR_ARG}"
+        REDIS_ADDR="$REDIS_ADDR_ARG"
+    fi
     [ -z "$JOIN_TOKEN" ] || valid_token "$JOIN_TOKEN" || die "the join token must look like wfh_..."
     [ -z "$arg_public_addr" ] || valid_hostport "$arg_public_addr" || die "--public-addr must be host:port (a DNS name or IPv4), got: ${arg_public_addr}"
     [ -z "$HUB_CAPACITY" ] || valid_capacity "$HUB_CAPACITY" || die "--capacity must be a positive number, got: ${HUB_CAPACITY}"
@@ -775,6 +857,8 @@ main() {
             REJOIN=1
         elif ! hub_cert_marked "${CERT_DIR}/hub.crt"; then
             die "this hub's certificate (${CERT_DIR}/hub.crt) has no winterflow-hub: URI, which agents now require; a join token is required to reissue it: ask the control plane's operator for a hub join token and rerun with --token (or WINTERFLOW_HUB_TOKEN)"
+        elif [ -z "$REDIS_USERNAME" ] || [ -z "$REDIS_PASSWORD" ]; then
+            die "${ENV_FILE} has no Redis user for this hub (it joined before hubs had their own Redis users); join again: ask the control plane's operator for a hub join token and rerun with --token (or WINTERFLOW_HUB_TOKEN)"
         fi
     fi
 
@@ -877,7 +961,7 @@ main() {
     render_finish
     echo
     echo "Logs:   journalctl ${journal_flags}-u winterflow-hub -f"
-    echo "Kept:   ${ENV_FILE} (Redis password), ${CERT_DIR} (the hub's key and certificates)."
+    echo "Kept:   ${ENV_FILE} (the hub's Redis password), ${CERT_DIR} (the hub's key and certificates)."
 }
 
 main "$@"

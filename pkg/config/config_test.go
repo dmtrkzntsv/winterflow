@@ -712,3 +712,14 @@ func TestGetWinterflowAPIURL(t *testing.T) {
 		t.Fatalf("set = %q", got)
 	}
 }
+
+func TestGetRedisUsername(t *testing.T) {
+	t.Setenv("REDIS_USERNAME", "")
+	if got := NewServerConfig("distributed").GetRedisUsername(); got != "" {
+		t.Fatalf("unset REDIS_USERNAME = %q, want empty (default user)", got)
+	}
+	t.Setenv("REDIS_USERNAME", "hub:hub-01.winterflow.dev")
+	if got := NewServerConfig("distributed").GetRedisUsername(); got != "hub:hub-01.winterflow.dev" {
+		t.Fatalf("GetRedisUsername() = %q", got)
+	}
+}

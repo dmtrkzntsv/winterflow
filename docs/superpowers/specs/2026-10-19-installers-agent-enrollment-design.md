@@ -589,3 +589,42 @@ CN = server id, created once, kept); the legacy `Generator`/`Manager`, the
 fullchain and CSR files go, and `make generate-hub-certs` /
 `generate-agent-certs` are replaced by targets that use `winterflow-hub pki`
 and a dev agent certificate signed with CN = a given server id.
+
+## Part D — a Redis user per hub (added 2026-10-22)
+
+Decided with the owner: every hub gets its own Redis ACL user, created when
+the hub registers and removed when it is replaced or retired. No backward
+compatibility: the distributed version is not in production, so the shared
+hub password goes away entirely.
+
+- **Users.** `hub:<hub_id>` with a random password (32 bytes, base64url).
+  Allowed: its own keys `hub:status:<id>` and `hub:draining:<id>`
+  (read/write); every hub's `hub:status:*` read-only (`%R~hub:status:*`, so
+  a stopping hub can list its peers: SCAN + MGET); publish only on
+  `hub:requests`, `bus:responses`, `bus:events`; subscribe only to
+  `bus:requests:<id>`, `hub:responses:<id>`, `hub:broadcast` (a Redis 7+
+  selector, so no hub can forge a broadcast or read the API's or other
+  hubs' traffic); commands for those (get/set/del/exists on its keys,
+  scan/mget for the peer listing, publish, subscribe/unsubscribe, ping,
+  select, and the connection handshake commands the client sends). Nothing
+  else — no writes to other hubs' keys, no other keys, no other channels.
+  Because SCAN shows every key name, the dedicated Redis instance holds
+  only `hub:*` keys.
+- **Who manages them.** The API, over its own Redis connection (the instance's
+  admin user, `default` with `requirepass`; only the control-plane host has
+  that password). Every change is followed by `ACL SAVE`; the dedicated Redis
+  instance gets an `aclfile` so users survive restarts.
+- **Create / replace.** `POST /api/v1/hub/enroll` creates (or resets) the
+  user and returns `redis_username` and `redis_password` with the
+  certificate; `install-hub.sh` writes them to the hub's env
+  (`REDIS_USERNAME`, `REDIS_PASSWORD`). Rejoining resets the password and
+  disconnects the old sessions (`CLIENT KILL USER`). The control plane's own
+  hub gets its user from `winterflow-api hub-trust`, which writes the
+  credentials to a file the installer passes (`--redis-env-out`, 0600).
+- **Remove.** `hub-retire --hub <id>` (and retiring the last active
+  certificate of a hub by fingerprint, and the installer's
+  changed-`--hub-addr` path) deletes the user (`ACL DELUSER`) and kills its
+  connections.
+- **Hub install.** `install-hub.sh` takes the Redis address only
+  (`--redis-addr host:port` / `WINTERFLOW_HUB_REDIS_ADDR`); no Redis password
+  is ever given to a hub machine. `REDIS_USERNAME` is a new client setting.

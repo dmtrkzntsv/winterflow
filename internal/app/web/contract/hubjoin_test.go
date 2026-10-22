@@ -29,7 +29,7 @@ func TestHubEnrollRoute(t *testing.T) {
 	var out hubjoin.EnrollResponse
 	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "hub-03.test:443"}).
 		expect(t, http.StatusOK).data(t, &out)
-	if out.Certificate == "" || out.CACertificate == "" {
+	if out.Certificate == "" || out.CACertificate == "" || out.RedisUsername != "hub:hub-03.test" || out.RedisPassword == "" {
 		t.Fatalf("response = %+v", out)
 	}
 	// The issued certificate is trusted: agents get it in their pin set.

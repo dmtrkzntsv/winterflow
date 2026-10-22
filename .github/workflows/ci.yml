@@ -168,8 +168,39 @@ jobs:
           path: contract-postgres.out
           if-no-files-found: error
 
+  # The Redis packages against a real Redis with an aclfile: the per-hub
+  # ACL user integration tests (skipped by plain go test). A service
+  # container cannot be given an aclfile, so the job runs the same script as
+  # `make test-redis`, which starts the containers itself. Twice: redis:8
+  # (coverage) and redis:7.0, the oldest the control plane installer admits
+  # and what Debian 12 / Ubuntu 24.04 ship (it refuses ACL rules 7.2 added).
+  redis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Redis packages (redis:8, ACL integration)
+        run: >-
+          bash scripts/test-redis.sh -race -covermode=atomic -coverpkg=./...
+          -coverprofile=redis.out
+
+      - name: Redis packages (redis:7.0, ACL integration)
+        env:
+          REDIS_IMAGE: redis:7.0
+        run: bash scripts/test-redis.sh -race
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: redis-coverage
+          path: redis.out
+          if-no-files-found: error
+
   coverage:
-    needs: [go, web, contract]
+    needs: [go, web, contract, redis]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -195,9 +226,15 @@ jobs:
         with:
           name: contract-postgres-coverage
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: redis-coverage
+
       # Duplicate blocks are fine: diffcov keeps the highest count per block.
-      - name: Merge Postgres contract coverage
-        run: tail -n +2 contract-postgres.out >> coverage.out
+      - name: Merge Postgres contract and Redis coverage
+        run: |
+          tail -n +2 contract-postgres.out >> coverage.out
+          tail -n +2 redis.out >> coverage.out
 
       - name: Diff coverage (changed lines >= 80%)
         if: github.event_name == 'pull_request'

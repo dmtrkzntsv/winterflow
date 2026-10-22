@@ -22,6 +22,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"winterflow/pkg/redisenv"
 )
 
 // Exit codes of the join subcommand.
@@ -53,14 +55,17 @@ const joinTimeout = 30 * time.Second
 // returned CA, and only then stores ca.crt, hub.key and hub.crt (written
 // last), replacing those of an earlier join: a rejoin (a leaked key, a
 // certificate from before the hub marker) always gets a new key, and the
-// control plane retires the hub's older certificates. A refused or failed
-// join leaves the existing files as they were.
+// control plane retires the hub's older certificates. With --redis-env-out
+// the hub's Redis credentials (its own user, reset by every join) are then
+// written to that file (0600, atomically; the password goes nowhere else).
+// A refused or failed join leaves the existing files as they were.
 func runJoin(args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	apiURL := fs.String("api-url", "", "control plane API URL")
 	addr := fs.String("public-addr", "", "hub public address host:port")
 	dir := fs.String("cert-dir", "", "directory for hub.key, hub.crt, ca.crt")
+	envOut := fs.String("redis-env-out", "", "write the hub's Redis credentials to this file (0600)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -101,12 +106,16 @@ func runJoin(args []string, in io.Reader, out io.Writer) error {
 	}
 	csrPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
 
-	certPEM, caPEM, err := postJoin(endpoint, token, string(csrPEM), *addr)
+	joined, err := postJoin(endpoint, token, string(csrPEM), *addr)
 	if err != nil {
 		return err
 	}
+	certPEM, caPEM := joined.Certificate, joined.CACertificate
 	if err := verifyJoin(certPEM, caPEM, keyPEM); err != nil {
 		return joinFail(exitOther, "the control plane's certificate is unusable: %v", err)
+	}
+	if *envOut != "" && (joined.RedisUsername == "" || joined.RedisPassword == "") {
+		return joinFail(exitOther, "the control plane sent no Redis credentials (is it older than this hub?)")
 	}
 	if err := os.MkdirAll(*dir, 0o750); err != nil {
 		return err
@@ -121,7 +130,16 @@ func runJoin(args []string, in io.Reader, out io.Writer) error {
 	if err := writeAtomic(filepath.Join(*dir, "hub.crt"), []byte(certPEM), 0o644); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(out, "joined: certificate for %s stored in %s\n", host, *dir)
+	if _, err := fmt.Fprintf(out, "joined: certificate for %s stored in %s\n", host, *dir); err != nil {
+		return err
+	}
+	if *envOut == "" {
+		return nil
+	}
+	if err := redisenv.Write(*envOut, joined.RedisUsername, joined.RedisPassword); err != nil {
+		return fmt.Errorf("join: write the Redis credentials (the token is spent; join again with a new one): %w", err)
+	}
+	_, err = fmt.Fprintf(out, "joined: Redis credentials of %s stored in %s\n", joined.RedisUsername, *envOut)
 	return err
 }
 
@@ -145,7 +163,15 @@ func joinEndpoint(raw string) (string, error) {
 	return strings.TrimRight(u.String(), "/") + "/api/v1/hub/enroll", nil
 }
 
-func postJoin(endpoint, token, csr, addr string) (cert, ca string, err error) {
+// joinAnswer is the data of a successful join.
+type joinAnswer struct {
+	Certificate   string `json:"certificate"`
+	CACertificate string `json:"ca_certificate"`
+	RedisUsername string `json:"redis_username"`
+	RedisPassword string `json:"redis_password"`
+}
+
+func postJoin(endpoint, token, csr, addr string) (joinAnswer, error) {
 	body, _ := json.Marshal(map[string]string{"token": token, "csr": csr, "public_addr": addr})
 	client := &http.Client{
 		Timeout: joinTimeout,
@@ -154,28 +180,25 @@ func postJoin(endpoint, token, csr, addr string) (cert, ca string, err error) {
 	}
 	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return "", "", joinFail(exitOther, "could not reach %s: %v", endpoint, err)
+		return joinAnswer{}, joinFail(exitOther, "could not reach %s: %v", endpoint, err)
 	}
 	defer resp.Body.Close()
 	var env struct {
-		Message string `json:"message"`
-		Data    struct {
-			Certificate   string `json:"certificate"`
-			CACertificate string `json:"ca_certificate"`
-		} `json:"data"`
+		Message string     `json:"message"`
+		Data    joinAnswer `json:"data"`
 	}
 	decErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&env)
 	switch {
 	case resp.StatusCode == http.StatusBadRequest:
-		return "", "", joinFail(exitRefused, "the control plane refused the join: %s", env.Message)
+		return joinAnswer{}, joinFail(exitRefused, "the control plane refused the join: %s", env.Message)
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return "", "", joinFail(exitOther, "the control plane is rate limiting joins; wait a minute and retry")
+		return joinAnswer{}, joinFail(exitOther, "the control plane is rate limiting joins; wait a minute and retry")
 	case resp.StatusCode != http.StatusOK:
-		return "", "", joinFail(exitOther, "the control plane answered HTTP %d to the join: %s", resp.StatusCode, env.Message)
+		return joinAnswer{}, joinFail(exitOther, "the control plane answered HTTP %d to the join: %s", resp.StatusCode, env.Message)
 	case decErr != nil:
-		return "", "", joinFail(exitOther, "unreadable answer from the control plane: %v", decErr)
+		return joinAnswer{}, joinFail(exitOther, "unreadable answer from the control plane: %v", decErr)
 	}
-	return env.Data.Certificate, env.Data.CACertificate, nil
+	return env.Data, nil
 }
 
 // verifyJoin checks the certificate parses, matches the key and chains to the CA.

@@ -3,6 +3,7 @@ package hubcert
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -87,32 +88,83 @@ func TestTrustIdempotentAndRetiresSiblings(t *testing.T) {
 }
 
 func TestRetire(t *testing.T) {
-	r, _ := open(t)
+	r, d := open(t)
 	ctx := context.Background()
 	for _, c := range []struct{ hub, fp string }{{"hub-01", "aa"}, {"hub-02", "bb"}, {"hub-03", "cc"}} {
 		if err := r.Trust(ctx, c.hub, c.fp, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n, err := r.Retire(ctx, "hub-01", "", now); err != nil || n != 1 {
-		t.Fatalf("by hub = %d, %v", n, err)
+	var released []string
+	release := func(_ context.Context, hub string) error { released = append(released, hub); return nil }
+	retire := func(hub, fp string, wantN int, wantReleased ...string) {
+		t.Helper()
+		released = nil
+		n, err := r.Retire(ctx, hub, fp, now, release)
+		if err != nil || n != wantN || !reflect.DeepEqual(released, wantReleased) {
+			t.Fatalf("Retire(%q, %q) = %d, %v, released %v; want %d, %v", hub, fp, n, err, released, wantN, wantReleased)
+		}
 	}
-	if n, err := r.Retire(ctx, "hub-01", "", now); err != nil || n != 0 {
-		t.Fatalf("again = %d, %v", n, err)
+	retire("hub-01", "", 1, "hub-01")
+	// Again: nothing retired, but the hub is released again (a rerun
+	// finishes a failed release).
+	retire("hub-01", "", 0, "hub-01")
+	// A hub id with no certificate on record (a typo) is not released.
+	retire("hub-09", "", 0)
+	retire("", "bb", 1, "hub-02")
+	retire("", "bb", 0, "hub-02")
+	retire("", "zz", 0)
+	// A hub with another active certificate left is not released.
+	dbtest.Exec(t, d, `INSERT INTO hub_certificates (fingerprint, hub_id, created_at) VALUES (?, ?, ?)`, "c2", "hub-03", now)
+	retire("", "c2", 1)
+	// A nil release only retires.
+	if n, err := r.Retire(ctx, "hub-02", "", now, nil); err != nil || n != 0 {
+		t.Fatalf("nil release = %d, %v", n, err)
 	}
-	if n, err := r.Retire(ctx, "", "bb", now); err != nil || n != 1 {
-		t.Fatalf("by fingerprint = %d, %v", n, err)
+	// A release error comes back after the retire was committed.
+	if err := r.Trust(ctx, "hub-04", "dd", now); err != nil {
+		t.Fatal(err)
 	}
-	if n, err := r.Retire(ctx, "", "zz", now); err != nil || n != 0 {
-		t.Fatalf("unknown = %d, %v", n, err)
+	boom := errors.New("redis down")
+	if n, err := r.Retire(ctx, "hub-04", "", now, func(context.Context, string) error { return boom }); !errors.Is(err, boom) || n != 1 {
+		t.Fatalf("failing release = %d, %v", n, err)
 	}
-	if _, err := r.Retire(ctx, "hub-03", "cc", now); err == nil {
+	if _, err := r.Retire(ctx, "hub-03", "cc", now, release); err == nil {
 		t.Fatal("both filters accepted")
 	}
-	if _, err := r.Retire(ctx, "", "", now); err == nil {
+	if _, err := r.Retire(ctx, "", "", now, release); err == nil {
 		t.Fatal("no filter accepted")
 	}
 	if got := active(t, r); !reflect.DeepEqual(got, []string{"cc"}) {
+		t.Fatalf("active = %v", got)
+	}
+}
+
+// The release runs under the per-hub lock: a Trust of the same hub waits
+// for it (on SQLite every transaction is serialized anyway).
+func TestRetireReleaseHoldsTheHubLock(t *testing.T) {
+	r, _ := open(t)
+	ctx := context.Background()
+	if err := r.Trust(ctx, "hub-01", "aa", now); err != nil {
+		t.Fatal(err)
+	}
+	trusted := make(chan error, 1)
+	release := func(context.Context, string) error {
+		go func() { trusted <- r.Trust(ctx, "hub-01", "bb", now) }()
+		select {
+		case err := <-trusted:
+			return fmt.Errorf("Trust finished during the release: %v", err)
+		case <-time.After(200 * time.Millisecond):
+			return nil
+		}
+	}
+	if _, err := r.Retire(ctx, "hub-01", "", now, release); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-trusted; err != nil {
+		t.Fatal(err)
+	}
+	if got := active(t, r); !reflect.DeepEqual(got, []string{"bb"}) {
 		t.Fatalf("active = %v", got)
 	}
 }

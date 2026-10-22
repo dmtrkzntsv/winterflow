@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/elliptic"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -43,7 +44,7 @@ func newHandler(t *testing.T) (*Handler, *hubjoin.UseCase) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := hubjoin.New(repo, certs, enrolltest.Signer(t), noHubs{}, nil)
+	uc := hubjoin.New(repo, certs, &enrolltest.RedisUsers{}, enrolltest.Signer(t), noHubs{}, nil)
 	return NewHandler(&Deps{Logger: log, Joiner: uc}), uc
 }
 
@@ -73,7 +74,8 @@ func TestEnroll(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(env.Data.Certificate, "BEGIN CERTIFICATE") || !strings.Contains(env.Data.CACertificate, "BEGIN CERTIFICATE") {
+	if !strings.Contains(env.Data.Certificate, "BEGIN CERTIFICATE") || !strings.Contains(env.Data.CACertificate, "BEGIN CERTIFICATE") ||
+		env.Data.RedisUsername != "hub:hub-02.example.com" || env.Data.RedisPassword == "" {
 		t.Fatalf("data = %+v", env.Data)
 	}
 
@@ -91,11 +93,16 @@ func TestEnrollBadRequests(t *testing.T) {
 		"unknown token": {Token: "wfh_nope", CSR: csr, PublicAddr: "h.example.com:443"},
 		"bad csr":       {Token: token, CSR: "garbage", PublicAddr: "h.example.com:443"},
 		"bad address":   {Token: token, CSR: csr, PublicAddr: "no-port"},
+		"ipv6 host":     {Token: token, CSR: csr, PublicAddr: "[2001:db8::1]:443"},
 		"empty":         {},
 	} {
 		if w := call(t, h, req); w.Code != http.StatusBadRequest {
 			t.Errorf("%s = %d: %s", name, w.Code, w.Body)
 		}
+	}
+	// The token survived every refusal.
+	if w := call(t, h, EnrollRequest{Token: token, CSR: csr, PublicAddr: "h.example.com:443"}); w.Code != http.StatusOK {
+		t.Fatalf("token spent: %d %s", w.Code, w.Body)
 	}
 	// Malformed JSON.
 	r := httptest.NewRequest("POST", "/", strings.NewReader("{")).WithContext(dbtest.Ctx(t))
@@ -121,5 +128,24 @@ func TestRouteIsPublicAndTightlyLimited(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0] != "start" {
 		t.Fatalf("guards = %v", hits)
+	}
+}
+
+// A Redis user that cannot be created is a 500 (the token is spent).
+func TestEnrollRedisUserFailure(t *testing.T) {
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	conn, err := db.Open(log, "sqlite://"+filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Shutdown() })
+	repo, _ := hubtoken.New(conn.Tx, conn.Driver)
+	certs, _ := hubcert.New(conn.Tx, conn.Driver)
+	uc := hubjoin.New(repo, certs, &enrolltest.RedisUsers{Err: errors.New("redis down")}, enrolltest.Signer(t), noHubs{}, nil)
+	h := NewHandler(&Deps{Logger: log, Joiner: uc})
+	token, _, _ := uc.Issue(dbtest.Ctx(t), time.Hour)
+	w := call(t, h, EnrollRequest{Token: token, CSR: enrolltest.CSR(t, elliptic.P256()), PublicAddr: "hub-02.example.com:443"})
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "redis down") {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 }

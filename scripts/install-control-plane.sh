@@ -16,7 +16,9 @@
 #   - creates the Winterflow CA, the hub certificate and a Redis certificate
 #     once (winterflow-hub pki), keeping the CA on every rerun,
 #   - runs a dedicated Redis instance, redis-server@winterflow: TLS only on
-#     port 6380 with a password (the distro's default Redis is never touched),
+#     port 6380 with a password (the distro's default Redis is never touched)
+#     and an aclfile holding one Redis user per hub (hub:<hub id>, made by
+#     the API when a hub joins; the admin password stays on this host),
 #   - installs hardened systemd units winterflow-api and winterflow-hub, run
 #     by separate system users; only winterflow-api can read the CA key.
 #
@@ -94,6 +96,11 @@ REDIS_TLS_DIR="${INSTALL_ROOT}/etc/redis/winterflow-tls"
 REDIS_DROPIN_DIR="${INSTALL_ROOT}/etc/systemd/system/${REDIS_SERVICE}.d"
 REDIS_DROPIN="${REDIS_DROPIN_DIR}/winterflow.conf"
 REDIS_DATA_DIR="${INSTALL_ROOT}/var/lib/redis/winterflow"
+# The instance's users (the admin 'default' and one per hub). Redis rewrites
+# it on ACL SAVE (a temp file beside it, then a rename), so it lives in the
+# data directory, which the redis user owns and Debian's template unit lets
+# it write.
+REDIS_ACL_FILE="${REDIS_DATA_DIR}/users.acl"
 REDIS_PORT=6380
 JOURNAL_NAMESPACE="winterflow"
 JOURNAL_CONF="${INSTALL_ROOT}/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
@@ -128,6 +135,10 @@ POSTGRES_PASSWORD=""
 REDIS_PASSWORD=""
 JWT_SECRET=""
 POSTGRES_PASSWORD_KEPT=0
+# The local hub's own Redis user, from winterflow-api hub-trust
+# --redis-env-out (reset on every run; never the admin password).
+HUB_REDIS_USERNAME=""
+HUB_REDIS_PASSWORD=""
 R2_BUCKET="econumo"
 RELEASE_VERSION=""
 CHANNEL="latest"
@@ -498,7 +509,7 @@ ensure_packages() {
     redis_installed || die "Redis is still missing (redis-server and the ${REDIS_SERVICE} template unit); install the 'redis-server' package and rerun"
     local rv
     rv="$(redis-server --version | sed -n 's/.* v=\([0-9]*\)\..*/\1/p')"
-    [ -n "$rv" ] && [ "$rv" -ge 6 ] || die "Redis ${rv:-unknown} has no TLS support; Redis >= 6 is required"
+    [ -n "$rv" ] && [ "$rv" -ge 7 ] || die "Redis ${rv:-unknown} is too old: the hubs' Redis users need ACL selectors (Redis >= 7)"
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
@@ -557,16 +568,22 @@ EOF
 }
 
 render_hub_env() {
+    # The hub's own Redis user (hub:<hub id>), never the admin password. A
+    # dry run shows where the password comes from.
+    local user="${HUB_REDIS_USERNAME:-hub:$(hub_id_of "$HUB_PUBLIC_ADDR")}" pass="<from hub-trust --redis-env-out>"
+    [ "$DRY_RUN" -eq 1 ] || pass="$HUB_REDIS_PASSWORD"
     cat <<EOF
 # WinterFlow hub (written by install-control-plane.sh; a rerun rewrites it).
-# Holds only the CA certificate and the hub's own pair, never the CA key.
+# Holds only the CA certificate and the hub's own pair, never the CA key,
+# and the hub's own Redis user (reset on every run), never the admin one.
 LOG_LEVEL=info
 HUB_PUBLIC_ADDR=${HUB_PUBLIC_ADDR}
 HUB_PORT=${HUB_PUBLIC_ADDR##*:}
 HUB_CAPACITY=${HUB_CAPACITY}
 HUB_CERT_DIR=${HUB_CERT_DIR}
 REDIS_ADDR=127.0.0.1:${REDIS_PORT}
-REDIS_PASSWORD=$(shown "$REDIS_PASSWORD")
+REDIS_USERNAME=${user}
+REDIS_PASSWORD=${pass}
 REDIS_TLS=true
 REDIS_CA_CERT_PATH=${HUB_CERT_DIR}/ca.crt
 EOF
@@ -578,6 +595,9 @@ render_redis_conf() {
 # Winterflow's dedicated Redis (redis-server@winterflow), written by
 # install-control-plane.sh; a rerun rewrites it. TLS only, password auth.
 # The distro's default instance (redis-server.service) is separate.
+# Users live in the aclfile: 'default' (the admin: only the API has its
+# password; the installer keeps its line in step with requirepass) and one
+# hub:<hub id> user per hub, made and removed by the API (ACL SAVE).
 port 0
 tls-port ${REDIS_PORT}
 bind $(uniq_words 127.0.0.1 ${REDIS_BIND})
@@ -593,7 +613,17 @@ daemonize no
 pidfile /run/redis-winterflow/redis-server.pid
 logfile ""
 dir ${REDIS_DATA_DIR}
+aclfile ${REDIS_ACL_FILE}
 EOF
+}
+
+redis_default_acl_line() {
+    # The admin user as Redis writes it on ACL SAVE. An aclfile without it
+    # would leave 'default' with nopass: users loaded from the file replace
+    # requirepass. A dry run never prints the password's hash.
+    local h="<sha256 of REDIS_PASSWORD>"
+    [ "$DRY_RUN" -eq 1 ] || h="$(printf '%s' "$REDIS_PASSWORD" | sha256sum | cut -d' ' -f1)"
+    printf 'user default on sanitize-payload #%s ~* &* +@all\n' "$h"
 }
 
 render_redis_dropin() {
@@ -761,14 +791,16 @@ render_plan() {
     echo "runuser -u ${API_USER} -- winterflow-hub pki $(pki_args | paste -sd ' ' -)"
     echo "  ${PKI_DIR}: ${API_USER} 0700; ca.key: ${API_USER} 0600 (only the API reads the CA key)"
     echo "  ${HUB_CERT_DIR}: ca.crt hub.crt hub.key copied, root:${HUB_USER}, key 0640"
-    echo "runuser -u ${API_USER} -- winterflow-api hub-trust --cert ${PKI_DIR}/hub.crt (API env: DATABASE_URL, HUB_CERT_DIR passed in the environment; after PostgreSQL is ready; a retired certificate is reissued once)"
+    echo "runuser -u ${API_USER} -- winterflow-api hub-trust --cert ${PKI_DIR}/hub.crt --redis-env-out <temp file> (API env: DATABASE_URL, HUB_CERT_DIR, REDIS_ADDR, REDIS_PASSWORD, REDIS_TLS, REDIS_CA_CERT_PATH passed in the environment; after PostgreSQL and Redis are ready; a retired certificate is reissued once)"
+    echo "  creates or resets the hub's Redis user hub:$(hub_id_of "$HUB_PUBLIC_ADDR"); its credentials go to ${HUB_ENV_FILE} (the admin password never does)"
     local id
     for id in $RETIRE_HUB_IDS; do
-        echo "runuser -u ${API_USER} -- winterflow-api hub-retire --hub ${id} (the previous hub id; after hub-trust)"
+        echo "runuser -u ${API_USER} -- winterflow-api hub-retire --hub ${id} (the previous hub id; after hub-trust; also deletes its Redis user)"
     done
     echo "  ${REDIS_TLS_DIR}: ca.crt redis.crt redis.key copied, root:${REDIS_USER}, key 0640"
     echo "postgres: create role and database '${DB_NAME}' if absent (password from ${STATE_FILE})"
-    echo "systemctl enable ${REDIS_SERVICE}; restart it when its config or certificate changed"
+    echo "  ${REDIS_ACL_FILE}: ${REDIS_USER} 0600; created with the 'default' (admin) user, hub users kept on reruns"
+    echo "systemctl enable ${REDIS_SERVICE}; restart it when its config, its aclfile's admin line or its certificate changed"
     echo "systemctl enable winterflow-api winterflow-hub; systemctl restart winterflow-api winterflow-hub"
 }
 
@@ -884,25 +916,80 @@ env_value() {
 
 api_cmd() {
     # api_cmd ARGS... — winterflow-api ARGS as the API user with the API's
-    # database and CA dir; API_STATUS and API_OUT hold the result. The values
-    # travel in the environment (runuser without --login keeps it), never on
-    # a command line, where the Postgres password in DATABASE_URL would show
-    # in /proc/<pid>/cmdline.
+    # database, CA dir and Redis (the admin user, which manages the hubs'
+    # Redis users); API_STATUS and API_OUT hold the result. The values travel
+    # in the environment (runuser without --login keeps it), never on a
+    # command line, where the Postgres password in DATABASE_URL or the Redis
+    # password would show in /proc/<pid>/cmdline.
     API_STATUS=0
     API_OUT="$(
         DATABASE_URL="$(env_value "$API_ENV_FILE" DATABASE_URL)"
         HUB_CERT_DIR="$(env_value "$API_ENV_FILE" HUB_CERT_DIR)"
-        export DATABASE_URL HUB_CERT_DIR
+        REDIS_ADDR="$(env_value "$API_ENV_FILE" REDIS_ADDR)"
+        REDIS_PASSWORD="$(env_value "$API_ENV_FILE" REDIS_PASSWORD)"
+        REDIS_TLS="$(env_value "$API_ENV_FILE" REDIS_TLS)"
+        REDIS_CA_CERT_PATH="$(env_value "$API_ENV_FILE" REDIS_CA_CERT_PATH)"
+        export DATABASE_URL HUB_CERT_DIR REDIS_ADDR REDIS_PASSWORD REDIS_TLS REDIS_CA_CERT_PATH
         runuser -u "$API_USER" -- "$API_DEST" "$@" 2>&1
     )" || API_STATUS=$?
 }
 
+checked_redis_env() {
+    # checked_redis_env FILE — sets HUB_REDIS_USERNAME and HUB_REDIS_PASSWORD
+    # from hub-trust's --redis-env-out file. It comes from a folder the API
+    # user can write, so root takes exactly the two keys with plain values:
+    # the user named after this hub and a base64url password. Anything else,
+    # a missing or a repeated key fails the whole file.
+    local file="$1" content line key val seen=" " user="" pass=""
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        warn "hub-trust's Redis credentials ${file} are missing or not a regular file"
+        return 1
+    fi
+    content="$(cat "$file")" || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        key="${line%%=*}"
+        val="${line#*=}"
+        case "$seen" in *" ${key} "*) warn "refusing hub-trust's Redis credentials: ${key} repeated"; return 1 ;; esac
+        seen="${seen}${key} "
+        case "$key" in
+            REDIS_USERNAME)
+                [ "$val" = "hub:$(hub_id_of "$HUB_PUBLIC_ADDR")" ] \
+                    || { warn "refusing hub-trust's Redis credentials: unexpected user name"; return 1; }
+                user="$val" ;;
+            REDIS_PASSWORD)
+                printf '%s' "$val" | grep -qE '^[A-Za-z0-9_-]{16,256}$' \
+                    || { warn "refusing hub-trust's Redis credentials: invalid password"; return 1; }
+                pass="$val" ;;
+            *) warn "refusing hub-trust's Redis credentials: unexpected line"; return 1 ;;
+        esac
+    done <<<"$content"
+    if [ -z "$user" ] || [ -z "$pass" ]; then
+        warn "refusing hub-trust's Redis credentials: REDIS_USERNAME or REDIS_PASSWORD missing"
+        return 1
+    fi
+    HUB_REDIS_USERNAME="$user"
+    HUB_REDIS_PASSWORD="$pass"
+}
+
 hub_trust() {
-    # winterflow-api hub-trust on the hub certificate; HUB_TRUST_STATUS and
-    # HUB_TRUST_OUT hold the result.
-    api_cmd hub-trust --cert "$PKI_DIR/hub.crt"
+    # winterflow-api hub-trust on the hub certificate. It also creates (or
+    # resets) the hub's Redis user and writes the credentials to a temp file
+    # in a folder only the API user and root can enter. HUB_TRUST_STATUS and
+    # HUB_TRUST_OUT hold the result; on success HUB_REDIS_USERNAME and
+    # HUB_REDIS_PASSWORD hold the credentials.
+    local tmpd
+    tmpd="$(mktemp -d "${API_HOME}/.hub-redis.XXXXXX")"
+    chown "$API_USER:$API_USER" "$tmpd"
+    chmod 700 "$tmpd"
+    api_cmd hub-trust --cert "$PKI_DIR/hub.crt" --redis-env-out "$tmpd/redis.env"
     HUB_TRUST_STATUS="$API_STATUS"
     HUB_TRUST_OUT="$API_OUT"
+    if [ "$HUB_TRUST_STATUS" -eq 0 ] && ! checked_redis_env "$tmpd/redis.env"; then
+        HUB_TRUST_STATUS=1
+        HUB_TRUST_OUT="the hub's Redis credentials were refused (see the warning above)"
+    fi
+    rm -rf "$tmpd"
 }
 
 hub_id_of() {
@@ -927,15 +1014,17 @@ note_hub_change() {
 retire_previous_hubs() {
     # After a changed --hub-addr the old hub id's certificates are no longer
     # this hub's: retire them (after the new one is trusted), so agents stop
-    # accepting them. An id with nothing left to retire is done too; any
-    # other failure warns and is retried on the next run.
+    # accepting them. An id with nothing left to retire (exit status 3: no
+    # active certificate and its Redis user released) is done too; any other
+    # failure, "nothing to retire" with a failed release included, warns and
+    # is retried on the next run.
     [ -n "$RETIRE_HUB_IDS" ] || return 0
     local id left=""
     for id in $RETIRE_HUB_IDS; do
         api_cmd hub-retire --hub "$id"
         if [ "$API_STATUS" -eq 0 ]; then
             log "Retired the certificates of the previous hub id ${id}: ${API_OUT}"
-        elif grep -q "no active hub certificate" <<<"$API_OUT"; then
+        elif [ "$API_STATUS" -eq 3 ]; then
             log "The previous hub id ${id} has no active certificates"
         else
             warn "could not retire the certificates of the previous hub id ${id} (retried on the next run): ${API_OUT}"
@@ -977,9 +1066,31 @@ issue_pki() {
     put_file "$REDIS_TLS_DIR/redis.key" 640 root "$REDIS_USER" < "$PKI_DIR/redis.key"; [ "$PUT_CHANGED" -eq 0 ] || REDIS_CHANGED=1
 }
 
+ensure_redis_acl_file() {
+    # The aclfile starts with the admin ('default') user and keeps the hub
+    # users the API saved there on every rerun. Its admin line is rewritten
+    # (and Redis restarted to load it) only when it differs from the kept
+    # password, so a rerun does not race the API's ACL SAVE for nothing.
+    local want rest
+    want="$(redis_default_acl_line)"
+    if [ -f "$REDIS_ACL_FILE" ]; then
+        if [ "$(grep '^user default ' "$REDIS_ACL_FILE" || true)" = "$want" ]; then
+            return 0
+        fi
+        rest="$(grep -v '^user default ' "$REDIS_ACL_FILE" || true)"
+        log "Setting the admin user in ${REDIS_ACL_FILE} (hub users kept)"
+    else
+        rest=""
+        log "Creating ${REDIS_ACL_FILE} with the admin user"
+    fi
+    put_file "$REDIS_ACL_FILE" 600 "$REDIS_USER" "$REDIS_USER" < <(printf '%s\n' "$want"; [ -z "$rest" ] || printf '%s\n' "$rest")
+    REDIS_CHANGED=1
+}
+
 start_redis() {
     local i
     install -d -m 750 -o "$REDIS_USER" -g "$REDIS_USER" "$REDIS_DATA_DIR"
+    ensure_redis_acl_file
     put_file "$REDIS_CONF" 640 root "$REDIS_USER" < <(render_redis_conf)
     [ "$PUT_CHANGED" -eq 0 ] || REDIS_CHANGED=1
     install -d -m 755 -o root -g root "$REDIS_DROPIN_DIR"
@@ -1183,6 +1294,10 @@ main() {
         echo
         echo "### ${REDIS_DROPIN}"
         render_redis_dropin
+        echo
+        echo "### ${REDIS_ACL_FILE}"
+        redis_default_acl_line
+        echo "(the hubs' users hub:<hub id>: made by the API, kept on reruns)"
         if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
             echo
             echo "### ${JOURNAL_CONF}"
@@ -1265,12 +1380,14 @@ main() {
     start_redis
     provision_postgres
 
-    log "Writing ${API_ENV_FILE} and ${HUB_ENV_FILE}"
+    log "Writing ${API_ENV_FILE}"
     put_file "$API_ENV_FILE" 600 root root < <(render_api_env)
-    put_file "$HUB_ENV_FILE" 600 root root < <(render_hub_env)
 
-    log "Trusting the hub certificate"
+    log "Trusting the hub certificate and resetting the hub's Redis user"
     trust_hub_cert
+
+    log "Writing ${HUB_ENV_FILE}"
+    put_file "$HUB_ENV_FILE" 600 root root < <(render_hub_env)
 
     # --- Config and units -----------------------------------------------------
 

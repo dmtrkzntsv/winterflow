@@ -72,7 +72,38 @@ root needed), `--uninstall`.
 - A dedicated Redis instance, `redis-server@winterflow`, config
   `/etc/redis/redis-winterflow.conf`: TLS only on port 6380 with a password,
   certificate issued by the Winterflow CA; bound to localhost plus any
-  `--redis-bind` addresses. The distro's default Redis is never touched.
+  `--redis-bind` addresses; Redis 7 or newer. The distro's default Redis is
+  never touched. Its users live in the aclfile
+  `/var/lib/redis/winterflow/users.acl` (see [Redis users](#redis-users)).
+
+## Redis users
+
+Every hub connects to Redis as its own user, `hub:<hub id>`, with a random
+password; there is no shared hub password. A hub's user may write only its
+own keys (`hub:status:<id>`, `hub:draining:<id>`), read every hub's status,
+publish only on `hub:requests`, `bus:responses` and `bus:events`, and
+subscribe only to `bus:requests:<id>`, `hub:responses:<id>` and
+`hub:broadcast`. Because a hub can list key names, keep nothing but
+Winterflow's `hub:*` keys in this instance.
+
+- The admin user (`default`, the password in
+  `/etc/winterflow/control-plane.env`) stays on the control-plane host: only
+  the API (`control-plane-api.env`) has it. The API creates, resets and
+  deletes the hubs' users and saves them to the aclfile (`ACL SAVE`), so they
+  survive restarts. The installer writes the aclfile's `default` line (the
+  admin password's hash) and keeps every hub user on reruns.
+- Joining a hub (`install-hub.sh`) creates its user, or resets its password
+  on a rejoin and disconnects the old sessions; the credentials come back
+  with the hub's certificate and go to the hub's `/etc/winterflow/hub.env`.
+  No Redis password is ever typed on a hub machine.
+- The control plane's own hub gets its user from `winterflow-api hub-trust`,
+  run by the installer on every run (it resets the password, writes it to
+  `control-plane-hub.env` and restarts the hub). That env file never holds
+  the admin password. A rerun whose `hub-trust` fails after the reset leaves
+  the local hub unable to log in to Redis; rerun the installer to recover.
+- `winterflow-api hub-retire` removes access: retiring a hub (or its last
+  active certificate) deletes its Redis user and disconnects it. The
+  installer's changed-`--hub-addr` path does the same for the old hub id.
 
 ## Rerun and upgrade
 
@@ -101,6 +132,12 @@ with `--redis-host <fqdn>` (kept for later reruns). Hubs that use an address
 given with `--redis-bind`/`--redis-host` are not affected. An existing CA
 keeps its old path-length setting; nothing to do about it.
 
+Hubs now log in to Redis as their own users (see [Redis users](#redis-users))
+and need Redis 7 or newer on the control plane. Rerun
+`install-control-plane.sh` first (it adds the aclfile and gives the local hub
+its user), then rerun every other hub's `install-hub.sh` with a new join token
+and `--redis-addr <cp-host>:6380` in place of the removed `--redis-url`.
+
 ## Back up the CA
 
 Back up `/var/lib/winterflow-control/pki/ca.key` and `ca.crt` (with the
@@ -116,7 +153,12 @@ On the control-plane host, with the API's environment:
 sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-retire --hub <hub id>'
 ```
 
-(`--fingerprint <sha256>` retires one certificate instead.) Agents stop
+(`--fingerprint <sha256>` retires one certificate instead.) When the hub has
+no active certificate left, its Redis user is deleted too, cutting it off
+from the bus at once; the command needs Redis for that (the API's env has
+its settings), and if Redis was down a rerun finishes the deletion. It
+exits with status 3 when there was nothing to retire and nothing left to
+delete, 1 on any failure. Agents stop
 accepting the retired certificate when they next ask the API for the set of
 certificates they pin: at their next start, and every 6 hours while
 connected. Rejoining the hub (rerun `install-hub.sh` on it with a new token)
@@ -141,9 +183,9 @@ no data and joins the existing control plane.
 1. Let remote hubs reach Redis: install the control plane with `--redis-bind`
    (an address of this host, e.g. its Tailscale IP) and `--redis-host` (the
    name to put in the Redis certificate, e.g. its Tailscale name); rerun it
-   if it was installed without them. Hubs connect over TLS only
-   (`rediss://:<password>@<cp-host>:6380`); the password is in
-   `/etc/winterflow/control-plane.env`.
+   if it was installed without them. Hubs connect over TLS only, to
+   `<cp-host>:6380` (a name or address in the Redis certificate), each as its
+   own Redis user that the join creates; the admin password stays here.
 2. On the API host, create a one-time join token (valid 1 hour, single use;
    the command needs the API's environment, `DATABASE_URL` above all):
 
@@ -159,7 +201,7 @@ no data and joins the existing control plane.
 
    ```sh
    export WINTERFLOW_R2_ENDPOINT=... WINTERFLOW_R2_ACCESS_KEY_ID=... WINTERFLOW_R2_SECRET_ACCESS_KEY=...
-   export WINTERFLOW_HUB_REDIS_URL='rediss://:<pw>@<cp-host>:6380'
+   export WINTERFLOW_HUB_REDIS_ADDR=<cp-host>:6380   # or --redis-addr
    export WINTERFLOW_HUB_TOKEN=wfh_...        # or --token (visible in the process list)
    sudo -E bash install-hub.sh --public-addr hub-02.winterflow.dev:50051 \
      --api-url https://<your API URL>
@@ -171,6 +213,16 @@ no data and joins the existing control plane.
    `--version`, `--r2-bucket`, `--yes`, `--dry-run`. The public address's host goes into
    the hub's certificate and is the hub's id; it cannot change later. The
    hub registers within about 30 s and new servers can then be placed on it.
+   The host must be a DNS name or an IPv4 address (it also names the hub's
+   Redis user, so an IPv6 address is refused, and the token is kept).
+
+   The join also creates the hub's own Redis user (`hub:<hub id>`; rejoining
+   resets its password) and the installer writes its credentials to
+   `/etc/winterflow/hub.env` (`REDIS_USERNAME`, `REDIS_PASSWORD`). If that
+   step fails on the control plane (Redis down, or its `aclfile` missing),
+   the join fails with HTTP 500 after the token was spent: fix the cause,
+   create a new token and run the installer again with it; the new join
+   replaces the certificate and creates the user.
 
 New agents are spread over accepting hubs; existing agents stay where they
 are until a hub drains.
@@ -199,12 +251,14 @@ moves nobody and stops at once; its agents reconnect when it is back.
 ## Updating, removing a hub
 
 Rerun `install-hub.sh` (no token needed): it replaces the binary and
-restarts the service, keeping the certificate and `/etc/winterflow/hub.env`.
+restarts the service, keeping the certificate, the Redis credentials and
+`/etc/winterflow/hub.env` (`--redis-addr` changes only the address).
 A rerun with a join token joins again instead: a new key and certificate
-replace the old pair (only once the join succeeds) and the control plane
-retires the hub's older certificates; do this after a hub key leaked, and
-for a certificate from before the hub URI (such a rerun refuses to go on
-without a token).
+replace the old pair (only once the join succeeds), the control plane
+retires the hub's older certificates and resets the hub's Redis password
+(the new one replaces the kept one); do this after a hub key leaked, for a
+certificate from before the hub URI, and for a hub joined before hubs had
+their own Redis users (such reruns refuse to go on without a token).
 `--uninstall` drains the hub and removes the unit and binary, keeping the
 certificate and settings so a rerun brings it back; `--uninstall --purge` also
 deletes the certificate, `hub.env`, data and user, after which the hub needs a

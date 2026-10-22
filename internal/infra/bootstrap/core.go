@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
+	hubcertrepo "winterflow/internal/infra/db/repository/hubcert"
 	hubtokenrepo "winterflow/internal/infra/db/repository/hubtoken"
 
 	"winterflow/internal/domain/metrics"
@@ -134,6 +135,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		HubPicker:                picker,
 		EnrollmentRepository:     r.enrollment,
 		HubTokenRepository:       r.hubToken,
+		HubCertRepository:        r.hubCert,
 		Revoker:                  revoker,
 	}, r.server
 }
@@ -153,6 +155,7 @@ type repos struct {
 	alert         *alertrepo.Repo
 	enrollment    *enrollmentrepo.Repo
 	hubToken      *hubtokenrepo.Repo
+	hubCert       *hubcertrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -196,6 +199,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.enrollment, err = enrollmentrepo.New(conn.Tx, conn.Driver); err != nil {
 		return r, err
 	}
-	r.hubToken, err = hubtokenrepo.New(conn.Tx, conn.Driver)
+	if r.hubToken, err = hubtokenrepo.New(conn.Tx, conn.Driver); err != nil {
+		return r, err
+	}
+	r.hubCert, err = hubcertrepo.New(conn.Tx, conn.Driver)
 	return r, err
 }

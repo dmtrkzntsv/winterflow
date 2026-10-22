@@ -4,6 +4,7 @@ import (
 	"crypto/elliptic"
 	"net/http"
 	"testing"
+	"time"
 
 	"winterflow/internal/app/web/handler/enroll"
 	"winterflow/internal/app/web/handler/server"
@@ -36,13 +37,20 @@ func TestEnrollRoutes(t *testing.T) {
 	}
 	agent.post(t, "/api/v1/agent/enroll/status", enroll.PollRequest{PollSecret: "unknown"}).expect(t, http.StatusBadRequest)
 
+	// The control plane's hub certificate is trusted; claimed answers carry
+	// the set.
+	const pin = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := e.deps.HubCertRepository.Trust(e.dbCtx(t), enrolltest.DefaultHub.ID, pin, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	// The user claims the code; the agent's poll then returns its certificate.
 	var reg server.RegisterServerResponse
 	owner.post(t, "/api/v1/server/register", server.RegisterServerRequest{Code: refreshed.Code}).
 		expect(t, http.StatusOK).data(t, &reg)
 	agent.post(t, "/api/v1/agent/enroll/status", enroll.PollRequest{PollSecret: started.PollSecret}).
 		expect(t, http.StatusOK).data(t, &st)
-	if st.State != "claimed" || st.ServerID != reg.Server.ID || st.Certificate == "" || st.CACertificate == "" || st.HubAddr != enrolltest.DefaultHub.PublicAddr {
+	if st.State != "claimed" || st.ServerID != reg.Server.ID || st.Certificate == "" || st.CACertificate == "" || st.HubAddr != enrolltest.DefaultHub.PublicAddr ||
+		len(st.HubFingerprints) != 1 || st.HubFingerprints[0] != pin {
 		t.Fatalf("claimed status: %+v", st)
 	}
 }

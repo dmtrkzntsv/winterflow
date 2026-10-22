@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,13 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// subcommands are the hidden maintenance commands, by name.
+var subcommands = map[string]func(args []string, dbURL string, log *logger.Logger, out io.Writer) error{
+	"hub-token":  runHubToken,
+	"hub-trust":  runHubTrust,
+	"hub-retire": runHubRetire,
+}
+
 func main() {
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
@@ -27,15 +35,18 @@ func main() {
 		log.Info(".env not found, using system environment variables")
 	}
 
-	// Hidden maintenance subcommand: print a one-time hub join token.
-	if len(os.Args) > 1 && os.Args[1] == "hub-token" {
-		if err := cfg.ValidateDatabaseURL(); err != nil {
-			log.Fatalf("invalid configuration: %v", err)
+	// Hidden maintenance subcommands: print a one-time hub join token;
+	// trust or retire hub certificates.
+	if len(os.Args) > 1 {
+		if run, ok := subcommands[os.Args[1]]; ok {
+			if err := cfg.ValidateDatabaseURL(); err != nil {
+				log.Fatalf("invalid configuration: %v", err)
+			}
+			if err := run(os.Args[2:], cfg.GetDbURL(), log, os.Stdout); err != nil {
+				log.Fatalf("%s: %v", os.Args[1], err)
+			}
+			return
 		}
-		if err := runHubToken(os.Args[2:], cfg.GetDbURL(), log, os.Stdout); err != nil {
-			log.Fatalf("hub-token: %v", err)
-		}
-		return
 	}
 
 	log.Info("Service starting", "pid", os.Getpid())

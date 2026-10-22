@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -153,7 +154,15 @@ type env struct {
 	repo *fakeRepo
 	now  time.Time
 	pick *fakePicker
+	pins *fakePins
 }
+
+type fakePins struct {
+	fps []string
+	err error
+}
+
+func (p *fakePins) Active(context.Context) ([]string, error) { return p.fps, p.err }
 
 func setup(t *testing.T) (*env, *time.Time) {
 	t.Helper()
@@ -161,8 +170,9 @@ func setup(t *testing.T) (*env, *time.Time) {
 	clock := func() time.Time { return now }
 	repo := newFakeRepo(clock)
 	pick := &fakePicker{hub: model.Hub{ID: "hub-01.winterflow.dev", PublicAddr: "hub-01.winterflow.dev:443"}}
-	uc := New(repo, newSigner(t), picker{pick}, clock)
-	return &env{uc: uc, repo: repo, pick: pick}, &now
+	pins := &fakePins{fps: []string{"aa", "bb"}}
+	uc := New(repo, newSigner(t), picker{pick}, pins, clock)
+	return &env{uc: uc, repo: repo, pick: pick, pins: pins}, &now
 }
 
 type picker struct{ p *fakePicker }
@@ -304,12 +314,12 @@ func TestClaimSignsAsServerID(t *testing.T) {
 	if err != nil || c.Subject.CommonName != srv.ID || st.ServerID != srv.ID {
 		t.Fatalf("cn %v server %s", c, srv.ID)
 	}
-	if st.HubAddr != "hub-01.winterflow.dev:443" || st.CACertificate == "" {
+	if st.HubAddr != "hub-01.winterflow.dev:443" || st.CACertificate == "" || len(st.HubFingerprints) != 2 || st.HubFingerprints[0] != "aa" {
 		t.Fatalf("%+v", st)
 	}
 	// Another replica (fresh instance, a picker that now fails) reads the
 	// same hub from the row.
-	other := New(e.repo, e.uc.signer, fakePicker{err: hubs.ErrNoHub}, e.uc.now)
+	other := New(e.repo, e.uc.signer, fakePicker{err: hubs.ErrNoHub}, e.pins, e.uc.now)
 	st2, err := other.Status(ctx, r.PollSecret)
 	if err != nil || st2.HubAddr != st.HubAddr || st2.Certificate != st.Certificate {
 		t.Fatalf("fresh instance: %+v %v", st2, err)
@@ -352,7 +362,7 @@ func TestStatusClaimedIsIdempotent(t *testing.T) {
 	}
 	a, _ := e.uc.Status(ctx, r.PollSecret)
 	b, _ := e.uc.Status(ctx, r.PollSecret)
-	if a.Certificate == "" || a != b {
+	if a.Certificate == "" || !reflect.DeepEqual(a, b) {
 		t.Fatal("claimed status must repeat")
 	}
 	// Past ClaimedTTL the certificate is no longer handed out, but the agent
@@ -366,5 +376,27 @@ func TestStatusClaimedIsIdempotent(t *testing.T) {
 	e.repo.Prune(ctx, *now)
 	if _, err := e.uc.Status(ctx, r.PollSecret); !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("after prune: %v", err)
+	}
+}
+
+func TestStatusClaimedNeedsPins(t *testing.T) {
+	e, _ := setup(t)
+	ctx := context.Background()
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
+	// Pending answers do not read the set.
+	e.pins.err = errors.New("db down")
+	if st, err := e.uc.Status(ctx, r.PollSecret); err != nil || st.State != "pending" || st.HubFingerprints != nil {
+		t.Fatalf("pending: %+v %v", st, err)
+	}
+	if _, err := e.uc.Claim(ctx, r.Code, "org-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.uc.Status(ctx, r.PollSecret); !errors.Is(err, ErrPinsUnavailable) {
+		t.Fatalf("claimed without pins: err = %v", err)
+	}
+	// None trusted yet: an empty set, never nil.
+	e.pins.err, e.pins.fps = nil, nil
+	if st, err := e.uc.Status(ctx, r.PollSecret); err != nil || st.State != "claimed" || st.HubFingerprints == nil {
+		t.Fatalf("empty: %+v %v", st, err)
 	}
 }

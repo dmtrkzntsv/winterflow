@@ -73,6 +73,9 @@ type StatusResponse struct {
 	Certificate   string     `json:"certificate,omitempty"`
 	CACertificate string     `json:"ca_certificate,omitempty"`
 	HubAddr       string     `json:"hub_addr,omitempty"`
+	// HubFingerprints (claimed only) is the trusted hub certificate set the
+	// agent pins: lowercase hex SHA-256 of each certificate's DER.
+	HubFingerprints []string `json:"hub_fingerprints,omitempty"`
 }
 
 // decode reads a size-capped JSON body.
@@ -92,6 +95,10 @@ func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
 	case errors.Is(err, enrollment.ErrTooManyPendingFromIP):
 		w.Header().Set("Retry-After", "60")
 		util.ErrorStatus(w, http.StatusTooManyRequests, "too many pending enrollments from this address")
+	case errors.Is(err, enrollment.ErrPinsUnavailable):
+		h.log.Error(what, "error", err)
+		w.Header().Set("Retry-After", "30")
+		util.ErrorStatus(w, http.StatusServiceUnavailable, enrollment.ErrPinsUnavailable.Error())
 	case errors.Is(err, enrollment.ErrTooManyPending):
 		util.ErrorStatus(w, http.StatusServiceUnavailable, "too many pending enrollments")
 	default:
@@ -148,7 +155,7 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := StatusResponse{State: st.State, Code: st.Code, CodesLeft: st.CodesLeft, ServerID: st.ServerID,
-		Certificate: st.Certificate, CACertificate: st.CACertificate, HubAddr: st.HubAddr}
+		Certificate: st.Certificate, CACertificate: st.CACertificate, HubAddr: st.HubAddr, HubFingerprints: st.HubFingerprints}
 	if !st.ExpiresAt.IsZero() {
 		out.ExpiresAt = &st.ExpiresAt
 	}

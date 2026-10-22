@@ -40,7 +40,19 @@ var (
 	ErrTooManyPendingFromIP = errors.New("too many pending enrollments from this address, try again later")
 	ErrInvalidCSR           = errors.New("invalid certificate request")
 	ErrNoCodesLeft          = errors.New("no registration codes left, restart the installer")
+	// ErrPinsUnavailable: a claimed enrollment's answer needs the trusted
+	// hub certificate set, which could not be read (503; the agent polls
+	// again).
+	ErrPinsUnavailable = errors.New("trusted hub certificates unavailable")
 )
+
+// Pins is the slice of port.HubCertRepository the usecase reads: the
+// fingerprints of the hub certificates the API trusts.
+type Pins interface {
+	Active(ctx context.Context) ([]string, error)
+}
+
+var _ Pins = port.HubCertRepository(nil)
 
 // Signer issues agent certificates from the control plane's CA.
 type Signer interface {
@@ -65,20 +77,24 @@ type Status struct {
 	ExpiresAt                                     time.Time
 	CodesLeft                                     int
 	ServerID, Certificate, CACertificate, HubAddr string
+	// HubFingerprints is the trusted hub certificate set (claimed only;
+	// lowercase hex SHA-256 of each DER), which the agent pins.
+	HubFingerprints []string
 }
 
 type UseCase struct {
 	repo   port.EnrollmentRepository
 	signer Signer
 	hubs   HubPicker
+	pins   Pins
 	now    func() time.Time
 }
 
-func New(repo port.EnrollmentRepository, signer Signer, hubs HubPicker, now func() time.Time) *UseCase {
+func New(repo port.EnrollmentRepository, signer Signer, hubs HubPicker, pins Pins, now func() time.Time) *UseCase {
 	if now == nil {
 		now = time.Now
 	}
-	return &UseCase{repo: repo, signer: signer, hubs: hubs, now: now}
+	return &UseCase{repo: repo, signer: signer, hubs: hubs, pins: pins, now: now}
 }
 
 func hashSecret(s string) string {
@@ -196,8 +212,12 @@ func (u *UseCase) Status(ctx context.Context, pollSecret string) (Status, error)
 			// The server exists but its certificate is no longer handed out.
 			return Status{State: "uncollected"}, nil
 		}
+		fps, err := u.activePins(ctx)
+		if err != nil {
+			return Status{}, err
+		}
 		return Status{State: "claimed", CodesLeft: left, ServerID: e.ServerID, Certificate: e.Certificate,
-			CACertificate: u.signer.CACertPEM(), HubAddr: e.HubAddr}, nil
+			CACertificate: u.signer.CACertPEM(), HubAddr: e.HubAddr, HubFingerprints: fps}, nil
 	case model.EnrollmentFailed:
 		return Status{State: "failed"}, nil
 	}
@@ -208,6 +228,21 @@ func (u *UseCase) Status(ctx context.Context, pollSecret string) (Status, error)
 		return Status{State: "expired", CodesLeft: left}, nil
 	}
 	return Status{State: "pending", Code: e.Code, ExpiresAt: e.CodeExpiresAt, CodesLeft: left}, nil
+}
+
+// activePins reads the trusted hub certificate set; never nil on success.
+func (u *UseCase) activePins(ctx context.Context) ([]string, error) {
+	if u.pins == nil {
+		return nil, fmt.Errorf("%w: no hub certificate registry", ErrPinsUnavailable)
+	}
+	fps, err := u.pins.Active(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrPinsUnavailable, err)
+	}
+	if fps == nil {
+		fps = []string{}
+	}
+	return fps, nil
 }
 
 // Claim binds the enrollment holding code to orgID: picks a hub, creates the

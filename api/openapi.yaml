@@ -130,6 +130,9 @@ paths:
       - enroll
   /api/v1/agent/enroll/status:
     post:
+      description: Once claimed, `hub_fingerprints` lists the lowercase hex SHA-256
+        (of the DER) of every hub certificate the API trusts; the agent pins it. 503
+        when that set cannot be read (poll again).
       operationId: agentEnrollStatus
       requestBody:
         content:
@@ -160,6 +163,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Bad Request
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
       summary: Poll an enrollment; once claimed it carries the signed certificate
       tags:
       - enroll
@@ -170,7 +179,10 @@ paths:
         certificate, over SHA-256 of `"winterflow-agent-hub-v1\n" + server_id + "\n"
         + timestamp + "\n" + nonce`. The timestamp (Unix seconds) must be within 5
         minutes of the API''s clock. When the server''s hub is gone or draining, the
-        server is moved to another hub (`moved: true`).'
+        server is moved to another hub (`moved: true`). `hub_fingerprints` lists the
+        lowercase hex SHA-256 (of the DER) of every hub certificate the API trusts;
+        the agent pins it. 503 when no hub is available or the trusted set cannot
+        be read (ask again).'
       operationId: agentHub
       requestBody:
         content:
@@ -9715,6 +9727,10 @@ components:
           - string
         hub_addr:
           type: string
+        hub_fingerprints:
+          items:
+            type: string
+          type: array
         server_id:
           type: string
         state:
@@ -10323,11 +10339,18 @@ components:
       properties:
         hub_addr:
           type: string
+        hub_fingerprints:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
         moved:
           type: boolean
       required:
       - hub_addr
       - moved
+      - hub_fingerprints
       type: object
   securitySchemes:
     bearer:

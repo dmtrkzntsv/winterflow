@@ -65,6 +65,14 @@ func (f *fakeServers) SetServerHub(_ context.Context, id, from, to string) (stri
 	return to, nil
 }
 
+// fakePins is the trusted hub certificate set.
+type fakePins struct {
+	fps []string
+	err error
+}
+
+func (p *fakePins) Active(context.Context) ([]string, error) { return p.fps, p.err }
+
 type fakeRegistry struct{ hubs []model.Hub }
 
 func (f fakeRegistry) List(context.Context) ([]model.Hub, error) { return f.hubs, nil }
@@ -118,6 +126,7 @@ type fixture struct {
 	uc      *UseCase
 	servers *fakeServers
 	picker  *fakePicker
+	pins    *fakePins
 	key     *ecdsa.PrivateKey
 }
 
@@ -126,9 +135,10 @@ func setup(t *testing.T, current string, listed []model.Hub, picks ...model.Hub)
 	key, certPEM := newKeyCert(t)
 	servers := &fakeServers{hub: map[string]string{"srv-1": current}, cert: map[string]string{"srv-1": certPEM}}
 	picker := &fakePicker{picks: picks}
-	uc := New(servers, fakeRegistry{hubs: listed}, picker, logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}))
+	pins := &fakePins{fps: []string{"aa", "bb"}}
+	uc := New(servers, fakeRegistry{hubs: listed}, picker, pins, logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}))
 	uc.now = func() time.Time { return now }
-	return &fixture{uc: uc, servers: servers, picker: picker, key: key}
+	return &fixture{uc: uc, servers: servers, picker: picker, pins: pins, key: key}
 }
 
 func (f *fixture) sign(t *testing.T, serverID string, ts int64, nonce string) string {
@@ -143,7 +153,8 @@ func (f *fixture) sign(t *testing.T, serverID string, ts int64, nonce string) st
 func (f *fixture) where(t *testing.T) (string, bool, error) {
 	t.Helper()
 	ts := now.Unix()
-	return f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1"))
+	a, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1"))
+	return a.HubAddr, a.Moved, err
 }
 
 func TestWhereStay(t *testing.T) {
@@ -196,14 +207,14 @@ func TestWhereMovesFromMissingHub(t *testing.T) {
 func TestWhereStaleTimestamp(t *testing.T) {
 	f := setup(t, "hub-01", []model.Hub{hub1})
 	for _, ts := range []int64{now.Add(-6 * time.Minute).Unix(), now.Add(6 * time.Minute).Unix()} {
-		_, _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1"))
+		_, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1"))
 		if !errors.Is(err, ErrStaleRequest) {
 			t.Fatalf("ts %d: err = %v, want ErrStaleRequest", ts, err)
 		}
 	}
 	// Inside the window either way.
 	for _, ts := range []int64{now.Add(-5 * time.Minute).Unix(), now.Add(5 * time.Minute).Unix()} {
-		if _, _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1")); err != nil {
+		if _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1")); err != nil {
 			t.Fatalf("ts %d: %v", ts, err)
 		}
 	}
@@ -213,22 +224,22 @@ func TestWhereBadSignature(t *testing.T) {
 	f := setup(t, "hub-01", []model.Hub{hub1})
 	ts := now.Unix()
 	// Signed for another nonce.
-	if _, _, err := f.uc.Where(context.Background(), "srv-1", ts, "n2", f.sign(t, "srv-1", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.uc.Where(context.Background(), "srv-1", ts, "n2", f.sign(t, "srv-1", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("tampered: err = %v", err)
 	}
 	// Signed by another key.
 	other, _ := newKeyCert(t)
 	sig, _ := agentsig.Sign(other, agentsig.Payload("srv-1", ts, "n1"))
-	if _, _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", sig); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", sig); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("other key: err = %v", err)
 	}
 	// An unknown server reads the same.
-	if _, _, err := f.uc.Where(context.Background(), "srv-9", ts, "n1", f.sign(t, "srv-9", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.uc.Where(context.Background(), "srv-9", ts, "n1", f.sign(t, "srv-9", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("unknown server: err = %v", err)
 	}
 	// A stale request with a bad signature is unauthorized, not stale.
 	old := now.Add(-time.Hour).Unix()
-	if _, _, err := f.uc.Where(context.Background(), "srv-1", old, "n1", "AAAA"); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.uc.Where(context.Background(), "srv-1", old, "n1", "AAAA"); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("stale+bad: err = %v", err)
 	}
 	// The certificate stored base64-encoded by the old registration flow.
@@ -263,8 +274,8 @@ func TestWhereConcurrentMovesAgree(t *testing.T) {
 	sig := f.sign(t, "srv-1", now.Unix(), "n1")
 	for range 2 {
 		go func() {
-			addr, moved, err := f.uc.Where(context.Background(), "srv-1", now.Unix(), "n1", sig)
-			out <- answer{addr, moved, err}
+			a, err := f.uc.Where(context.Background(), "srv-1", now.Unix(), "n1", sig)
+			out <- answer{a.HubAddr, a.Moved, err}
 		}()
 	}
 	a, b := <-out, <-out
@@ -283,7 +294,46 @@ func TestWhereExpiredCertificate(t *testing.T) {
 	later := now.Add(time.Hour + time.Minute)
 	f.uc.now = func() time.Time { return later }
 	ts := later.Unix()
-	if _, _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
+	if _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("expired certificate: err = %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestWhereReturnsHubFingerprints(t *testing.T) {
+	// Staying and moving both carry the trusted set.
+	for name, f := range map[string]*fixture{
+		"stay": setup(t, "hub-01", []model.Hub{hub1}),
+		"move": setup(t, "hub-01", []model.Hub{hub2}, hub2),
+	} {
+		ts := now.Unix()
+		a, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1"))
+		if err != nil || len(a.HubFingerprints) != 2 || a.HubFingerprints[0] != "aa" || a.HubFingerprints[1] != "bb" {
+			t.Fatalf("%s: %+v %v", name, a, err)
+		}
+	}
+	// None trusted yet: an empty set, never nil.
+	f := setup(t, "hub-01", []model.Hub{hub1})
+	f.pins.fps = nil
+	ts := now.Unix()
+	if a, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1")); err != nil || a.HubFingerprints == nil {
+		t.Fatalf("empty: %+v %v", a, err)
+	}
+}
+
+func TestWherePinsUnavailable(t *testing.T) {
+	// The set cannot be read: fail closed before moving anything.
+	f := setup(t, "hub-01", []model.Hub{hub2}, hub2)
+	f.pins.err = errors.New("db down")
+	if _, _, err := f.where(t); !errors.Is(err, ErrPinsUnavailable) {
+		t.Fatalf("err = %v, want ErrPinsUnavailable", err)
+	}
+	if f.servers.hub["srv-1"] != "hub-01" {
+		t.Fatalf("moved to %q although the answer failed", f.servers.hub["srv-1"])
+	}
+	// An unauthenticated caller learns nothing about it.
+	f.pins.err = errors.New("db down")
+	ts := now.Unix()
+	if _, err := f.uc.Where(context.Background(), "srv-1", ts, "n2", f.sign(t, "srv-1", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("bad signature: err = %v", err)
 	}
 }

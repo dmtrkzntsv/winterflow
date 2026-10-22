@@ -8,6 +8,7 @@ import (
 
 	"winterflow/internal/app/web/handler/hubjoin"
 	"winterflow/internal/domain/usecase/enrollment/enrolltest"
+	certpkg "winterflow/pkg/cert"
 )
 
 func TestHubEnrollRoute(t *testing.T) {
@@ -30,6 +31,14 @@ func TestHubEnrollRoute(t *testing.T) {
 		expect(t, http.StatusOK).data(t, &out)
 	if out.Certificate == "" || out.CACertificate == "" {
 		t.Fatalf("response = %+v", out)
+	}
+	// The issued certificate is trusted: agents get it in their pin set.
+	fp, err := certpkg.Fingerprint(out.Certificate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, err := e.deps.HubCertRepository.Active(e.dbCtx(t)); err != nil || len(active) != 1 || active[0] != fp {
+		t.Fatalf("active = %v, %v; want [%s]", active, err, fp)
 	}
 	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "hub-03.test:443"}).expect(t, http.StatusBadRequest)
 }

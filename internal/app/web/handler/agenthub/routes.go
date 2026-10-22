@@ -23,7 +23,9 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 			"ECDSA signature, by the key of the server's active (unexpired) certificate, over SHA-256 of " +
 			"`\"winterflow-agent-hub-v1\\n\" + server_id + \"\\n\" + timestamp + \"\\n\" + nonce`. The timestamp (Unix seconds) must be " +
 			"within 5 minutes of the API's clock. When the server's hub is gone or draining, the " +
-			"server is moved to another hub (`moved: true`).",
+			"server is moved to another hub (`moved: true`). `hub_fingerprints` lists the lowercase hex " +
+			"SHA-256 (of the DER) of every hub certificate the API trusts; the agent pins it. 503 when " +
+			"no hub is available or the trusted set cannot be read (ask again).",
 		Request: WhereRequest{}, Response: WhereResponse{},
 		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusServiceUnavailable},
 	}}

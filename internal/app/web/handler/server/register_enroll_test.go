@@ -65,7 +65,7 @@ func newEnrollEnv(t *testing.T) *enrollEnv {
 		t.Fatal(err)
 	}
 	picker := &enrolltest.Picker{Hub: enrolltest.DefaultHub}
-	uc := enrollment.New(repo, enrolltest.Signer(t), picker, nil)
+	uc := enrollment.New(repo, enrolltest.Signer(t), picker, enrolltest.Pins{}, nil)
 	h := NewHandler(&Deps{
 		Logger: log, ServerRepository: servers, UserService: users, StatusCache: nil,
 		Cfg: config.NewServerConfig("distributed"), Enrollment: uc,
@@ -147,7 +147,7 @@ func TestRegisterRateLimitedPerUser(t *testing.T) {
 func TestRegisterExpiredEnrollmentCodeDoesNotFallBack(t *testing.T) {
 	e := newEnrollEnv(t)
 	past := time.Now().Add(-time.Hour)
-	uc := enrollment.New(e.repo, enrolltest.Signer(t), e.picker, func() time.Time { return past })
+	uc := enrollment.New(e.repo, enrolltest.Signer(t), e.picker, enrolltest.Pins{}, func() time.Time { return past })
 	res, err := uc.Start(dbtest.Ctx(t), enrolltest.CSR(t, elliptic.P256()), "box", "203.0.113.1")
 	if err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +20,7 @@ import (
 type fakeLocator struct {
 	addr  string
 	moved bool
+	fps   []string
 	err   error
 	got   struct {
 		serverID, nonce, sig string
@@ -26,9 +28,9 @@ type fakeLocator struct {
 	}
 }
 
-func (f *fakeLocator) Where(_ context.Context, serverID string, ts int64, nonce, sig string) (string, bool, error) {
+func (f *fakeLocator) Where(_ context.Context, serverID string, ts int64, nonce, sig string) (agenthub.Answer, error) {
 	f.got.serverID, f.got.ts, f.got.nonce, f.got.sig = serverID, ts, nonce, sig
-	return f.addr, f.moved, f.err
+	return agenthub.Answer{HubAddr: f.addr, Moved: f.moved, HubFingerprints: f.fps}, f.err
 }
 
 func call(t *testing.T, loc *fakeLocator, body, sig string) *httptest.ResponseRecorder {
@@ -46,7 +48,7 @@ func call(t *testing.T, loc *fakeLocator, body, sig string) *httptest.ResponseRe
 const goodBody = `{"server_id":"srv-1","timestamp":1700000000,"nonce":"n1"}`
 
 func TestWhere(t *testing.T) {
-	loc := &fakeLocator{addr: "hub-02:443", moved: true}
+	loc := &fakeLocator{addr: "hub-02:443", moved: true, fps: []string{"aa", "bb"}}
 	w := call(t, loc, goodBody, "c2ln")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
@@ -57,7 +59,7 @@ func TestWhere(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Data.HubAddr != "hub-02:443" || !env.Data.Moved {
+	if env.Data.HubAddr != "hub-02:443" || !env.Data.Moved || len(env.Data.HubFingerprints) != 2 || env.Data.HubFingerprints[1] != "bb" {
 		t.Fatalf("data = %+v", env.Data)
 	}
 	if loc.got.serverID != "srv-1" || loc.got.ts != 1700000000 || loc.got.nonce != "n1" || loc.got.sig != "c2ln" {
@@ -81,13 +83,14 @@ func TestWhereErrors(t *testing.T) {
 		"stale":         {body: goodBody, sig: "c2ln", err: agenthub.ErrStaleRequest, want: http.StatusBadRequest},
 		"no hub":        {body: goodBody, sig: "c2ln", err: hubs.ErrNoHub, want: http.StatusServiceUnavailable},
 		"db down":       {body: goodBody, sig: "c2ln", err: errors.New("boom"), want: http.StatusInternalServerError},
+		"no pins":       {body: goodBody, sig: "c2ln", err: fmt.Errorf("%w: boom", agenthub.ErrPinsUnavailable), want: http.StatusServiceUnavailable},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := call(t, &fakeLocator{err: tc.err}, tc.body, tc.sig)
 			if w.Code != tc.want {
 				t.Fatalf("status %d, want %d: %s", w.Code, tc.want, w.Body)
 			}
-			if tc.want == http.StatusInternalServerError && strings.Contains(w.Body.String(), "boom") {
+			if tc.want >= http.StatusInternalServerError && strings.Contains(w.Body.String(), "boom") {
 				t.Fatalf("internal error leaked: %s", w.Body)
 			}
 		})

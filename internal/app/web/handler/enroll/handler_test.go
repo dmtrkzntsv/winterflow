@@ -3,6 +3,7 @@ package enroll
 import (
 	"crypto/elliptic"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -20,18 +21,25 @@ import (
 
 func newHandler(t *testing.T) *Handler {
 	t.Helper()
+	h, _ := newHandlerWithPins(t, enrolltest.Pins{Fingerprints: []string{"aa"}})
+	return h
+}
+
+func newHandlerWithPins(t *testing.T, pins enrolltest.Pins) (*Handler, *enrollment.UseCase) {
+	t.Helper()
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	conn, err := db.Open(log, "sqlite://"+filepath.Join(t.TempDir(), "test.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Shutdown() })
+	dbtest.SeedOrg(t, conn, "org-1")
 	repo, err := enrollmentrepo.New(conn.Tx, conn.Driver)
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := enrollment.New(repo, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, nil)
-	return NewHandler(&Deps{Logger: log, Enrollments: uc})
+	uc := enrollment.New(repo, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, pins, nil)
+	return NewHandler(&Deps{Logger: log, Enrollments: uc}), uc
 }
 
 func call(t *testing.T, fn http.HandlerFunc, body any) *httptest.ResponseRecorder {
@@ -162,5 +170,30 @@ func TestEnrollStartTooManyFromOneIP429(t *testing.T) {
 	}
 	if w := post("198.51.100.5:1000"); w.Code != http.StatusOK {
 		t.Fatalf("other address = %d", w.Code)
+	}
+}
+
+func TestEnrollStatusClaimedCarriesHubFingerprints(t *testing.T) {
+	h, uc := newHandlerWithPins(t, enrolltest.Pins{Fingerprints: []string{"aa", "bb"}})
+	res := start(t, h)
+	if _, err := uc.Claim(dbtest.Ctx(t), res.Code, "org-1"); err != nil {
+		t.Fatal(err)
+	}
+	w := call(t, h.Status, PollRequest{PollSecret: res.PollSecret})
+	st := data[StatusResponse](t, w)
+	if w.Code != 200 || st.State != "claimed" || st.HubAddr == "" || len(st.HubFingerprints) != 2 || st.HubFingerprints[1] != "bb" {
+		t.Fatalf("status = %d %+v", w.Code, st)
+	}
+}
+
+func TestEnrollStatusClaimedPinsUnavailable503(t *testing.T) {
+	h, uc := newHandlerWithPins(t, enrolltest.Pins{Err: errors.New("boom")})
+	res := start(t, h)
+	if _, err := uc.Claim(dbtest.Ctx(t), res.Code, "org-1"); err != nil {
+		t.Fatal(err)
+	}
+	w := call(t, h.Status, PollRequest{PollSecret: res.PollSecret})
+	if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") == "" || strings.Contains(w.Body.String(), "boom") {
+		t.Fatalf("status = %d %s", w.Code, w.Body)
 	}
 }

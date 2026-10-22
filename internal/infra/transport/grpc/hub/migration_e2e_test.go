@@ -19,6 +19,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/agentauth"
 	"winterflow/internal/domain/usecase/agenthub"
+	"winterflow/internal/domain/usecase/enrollment/enrolltest"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/transport/bus"
@@ -226,7 +227,7 @@ func TestAgentMigratesThroughTheAPI(t *testing.T) {
 	if err := agentauth.StartResponder(ctx, b, cfg, store, log); err != nil {
 		t.Fatal(err)
 	}
-	locator := agenthub.New(store, reg, hubs.NewPicker(reg, store, log), log)
+	locator := agenthub.New(store, reg, hubs.NewPicker(reg, store, log), enrolltest.Pins{}, log)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+hagenthub.HubPath, hagenthub.NewHandler(&hagenthub.Deps{Logger: log, Locator: locator}).Where)
 	api := httptest.NewServer(mux)

@@ -19,14 +19,17 @@ import (
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
+	"winterflow/internal/infra/db/repository/hubcert"
 	"winterflow/internal/infra/db/repository/hubtoken"
+	certpkg "winterflow/pkg/cert"
 )
 
 type fixture struct {
-	uc   *hubjoin.UseCase
-	d    *db.DB
-	now  *atomic.Int64 // unix seconds
-	live *liveHubs
+	uc    *hubjoin.UseCase
+	d     *db.DB
+	now   *atomic.Int64 // unix seconds
+	live  *liveHubs
+	certs *hubcert.Repo
 }
 
 // liveHubs is the hub list a test edits.
@@ -49,10 +52,14 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{d: d, now: &atomic.Int64{}, live: &liveHubs{}}
+	certs, err := hubcert.New(d.Tx, d.Driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{d: d, now: &atomic.Int64{}, live: &liveHubs{}, certs: certs}
 	f.now.Store(time.Now().Unix())
 	clock := func() time.Time { return time.Unix(f.now.Load(), 0).UTC() }
-	f.uc = hubjoin.New(repo, enrolltest.Signer(t), f.live, clock)
+	f.uc = hubjoin.New(repo, certs, enrolltest.Signer(t), f.live, clock)
 	return f
 }
 
@@ -231,5 +238,70 @@ func TestRedeemLowercasesHubID(t *testing.T) {
 	}
 	if cert.Subject.CommonName != "hub-07.example.com" || len(cert.DNSNames) != 1 || cert.DNSNames[0] != "hub-07.example.com" {
 		t.Fatalf("cert CN %q SANs %v", cert.Subject.CommonName, cert.DNSNames)
+	}
+}
+
+func TestRedeemTrustsTheCertificate(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	redeem := func() string {
+		t.Helper()
+		token, _, err := f.uc.Issue(ctx, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		certPEM, _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "Hub-01.example.com:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fp, err := certpkg.Fingerprint(certPEM)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fp
+	}
+	first := redeem()
+	if got, _ := f.certs.Active(ctx); len(got) != 1 || got[0] != first {
+		t.Fatalf("active = %v, want [%s]", got, first)
+	}
+	if got := dbtest.QueryString(t, f.d, `SELECT hub_id FROM hub_certificates`); got != "hub-01.example.com" {
+		t.Fatalf("hub_id = %q", got)
+	}
+	// Re-joining the same hub id retires the older certificate.
+	second := redeem()
+	if got, _ := f.certs.Active(ctx); len(got) != 1 || got[0] != second || second == first {
+		t.Fatalf("active = %v, want [%s]", got, second)
+	}
+}
+
+type failingCerts struct{}
+
+func (failingCerts) Trust(context.Context, string, string, time.Time) error {
+	return errors.New("db down")
+}
+
+func TestRedeemFailsWhenTrustFails(t *testing.T) {
+	d := dbtest.Open(t)
+	repo, _ := hubtoken.New(d.Tx, d.Driver)
+	uc := hubjoin.New(repo, failingCerts{}, enrolltest.Signer(t), &liveHubs{}, nil)
+	ctx := context.Background()
+	token, _, _ := uc.Issue(ctx, 0)
+	if _, _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil || !strings.Contains(err.Error(), "db down") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRedeemRefusedWithoutCertRegistry(t *testing.T) {
+	d := dbtest.Open(t)
+	repo, _ := hubtoken.New(d.Tx, d.Driver)
+	uc := hubjoin.New(repo, nil, enrolltest.Signer(t), &liveHubs{}, nil)
+	ctx := context.Background()
+	token, _, _ := uc.Issue(ctx, 0)
+	if _, _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil {
+		t.Fatal("redeemed without a certificate registry")
+	}
+	// The token was not spent.
+	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM hub_join_tokens WHERE used_at IS NULL`); got != "1" {
+		t.Fatalf("unused tokens = %s", got)
 	}
 }

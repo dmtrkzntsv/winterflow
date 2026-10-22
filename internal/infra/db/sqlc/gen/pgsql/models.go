@@ -99,6 +99,13 @@ type AppDomain struct {
 	UpdatedAt    types.DateTime
 }
 
+type HubCertificate struct {
+	Fingerprint string
+	HubID       string
+	CreatedAt   types.DateTime
+	RetiredAt   *types.DateTime
+}
+
 type HubJoinToken struct {
 	TokenHash string
 	ExpiresAt types.DateTime

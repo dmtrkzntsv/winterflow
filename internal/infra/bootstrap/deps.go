@@ -77,6 +77,10 @@ type Deps struct {
 	// enroll route is not mounted).
 	HubTokenRepository port.HubTokenRepository
 	HubJoin            *hubjoin.UseCase
+	// HubCertRepository records the hub certificates the API trusts;
+	// agents pin the active set (enrollment status, agent hub answers).
+	// Built in both topologies, used only where those usecases are wired.
+	HubCertRepository port.HubCertRepository
 	// AgentHub answers agents asking which hub to connect to; wired by
 	// BootstrapAPI only (nil in standalone, where its route is not mounted).
 	AgentHub *agenthub.UseCase

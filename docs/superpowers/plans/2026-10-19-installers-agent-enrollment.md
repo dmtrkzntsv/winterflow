@@ -562,3 +562,43 @@ Spec: section "Part C — certificate hardening". Next migration number: 0020.
 - `install-control-plane.sh` finish message: "Back up /var/lib/winterflow-control/pki/ca.key and ca.crt — losing them means re-joining every hub and re-enrolling every agent." (+ test); installer runs `winterflow-api hub-trust --cert <hub.crt>` after `pki` (+ test, as the API user with the API env).
 - Docs: CLAUDE.md (pinning, hub URI SAN, CA constraints, standalone identity, removed settings), `docs/install-control-plane.md` (backup section, `hub-retire` for a leaked/removed hub), `.env.example` (removed vars).
 - Full CI reproduction; commit `docs: certificate hardening`; push; draft PR C based on `feat/multi-hub`.
+
+## Part D — a Redis user per hub (ends in PR D, stacked on PR C)
+
+Spec: section "Part D — a Redis user per hub". No backward compatibility.
+
+### Task 29: Redis ACL user management
+
+**Files:** `internal/domain/port/redisusers.go`, `internal/infra/transport/redis/hubusers/{users.go,users_test.go,integration_test.go}`, `pkg/config/config.go` (`GetRedisUsername`, env `REDIS_USERNAME`), `internal/infra/transport/redis/bus/client.go` (Username), `.env.example`, `scripts/test-redis.sh`, `Makefile` (`test-redis`), `.github/workflows/ci.yml` (a step that runs the Redis integration tests against a `redis:8` service container)
+
+**Interfaces:**
+- `port.HubRedisUsers`: `Ensure(ctx, hubID string) (username, password string, err error)` — `ACL SETUSER hub:<id> reset on >pw <rules>`, then `CLIENT KILL USER hub:<id>` (ignore "no such client"), then `ACL SAVE` (if the server has no aclfile, `ACL SAVE` errors — treat "ERR ... aclfile" as a configuration error returned to the caller); `Delete(ctx, hubID string) error` — `ACL DELUSER`, `CLIENT KILL USER`, `ACL SAVE`; deleting a missing user is not an error. Every call bounded by 5 s.
+- `func HubACLRules(hubID string) []string` — the exact rule list (resetkeys/resetchannels, `~hub:status:<id>`, `~hub:draining:<id>`, `&bus:requests:<id>`, `&hub:responses:<id>`, `&bus:responses`, `&bus:events`, `&hub:requests`, `&hub:broadcast`, `-@all`, `+ping`, `+hello`, `+auth`, `+client|setinfo`, `+client|setname`, `+get`, `+set`, `+del`, `+exists`, `+publish`, `+subscribe`, `+unsubscribe`, plus whatever the real hub code is proven to need by the integration test). Hub ids are already validated lower-case DNS names; refuse any id containing characters outside `[a-z0-9.-]`.
+- Password: 32 random bytes, base64url, never logged.
+- Tests: unit (rules, id validation); integration (skipped unless `WF_TEST_REDIS_ADDR` is set; run by `make test-redis` which starts `redis:8` with an aclfile): Ensure creates a working user whose connection can do exactly the hub operations (SET EX own status key, GET/SET/DEL own draining key, publish/subscribe each allowed channel) and is refused on another hub's key, another hub's channel, SCAN, and FLUSHALL; Ensure again resets the password (old password refused, old connection killed); Delete removes it; users survive `ACL LOAD`.
+- Commit `feat(redis): per-hub ACL users managed by the API`
+
+### Task 30: Hub users in the join, trust and retire flows
+
+**Files:** `internal/domain/usecase/hubjoin/usecase.go` (+ tests), handler (response gains `redis_username`, `redis_password`), `cmd/api/hubtrust.go` (`hub-trust --redis-env-out <file>`; `hub-retire` deletes the user when a hub has no active certificate left), `cmd/hub/join.go` (writes the credentials to a file the installer gives: `--redis-env-out`), bootstrap wiring (the API's Redis client → hubusers), contract tests, `api/openapi.yaml`
+
+**Interfaces:**
+- `Redeem`: after Trust, `Ensure(hubID)`; answer includes the credentials. Ensure failure → 500 (token spent; note it).
+- `hub-trust --cert <path> [--redis-env-out <file>]`: Trust + Ensure; writes `REDIS_USERNAME=…` and `REDIS_PASSWORD=…` (0600, atomic) when the flag is given.
+- `hub-retire`: after retiring, for each affected hub id with no active certificate left → `Delete`.
+- Tests: Redeem returns credentials and calls Ensure; Ensure failure → error; hub-trust writes the env file; hub-retire deletes users (fake HubRedisUsers); join writes the env file.
+- Commit `feat(api): hubs get their own Redis user when they join; retiring removes it`
+
+### Task 31: Installers and hub runtime on per-hub users
+
+**Files:** `scripts/install-control-plane.sh`, `scripts/install-hub.sh`, their tests, `docs/install-control-plane.md`, `CLAUDE.md`
+
+- Control plane: `redis-winterflow.conf` gets `aclfile /etc/redis/winterflow-users.acl` (file created empty, owner redis, 0640); the API keeps the admin password (`REDIS_PASSWORD`, no username); the local hub's env gets `REDIS_USERNAME`/`REDIS_PASSWORD` from `hub-trust --redis-env-out` (the hub env no longer carries the admin password). Changed-`--hub-addr` path deletes the old hub's user via hub-retire (already).
+- `install-hub.sh`: `--redis-addr host:port` / `WINTERFLOW_HUB_REDIS_ADDR` replace `--redis-url` / `WINTERFLOW_HUB_REDIS_URL`; credentials come from `winterflow-hub join --redis-env-out`; rerun without a token keeps the stored credentials; rejoin replaces them.
+- An end-to-end check that the real hub binary works with its ACL user: extend the Task 29 integration test (or the hub e2e) to run the hub's announcer, drain flag, bus bridge and authorizer against Redis with an Ensure'd user.
+- Docs: Redis section (users per hub, admin password stays on the control plane, `hub-retire` removes access), install-hub flags, CLAUDE.md.
+- Commit `feat(install): hubs connect to Redis with their own user`
+
+### Task 32: Full check and PR D
+
+- Full CI reproduction (incl. `make test-redis`), diffcov vs `feat/cert-hardening`; push; draft PR D based on `feat/cert-hardening`.

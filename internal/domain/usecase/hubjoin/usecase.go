@@ -44,6 +44,10 @@ var (
 	// ErrHubLive: a live hub already uses the requested hub id, so a token
 	// holder cannot take it over. It is an ErrInvalidAddr (a 400).
 	ErrHubLive = fmt.Errorf("%w: a live hub already uses this host", ErrInvalidAddr)
+	// ErrHubIDNotUser: the host cannot name a Redis user (only letters,
+	// digits, dots and hyphens; an IPv6 address is refused). An
+	// ErrInvalidAddr (a 400).
+	ErrHubIDNotUser = fmt.Errorf("%w: the host must be a DNS name or an IPv4 address", ErrInvalidAddr)
 )
 
 // HubLister is the slice of port.HubRegistry Redeem needs.
@@ -179,9 +183,9 @@ func validateCSR(csrPEM string) error {
 }
 
 // Redeem consumes the token and signs the hub's CSR for the host of
-// publicAddr, which is also the hub id. The address and CSR are checked,
-// and the id refused while a live hub uses it (ErrHubLive), before the
-// token is spent, so a typo does not burn it. The signed certificate is
+// publicAddr, which is also the hub id. The address (a host that can name
+// a Redis user, ErrHubIDNotUser) and CSR are checked, and the id refused
+// while a live hub uses it (ErrHubLive), before the token is spent, so a typo does not burn it. The signed certificate is
 // recorded as trusted (retiring the hub id's older ones), then the hub's
 // Redis user is created or reset (a new password; the old one's sessions
 // are disconnected), before anything is returned; when either fails the
@@ -196,6 +200,11 @@ func (u *UseCase) Redeem(ctx context.Context, token, csrPEM, publicAddr string) 
 	hubID, err := hubHost(publicAddr)
 	if err != nil {
 		return Joined{}, err
+	}
+	// The hub id names its Redis user: one that cannot have a user (an
+	// IPv6 address) is refused before the token is spent.
+	if port.CheckHubRedisID(hubID) != nil {
+		return Joined{}, ErrHubIDNotUser
 	}
 	if err := validateCSR(csrPEM); err != nil {
 		return Joined{}, err

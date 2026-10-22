@@ -23,14 +23,10 @@ import (
 // callTimeout bounds each Ensure / Delete as a whole.
 const callTimeout = 5 * time.Second
 
-// maxHubIDLen is a DNS name's length limit.
-const maxHubIDLen = 253
-
 var (
-	// ErrInvalidHubID: the id has a character outside [a-z0-9.-] (it is used
-	// verbatim in ACL key and channel patterns, so a glob or rule character
-	// would widen or break them).
-	ErrInvalidHubID = errors.New("redis hub user: invalid hub id")
+	// ErrInvalidHubID is port.ErrInvalidHubRedisID: the id has a character
+	// outside [a-z0-9.-] (port.CheckHubRedisID).
+	ErrInvalidHubID = port.ErrInvalidHubRedisID
 	// ErrNoACLFile: the Redis server has no aclfile, so users could not be
 	// saved and would be lost on restart. A configuration error.
 	ErrNoACLFile = errors.New("redis hub user: the Redis server has no aclfile configured")
@@ -152,18 +148,7 @@ func (u *Users) save(ctx context.Context) error {
 	}
 }
 
-func validHubID(id string) error {
-	if id == "" || len(id) > maxHubIDLen {
-		return fmt.Errorf("%w: %q", ErrInvalidHubID, id)
-	}
-	for i := 0; i < len(id); i++ {
-		c := id[i]
-		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '-' {
-			return fmt.Errorf("%w: %q", ErrInvalidHubID, id)
-		}
-	}
-	return nil
-}
+func validHubID(id string) error { return port.CheckHubRedisID(id) }
 
 // newPassword is 32 random bytes, base64url without padding.
 func newPassword() (string, error) {

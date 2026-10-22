@@ -313,6 +313,23 @@ func TestRedeemFailsWhenRedisUserFails(t *testing.T) {
 }
 
 // Re-joining resets the user's password.
+// An IPv6 host cannot name a Redis user: a 400 before the token is spent.
+func TestRedeemRefusesIPv6Host(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	token, _, _ := f.uc.Issue(ctx, 0)
+	csr := enrolltest.CSR(t, elliptic.P256())
+	if _, err := f.uc.Redeem(ctx, token, csr, "[2001:db8::1]:443"); !errors.Is(err, hubjoin.ErrHubIDNotUser) || !errors.Is(err, hubjoin.ErrInvalidAddr) {
+		t.Fatalf("err = %v", err)
+	}
+	if got, _ := f.certs.Active(ctx); len(got) != 0 {
+		t.Fatalf("active = %v", got)
+	}
+	if _, err := f.uc.Redeem(ctx, token, csr, "203.0.113.9:443"); err != nil {
+		t.Fatalf("token was spent: %v", err)
+	}
+}
+
 func TestRedeemResetsTheRedisPassword(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

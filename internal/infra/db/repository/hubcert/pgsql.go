@@ -43,3 +43,7 @@ func (pgsqlQuerier) LockHubCertificates(ctx context.Context, db backend.DBTX, hu
 func (pgsqlQuerier) CountActiveHubCertificatesByHub(ctx context.Context, db backend.DBTX, hubID string) (int64, error) {
 	return pgsqlgen.New(db).CountActiveHubCertificatesByHub(ctx, hubID)
 }
+
+func (pgsqlQuerier) CountHubCertificatesByHub(ctx context.Context, db backend.DBTX, hubID string) (int64, error) {
+	return pgsqlgen.New(db).CountHubCertificatesByHub(ctx, hubID)
+}

@@ -69,7 +69,8 @@ type Pins struct {
 func (p Pins) Active(context.Context) ([]string, error) { return p.Fingerprints, p.Err }
 
 // RedisUsers is an in-memory port.HubRedisUsers: Ensure gives each hub id
-// "hub:<id>" and a new password per call; Delete forgets it. Err, when set,
+// "hub:<id>" and a new password per call; Delete forgets it. Both refuse
+// an id port.CheckHubRedisID refuses, as the Redis one does. Err, when set,
 // fails both.
 type RedisUsers struct {
 	mu      sync.Mutex
@@ -88,6 +89,9 @@ func (r *RedisUsers) Ensure(_ context.Context, hubID string) (string, string, er
 	if r.Err != nil {
 		return "", "", r.Err
 	}
+	if err := port.CheckHubRedisID(hubID); err != nil {
+		return "", "", err
+	}
 	if r.Users == nil {
 		r.Users = map[string]string{}
 	}
@@ -103,6 +107,9 @@ func (r *RedisUsers) Delete(_ context.Context, hubID string) error {
 	defer r.mu.Unlock()
 	if r.Err != nil {
 		return r.Err
+	}
+	if err := port.CheckHubRedisID(hubID); err != nil {
+		return err
 	}
 	delete(r.Users, "hub:"+hubID)
 	r.Deleted = append(r.Deleted, hubID)

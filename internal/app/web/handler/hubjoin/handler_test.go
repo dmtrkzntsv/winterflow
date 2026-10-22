@@ -93,11 +93,16 @@ func TestEnrollBadRequests(t *testing.T) {
 		"unknown token": {Token: "wfh_nope", CSR: csr, PublicAddr: "h.example.com:443"},
 		"bad csr":       {Token: token, CSR: "garbage", PublicAddr: "h.example.com:443"},
 		"bad address":   {Token: token, CSR: csr, PublicAddr: "no-port"},
+		"ipv6 host":     {Token: token, CSR: csr, PublicAddr: "[2001:db8::1]:443"},
 		"empty":         {},
 	} {
 		if w := call(t, h, req); w.Code != http.StatusBadRequest {
 			t.Errorf("%s = %d: %s", name, w.Code, w.Body)
 		}
+	}
+	// The token survived every refusal.
+	if w := call(t, h, EnrollRequest{Token: token, CSR: csr, PublicAddr: "h.example.com:443"}); w.Code != http.StatusOK {
+		t.Fatalf("token spent: %d %s", w.Code, w.Body)
 	}
 	// Malformed JSON.
 	r := httptest.NewRequest("POST", "/", strings.NewReader("{")).WithContext(dbtest.Ctx(t))

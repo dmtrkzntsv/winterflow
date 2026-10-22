@@ -24,6 +24,9 @@ WHERE fingerprint = ? AND retired_at IS NULL;
 SELECT COUNT(*) FROM hub_certificates
 WHERE hub_id = ? AND retired_at IS NULL;
 
+-- name: CountHubCertificatesByHub :one
+SELECT COUNT(*) FROM hub_certificates WHERE hub_id = ?;
+
 -- name: ListActiveHubCertificates :many
 SELECT fingerprint FROM hub_certificates
 WHERE retired_at IS NULL

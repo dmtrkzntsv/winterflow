@@ -171,6 +171,14 @@ no data and joins the existing control plane.
    `--version`, `--r2-bucket`, `--yes`, `--dry-run`. The public address's host goes into
    the hub's certificate and is the hub's id; it cannot change later. The
    hub registers within about 30 s and new servers can then be placed on it.
+   The host must be a DNS name or an IPv4 address (it also names the hub's
+   Redis user, so an IPv6 address is refused, and the token is kept).
+
+   The join also creates the hub's own Redis user (`hub:<hub id>`; rejoining
+   resets its password). If that step fails on the control plane (Redis
+   down, or its `aclfile` missing), the join fails with HTTP 500 after the
+   token was spent: fix the cause, create a new token and run the installer
+   again with it; the new join replaces the certificate and creates the user.
 
 New agents are spread over accepting hubs; existing agents stay where they
 are until a hub drains.

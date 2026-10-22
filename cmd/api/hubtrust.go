@@ -134,6 +134,11 @@ func runHubTrust(args []string, dbURL, caPath string, openUsers openUsersFunc, l
 	if err != nil {
 		return err
 	}
+	// The hub id names its Redis user; refuse one that cannot (an IPv6
+	// address) before anything is recorded.
+	if err := port.CheckHubRedisID(hubID); err != nil {
+		return fmt.Errorf("%s: hub id %q cannot name a Redis user; the host must be a DNS name or an IPv4 address", *path, hubID)
+	}
 	repo, closeDB, err := openHubCerts(dbURL, log)
 	if err != nil {
 		return err
@@ -180,8 +185,10 @@ func normalizeFingerprint(s string) (string, error) {
 // subcommand: it retires a hub's certificates (a removed hub) or one
 // certificate (a leaked key) and prints how many it retired; retiring none
 // is an error (exit status 1). A hub left with no active certificate also
-// loses its Redis user (deleted, its sessions disconnected), on a rerun
-// too, so a Redis failure after the retire is mended by running it again.
+// loses its Redis user (deleted, its sessions disconnected, under the
+// per-hub lock so a hub joining at that moment keeps its new user), on a
+// rerun too, so a Redis failure after the retire is mended by running it
+// again. A hub id with no certificate on record never contacts Redis.
 // Agents stop accepting a retired certificate once they refresh their pin
 // set.
 func runHubRetire(args []string, dbURL string, openUsers openUsersFunc, log *logger.Logger, out io.Writer) error {
@@ -213,11 +220,16 @@ func runHubRetire(args []string, dbURL string, openUsers openUsersFunc, log *log
 	defer closeDB()
 	ctx, cancel := context.WithTimeout(context.Background(), hubTokenTimeout)
 	defer cancel()
-	n, orphaned, err := repo.Retire(ctx, hubID, fp, time.Now())
+	rel := &hubReleaser{open: openUsers}
+	defer rel.close()
+	n, err := repo.Retire(ctx, hubID, fp, time.Now(), rel.release)
+	var delErr error
 	if err != nil {
-		return err
+		if !rel.tried {
+			return err // the retire itself failed
+		}
+		delErr = fmt.Errorf("%w (rerun hub-retire to finish)", err)
 	}
-	delErr := deleteHubUsers(ctx, openUsers, orphaned)
 	if n == 0 {
 		// Nothing matched: a mistyped id or fingerprint must not pass as done.
 		var err error
@@ -234,7 +246,7 @@ func runHubRetire(args []string, dbURL string, openUsers openUsersFunc, log *log
 	if delErr != nil {
 		return delErr
 	}
-	for _, id := range orphaned {
+	for _, id := range rel.deleted {
 		if _, err := fmt.Fprintf(out, "deleted the Redis user of hub %s\n", id); err != nil {
 			return err
 		}
@@ -242,21 +254,34 @@ func runHubRetire(args []string, dbURL string, openUsers openUsersFunc, log *log
 	return nil
 }
 
-// deleteHubUsers deletes the Redis users of hubIDs (none: Redis is not
-// contacted).
-func deleteHubUsers(ctx context.Context, openUsers openUsersFunc, hubIDs []string) error {
-	if len(hubIDs) == 0 {
-		return nil
-	}
-	users, closeUsers, err := openUsers(ctx)
-	if err != nil {
-		return err
-	}
-	defer closeUsers()
-	for _, id := range hubIDs {
-		if err := users.Delete(ctx, id); err != nil {
-			return fmt.Errorf("delete the Redis user of hub %s (rerun hub-retire to finish): %w", id, err)
+// hubReleaser deletes the Redis user of a hub left with no active
+// certificate; it connects to Redis only when there is one.
+type hubReleaser struct {
+	open    openUsersFunc
+	users   port.HubRedisUsers
+	closeFn func()
+	tried   bool
+	deleted []string
+}
+
+func (h *hubReleaser) release(ctx context.Context, hubID string) error {
+	h.tried = true
+	if h.users == nil {
+		users, closeFn, err := h.open(ctx)
+		if err != nil {
+			return err
 		}
+		h.users, h.closeFn = users, closeFn
 	}
+	if err := h.users.Delete(ctx, hubID); err != nil {
+		return fmt.Errorf("delete its Redis user: %w", err)
+	}
+	h.deleted = append(h.deleted, hubID)
 	return nil
+}
+
+func (h *hubReleaser) close() {
+	if h.closeFn != nil {
+		h.closeFn()
+	}
 }

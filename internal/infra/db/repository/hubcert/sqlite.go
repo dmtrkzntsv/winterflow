@@ -42,3 +42,7 @@ func (sqliteQuerier) LockHubCertificates(ctx context.Context, db backend.DBTX, h
 func (sqliteQuerier) CountActiveHubCertificatesByHub(ctx context.Context, db backend.DBTX, hubID string) (int64, error) {
 	return sqlitegen.New(db).CountActiveHubCertificatesByHub(ctx, hubID)
 }
+
+func (sqliteQuerier) CountHubCertificatesByHub(ctx context.Context, db backend.DBTX, hubID string) (int64, error) {
+	return sqlitegen.New(db).CountHubCertificatesByHub(ctx, hubID)
+}

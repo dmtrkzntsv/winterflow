@@ -275,3 +275,32 @@ func TestHubRetireRedisFailure(t *testing.T) {
 		t.Fatalf("unknown fingerprint: %v (opened %d)", err, other.opened)
 	}
 }
+
+// A hub whose id cannot name a Redis user (an IPv6 address) is refused
+// before anything is recorded.
+func TestHubTrustRefusesIPv6HubID(t *testing.T) {
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	dbPath := filepath.Join(t.TempDir(), "api.sqlite")
+	path, ca, _ := hubCertFile(t, "2001:db8::1")
+	users := &fakeUsers{}
+	err := runHubTrust([]string{"--cert", path, "--redis-env-out", filepath.Join(t.TempDir(), "redis.env")}, "sqlite://"+dbPath, ca, users.open, log, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "Redis user") || users.opened != 0 {
+		t.Fatalf("err = %v (opened %d)", err, users.opened)
+	}
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		if got := activeRows(t, dbPath); len(got) != 0 {
+			t.Fatalf("active = %v", got)
+		}
+	}
+}
+
+// A hub id with no certificate on record (a typo) never contacts Redis.
+func TestHubRetireTypoSkipsRedis(t *testing.T) {
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	url := "sqlite://" + filepath.Join(t.TempDir(), "api.sqlite")
+	users := &fakeUsers{}
+	err := runHubRetire([]string{"--hub", "hub-99.winterflow.dev"}, url, users.open, log, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "no active hub certificate") || users.opened != 0 {
+		t.Fatalf("err = %v (opened %d)", err, users.opened)
+	}
+}

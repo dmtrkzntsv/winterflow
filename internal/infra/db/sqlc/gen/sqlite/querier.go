@@ -29,6 +29,7 @@ type Querier interface {
 	ConsumeHubJoinToken(ctx context.Context, arg ConsumeHubJoinTokenParams) (int64, error)
 	CountActiveHubCertificatesByHub(ctx context.Context, hubID string) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
+	CountHubCertificatesByHub(ctx context.Context, hubID string) (int64, error)
 	CountPendingEnrollments(ctx context.Context) (int64, error)
 	CountPendingEnrollmentsByIP(ctx context.Context, clientIp string) (int64, error)
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)

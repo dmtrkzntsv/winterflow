@@ -37,6 +37,7 @@ type fakeAPI struct {
 	mu      sync.Mutex
 	addr    string
 	moved   bool
+	fps     []string // hub_fingerprints; nil leaves the field out
 	asks    int
 	hit     chan struct{}
 }
@@ -63,16 +64,25 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	f.mu.Lock()
 	f.asks++
-	addr, moved := f.addr, f.moved
+	data := map[string]any{"hub_addr": f.addr, "moved": f.moved}
+	if f.fps != nil {
+		data["hub_fingerprints"] = f.fps
+	}
 	f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "ok", "data": map[string]any{"hub_addr": addr, "moved": moved}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "message": "ok", "data": data})
 	if f.hit != nil {
 		select {
 		case f.hit <- struct{}{}:
 		default:
 		}
 	}
+}
+
+func (f *fakeAPI) setFingerprints(fps []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fps = fps
 }
 
 func (f *fakeAPI) count() int {
@@ -214,7 +224,7 @@ func TestStayAnswerNamingAnotherHubMoves(t *testing.T) {
 	if fmt.Sprint(dials) != "[env-hub:50051 hub-b.winterflow.dev:443]" {
 		t.Fatalf("dials = %v", dials)
 	}
-	host, port, ok := NewHubStore(filepath.Dir(a.hubStore.path)).Load()
+	host, port, _, ok := NewHubStore(filepath.Dir(a.hubStore.path)).Load()
 	if !ok || host != "hub-b.winterflow.dev" || port != "443" {
 		t.Fatalf("stored hub = %q %q %v", host, port, ok)
 	}
@@ -283,7 +293,7 @@ func TestUnreachableThreeMinutesAsks(t *testing.T) {
 
 func TestStayKeepsHub(t *testing.T) {
 	a, api, ctx, cancel, advance := migratingClock(t, "hub-01:443", false)
-	if err := a.hubStore.Save("hub-01", "443"); err != nil {
+	if err := a.hubStore.Save("hub-01", "443", nil); err != nil {
 		t.Fatal(err)
 	}
 	var dials []string
@@ -343,7 +353,7 @@ func TestMovedSavesAndReconnects(t *testing.T) {
 		t.Fatalf("waits before reconnecting = %v, want none", waits)
 	}
 	// hub.json holds the new hub; a fresh store (the next start) reads it.
-	host, port, ok := NewHubStore(filepath.Dir(a.hubStore.path)).Load()
+	host, port, _, ok := NewHubStore(filepath.Dir(a.hubStore.path)).Load()
 	if !ok || host != "2001:db8::7" || port != "50051" {
 		t.Fatalf("stored hub = %q %q %v", host, port, ok)
 	}
@@ -367,7 +377,7 @@ func TestAskErrorsKeepRetrying(t *testing.T) {
 		t.Fatalf("Run = %v", err)
 	}
 	a.apiURL = "http://127.0.0.1:1" // nothing listens
-	if _, _, err := a.askWhere(context.Background()); err == nil {
+	if _, err := a.askWhere(context.Background()); err == nil {
 		t.Fatal("ask against a closed port succeeded")
 	}
 }
@@ -375,13 +385,13 @@ func TestAskErrorsKeepRetrying(t *testing.T) {
 func TestHubStoreAtomic(t *testing.T) {
 	dir := t.TempDir()
 	s := NewHubStore(dir)
-	if _, _, ok := s.Load(); ok {
+	if _, _, _, ok := s.Load(); ok {
 		t.Fatal("empty store loaded a hub")
 	}
-	if err := s.Save("hub-02.winterflow.dev", "443"); err != nil {
+	if err := s.Save("hub-02.winterflow.dev", "443", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Save("hub-03.winterflow.dev", "443"); err != nil {
+	if err := s.Save("hub-03.winterflow.dev", "443", nil); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(dir, "hub.json"))
@@ -395,7 +405,7 @@ func TestHubStoreAtomic(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("dir holds %d entries, want only hub.json (no temp files)", len(entries))
 	}
-	host, port, ok := NewHubStore(dir).Load()
+	host, port, _, ok := NewHubStore(dir).Load()
 	if !ok || host != "hub-03.winterflow.dev" || port != "443" {
 		t.Fatalf("Load = %q %q %v", host, port, ok)
 	}
@@ -404,7 +414,7 @@ func TestHubStoreAtomic(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "hub.json"), []byte(bad), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, ok := NewHubStore(dir).Load(); ok {
+		if _, _, _, ok := NewHubStore(dir).Load(); ok {
 			t.Fatalf("%q loaded", bad)
 		}
 	}

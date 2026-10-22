@@ -33,8 +33,9 @@ type script struct {
 	other    bool // sign a foreign key instead of the posted CSR
 	otherCA  bool // return a CA that did not sign the certificate
 	csr      string
-	hubAddr  string // overrides the claimed hub address
-	serverID string // overrides the claimed server id
+	hubAddr  string   // overrides the claimed hub address
+	serverID string   // overrides the claimed server id
+	hubFPs   []string // hub_fingerprints in the claimed answer
 }
 
 func (s *script) setCSR(v string) {
@@ -109,6 +110,10 @@ func (s *script) handler() http.Handler {
 			if s.hubAddr != "" {
 				d["hub_addr"] = s.hubAddr
 			}
+			d["hub_fingerprints"] = []string{}
+			if s.hubFPs != nil {
+				d["hub_fingerprints"] = s.hubFPs
+			}
 		}
 		reply(w, 200, d)
 	})
@@ -147,6 +152,64 @@ func TestEnrollHappyPath(t *testing.T) {
 	}
 	if !strings.Contains(s.getCSR(), "CERTIFICATE REQUEST") {
 		t.Fatalf("csr: %q", s.csr)
+	}
+}
+
+func TestEnrollWritesHubJSON(t *testing.T) {
+	fp := strings.Repeat("ab", 32)
+	s := &script{t: t, statuses: []string{"claimed"}, hubFPs: []string{strings.ToUpper(fp)}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	o := opts(srv.URL, dir, &bytes.Buffer{})
+	o.dataDir = filepath.Join(dir, "data")
+	if code, err := run(context.Background(), o); code != ExitOK || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	path := filepath.Join(o.dataDir, "hub.json")
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("hub.json: %v %v", err, fi)
+	}
+	raw, _ := os.ReadFile(path)
+	var f struct {
+		Host, Port   string
+		Fingerprints []string
+	}
+	if err := json.Unmarshal(raw, &f); err != nil || f.Host != "hub-01.winterflow.dev" || f.Port != "50051" || len(f.Fingerprints) != 1 || f.Fingerprints[0] != fp {
+		t.Fatalf("hub.json = %s (%v)", raw, err)
+	}
+
+	// No trusted hub certificates yet: an empty set.
+	s2 := &script{t: t, statuses: []string{"claimed"}}
+	srv2 := httptest.NewServer(s2.handler())
+	defer srv2.Close()
+	dir2 := t.TempDir()
+	o2 := opts(srv2.URL, dir2, &bytes.Buffer{})
+	o2.dataDir = dir2
+	if code, err := run(context.Background(), o2); code != ExitOK || err != nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	raw, _ = os.ReadFile(filepath.Join(dir2, "hub.json"))
+	if !strings.Contains(string(raw), `"fingerprints":[]`) {
+		t.Fatalf("hub.json = %s", raw)
+	}
+}
+
+func TestEnrollRejectsBadFingerprint(t *testing.T) {
+	s := &script{t: t, statuses: []string{"claimed"}, hubFPs: []string{"not-hex"}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	o := opts(srv.URL, dir, &bytes.Buffer{})
+	o.dataDir = dir
+	if code, err := run(context.Background(), o); code != ExitError || err == nil {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	for _, f := range []string{"hub.json", "agent.crt"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Fatalf("%s written for a refused answer", f)
+		}
 	}
 }
 

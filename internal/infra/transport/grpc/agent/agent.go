@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"winterflow/pkg/agentsig"
 	"winterflow/pkg/config"
@@ -99,6 +100,16 @@ type Agent struct {
 	moveCh chan struct{}
 	// askFloor overrides the least gap between hub-prompted asks (tests).
 	askFloor time.Duration
+	// pinRefresh overrides the gap between pin-set refreshes while
+	// connected (tests).
+	pinRefresh time.Duration
+
+	// Hub certificate pinning (verifyHub): pinErr is the last refusal,
+	// seenFP the fingerprint of the last accepted hub certificate.
+	pinMu        sync.Mutex
+	pinErr       error
+	seenFP       string
+	warnedNoPins atomic.Bool
 }
 
 const streamSettle = 2 * time.Minute
@@ -213,6 +224,8 @@ func (a *Agent) Connect(ctx context.Context) error {
 		RootCAs:      certPool,
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{"h2"},
+		// After the CA and host name checks: the hub marker and the pin set.
+		VerifyPeerCertificate: a.verifyHub,
 	}
 
 	a.log.Info("TLS configuration loaded",
@@ -580,10 +593,13 @@ func (a *Agent) replyWait() time.Duration {
 //
 // It asks the API which hub to connect to (migrate) when the hub sends
 // hub.move, when the hub answers FailedPrecondition (the server belongs to
-// another hub, or the hub is draining), both at most once per askFloor, and
-// once the agent has had no stream for unreachableAsk, then every
-// unreachableAsk while that lasts. An answer naming another hub is stored in
-// hub.json and dialed at once; a stay or a failed ask keeps retrying the
+// another hub, or the hub is draining), when the hub's certificate is
+// refused (ErrHubNotTrusted: not in the pin set, or not a hub's), all at
+// most once per askFloor, once the agent has had no stream for
+// unreachableAsk, then every unreachableAsk while that lasts, and, while
+// connected, refreshEvery after the last answered ask (the pin set). An
+// answer naming another hub is stored in hub.json and dialed at once; its
+// pin set replaces the stored one; a stay or a failed ask keeps retrying the
 // current hub.
 func (a *Agent) Run(ctx context.Context) error {
 	baseBackoff, maxBackoff := 1*time.Second, 30*time.Second
@@ -626,9 +642,20 @@ func (a *Agent) Run(ctx context.Context) error {
 	// end of the last one); lastAsk when it last asked the API where to go.
 	downSince := now()
 	var lastAsk time.Time
-	ask := func(why string) bool {
+	// nextRefresh is when a connected agent asks again for the pin set:
+	// refreshEvery after the last answered ask (every ask fetches the set).
+	nextRefresh := now().Add(a.refreshEvery())
+	askAs := func(why string, connected bool) (bool, error) {
 		lastAsk = now()
-		return a.migrate(ctx, why)
+		reconnect, err := a.migrate(ctx, why, connected)
+		if err == nil {
+			nextRefresh = now().Add(a.refreshEvery())
+		}
+		return reconnect, err
+	}
+	ask := func(why string) bool {
+		reconnect, _ := askAs(why, false)
+		return reconnect
 	}
 	// floorLeft is how long until a hub-prompted ask may run (askFloor
 	// after the last ask of any kind).
@@ -659,6 +686,22 @@ func (a *Agent) Run(ctx context.Context) error {
 		done, streamErr, err := bringUp(ctx)
 		if err != nil {
 			a.teardownConn()
+			if errors.Is(err, ErrHubNotTrusted) {
+				// The hub's certificate is not in the pin set (or not a
+				// hub's): the set may be stale. Ask now, at most once per
+				// askFloor; a changed set or another hub redials at once.
+				if floorLeft() <= 0 && ask("hub certificate refused") {
+					backoff = baseBackoff
+					continue
+				}
+				a.log.Warn("agent connection attempt failed, will retry",
+					"error", err, "retry_in", backoff.String())
+				if !sleep(ctx, backoff) {
+					return nil
+				}
+				backoff = nextBackoff(backoff, maxBackoff)
+				continue
+			}
 			switch status.Code(err) {
 			case codes.PermissionDenied:
 				ok, rerr := refused(err)
@@ -696,13 +739,42 @@ func (a *Agent) Run(ctx context.Context) error {
 		// (pending), then asks.
 		moving := false
 		var pending <-chan time.Time
+		// refresh fires when the pin set is due for a refresh (only with an
+		// API to ask).
+		var refresh <-chan time.Time
+		var refreshTimer *time.Timer
+		armRefresh := func() {
+			if refreshTimer != nil {
+				refreshTimer.Stop()
+			}
+			if a.apiURL == "" {
+				return
+			}
+			refreshTimer = time.NewTimer(max(nextRefresh.Sub(now()), 0))
+			refresh = refreshTimer.C
+		}
+		armRefresh()
 	wait:
 		for {
 			select {
 			case <-ctx.Done():
+				if refreshTimer != nil {
+					refreshTimer.Stop()
+				}
 				return nil
 			case <-done:
 				break wait
+			case <-refresh:
+				reconnect, err := askAs("refreshing the trusted hub certificates", true)
+				if err != nil {
+					// Try again sooner than a full period.
+					nextRefresh = now().Add(min(unreachableAsk, a.refreshEvery()))
+				}
+				if reconnect {
+					moving = true
+					break wait
+				}
+				armRefresh()
 			case <-a.moveCh:
 				if pending != nil {
 					continue
@@ -711,17 +783,22 @@ func (a *Agent) Run(ctx context.Context) error {
 					pending = time.After(left)
 					continue
 				}
-				if ask("hub asked to move") {
+				if reconnect, _ := askAs("hub asked to move", true); reconnect {
 					moving = true
 					break wait
 				}
+				armRefresh()
 			case <-pending:
 				pending = nil
-				if ask("hub asked to move") {
+				if reconnect, _ := askAs("hub asked to move", true); reconnect {
 					moving = true
 					break wait
 				}
+				armRefresh()
 			}
+		}
+		if refreshTimer != nil {
+			refreshTimer.Stop()
 		}
 		if moving {
 			a.teardownConn()
@@ -767,14 +844,15 @@ func (a *Agent) Run(ctx context.Context) error {
 // done channel and the func reporting how it ended. On any step failure it
 // returns the error (the caller backs off).
 func (a *Agent) connectRegisterStream(ctx context.Context) (<-chan struct{}, func() error, error) {
+	a.takePinError() // a refusal from an earlier attempt is not this one's
 	if err := a.Connect(ctx); err != nil {
 		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
 	if err := a.Register(ctx); err != nil {
-		return nil, nil, fmt.Errorf("register: %w", err)
+		return nil, nil, a.withPinError(fmt.Errorf("register: %w", err))
 	}
 	if err := a.StartStream(ctx); err != nil {
-		return nil, nil, fmt.Errorf("start stream: %w", err)
+		return nil, nil, a.withPinError(fmt.Errorf("start stream: %w", err))
 	}
 	a.streamMutex.RLock()
 	done := a.streamDone
@@ -784,6 +862,16 @@ func (a *Agent) connectRegisterStream(ctx context.Context) (<-chan struct{}, fun
 		defer a.streamMutex.RUnlock()
 		return a.streamErr
 	}, nil
+}
+
+// withPinError marks err as ErrHubNotTrusted when the hub's certificate was
+// refused during the attempt (gRPC reports the handshake failure as a plain
+// Unavailable status).
+func (a *Agent) withPinError(err error) error {
+	if perr := a.takePinError(); perr != nil {
+		return fmt.Errorf("%w (%w)", perr, err)
+	}
+	return err
 }
 
 // teardownConn closes the connection and clears per-connection state so the next

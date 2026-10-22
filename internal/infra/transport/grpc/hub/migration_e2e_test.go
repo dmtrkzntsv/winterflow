@@ -200,6 +200,7 @@ func TestAgentMigratesThroughTheAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	cm.GenerateServer(true)
+	issueHubCert(t, cfg)
 	const agentID = "srv-migrate"
 	if _, err := cm.GenerateAgent(agentID); err != nil {
 		t.Fatal(err)

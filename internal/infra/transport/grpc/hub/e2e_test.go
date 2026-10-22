@@ -24,6 +24,7 @@ import (
 	"winterflow/internal/infra/transport/grpc/proto"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	hubsreg "winterflow/internal/infra/transport/redis/hubs"
+	pkgcert "winterflow/pkg/cert"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -46,6 +47,16 @@ subjectAltName   = @alt_names
 DNS.1 = localhost
 IP.1 = 127.0.0.1
 `
+
+// issueHubCert replaces the hub certificate with one that carries the
+// winterflow-hub URI SAN (agents refuse a hub certificate without it), for
+// the same names as extCnf, signed by the CA already in HUB_CERT_DIR.
+func issueHubCert(t *testing.T, cfg *config.ServerConfig) {
+	t.Helper()
+	if _, err := pkgcert.EnsureHubPKI(cfg.GetHubCertDir(), []string{"localhost", "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // freePort grabs an ephemeral port and releases it for the hub to bind.
 func freePort(t *testing.T) string {
@@ -121,6 +132,7 @@ func startHub(t *testing.T, agentCN string, auth hub.Authorizer) *e2eEnv {
 		t.Fatal(err)
 	}
 	cm.GenerateServer(true)
+	issueHubCert(t, cfg)
 	if _, err := cm.GenerateAgent(agentCN); err != nil {
 		t.Fatal(err)
 	}
@@ -689,6 +701,7 @@ func TestDrainMovesAgentToAnotherHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	cm.GenerateServer(true)
+	issueHubCert(t, cfg)
 	const agentID = "srv-move"
 	if _, err := cm.GenerateAgent(agentID); err != nil {
 		t.Fatal(err)

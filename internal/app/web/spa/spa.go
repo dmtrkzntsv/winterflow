@@ -58,6 +58,9 @@ func Handler(fsys fs.FS) http.Handler {
 		}
 
 		if fileExists(fsys, name) {
+			if name == indexFile {
+				denyFraming(w)
+			}
 			setCacheControl(w, cleaned)
 			fileServer.ServeHTTP(w, r)
 			return
@@ -74,9 +77,19 @@ func Handler(fsys fs.FS) http.Handler {
 		}
 
 		// SPA fallback: serve index.html for client-side routes.
+		denyFraming(w)
 		setCacheControl(w, "/"+indexFile)
 		http.ServeFileFS(w, r, fsys, indexFile)
 	})
+}
+
+// denyFraming forbids every other site to frame the shell: a framed
+// page (the /oauth/authorize consent screen above all) could be clicked
+// through by a signed-in user who does not see it (clickjacking). No page of
+// the UI has a reason to be framed.
+func denyFraming(w http.ResponseWriter) {
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 }
 
 // setCacheControl picks the caching policy by path. Vite-fingerprinted files

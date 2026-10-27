@@ -81,3 +81,31 @@ func TestHandler_ExtensionHeuristic(t *testing.T) {
 		t.Fatalf("dotted path served %d, want 404", w.Code)
 	}
 }
+
+// TestHandler_ShellDeniesFraming: every shell answer (the consent page, an
+// ordinary route, the root) forbids framing (clickjacking).
+func TestHandler_ShellDeniesFraming(t *testing.T) {
+	h := Handler(testFS())
+	for _, p := range []string{"/oauth/authorize?client_id=x&state=y", "/server/s1/app/a1", "/", "/index.html"} {
+		w := get(t, h, "GET", p)
+		if p == "/index.html" {
+			// The file server redirects it to "/"; follow that.
+			if w.Code != http.StatusMovedPermanently {
+				t.Fatalf("%s: status = %d", p, w.Code)
+			}
+			continue
+		}
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "shell") {
+			t.Fatalf("%s: status = %d body %q", p, w.Code, w.Body.String())
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", p, got)
+		}
+		if got := w.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+			t.Errorf("%s: Content-Security-Policy = %q", p, got)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%s: Cache-Control = %q, want no-cache", p, got)
+		}
+	}
+}

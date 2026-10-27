@@ -42,6 +42,7 @@ type Querier interface {
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
 	// How many servers each hub carries (the hub picker's assigned counts).
 	CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error)
+	CountUnusedOAuthClients(ctx context.Context) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAccessToken(ctx context.Context, id string) error
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)

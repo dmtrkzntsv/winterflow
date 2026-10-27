@@ -16,6 +16,8 @@ type AuthServerRepository interface {
 	// PurgeUnusedClients deletes clients never approved and registered
 	// before createdBefore.
 	PurgeUnusedClients(ctx context.Context, createdBefore time.Time) (int64, error)
+	// CountUnusedClients counts clients never approved.
+	CountUnusedClients(ctx context.Context) (int64, error)
 
 	InsertCode(ctx context.Context, c model.OAuthCode) error
 	// ConsumeCode deletes the code and returns it (the delete is the read,

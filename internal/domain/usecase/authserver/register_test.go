@@ -2,6 +2,7 @@ package authserver
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -49,14 +50,17 @@ func TestRegisterDisabled(t *testing.T) {
 func TestRegisterPurgesUnusedClients(t *testing.T) {
 	f := newFixture(t)
 	old := f.register(t, "", "https://a.test/cb")
-	// A client that registers and only reaches the consent page days later
-	// (a laptop asleep over a weekend) must still be known.
-	f.clock.Advance(7 * 24 * time.Hour)
+	if UnusedClientTTL > 24*time.Hour {
+		t.Fatalf("UnusedClientTTL = %v; open registration must not keep unused clients past a day", UnusedClientTTL)
+	}
+	// A client that registers and reaches the consent page hours later must
+	// still be known.
+	f.clock.Advance(UnusedClientTTL / 2)
 	f.register(t, "", "https://a.test/cb")
 	q := authReq(old.ClientID)
 	q.RedirectURI = "https://a.test/cb"
 	if _, err := f.s.DescribeAuthorization(f.ctx, q); err != nil {
-		t.Fatalf("a week-old unused client must survive the purge: %v", err)
+		t.Fatalf("a recent unused client must survive the purge: %v", err)
 	}
 	f.clock.Advance(UnusedClientTTL)
 	f.register(t, "", "https://a.test/cb")
@@ -82,5 +86,46 @@ func TestRegisterSanitizesAndCaps(t *testing.T) {
 	}
 	if _, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{"https://clаude.ai/cb"}}); !errors.As(err, &oe) || oe.Code != "invalid_redirect_uri" {
 		t.Fatalf("homograph redirect URI: %v", err)
+	}
+}
+
+func TestRegisterCapsRedirectURIBytes(t *testing.T) {
+	f := newFixture(t)
+	// Three 1.5 KiB URIs: each under the per-URI cap, over 4 KiB together.
+	uri := func(i int) string { return "https://a.test/" + strings.Repeat("x", 1500) + string(rune('a'+i)) }
+	var oe *OAuthError
+	_, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{uri(0), uri(1), uri(2)}})
+	if !errors.As(err, &oe) || oe.Status != 400 || oe.Code != "invalid_redirect_uri" {
+		t.Fatalf("4.5 KiB of redirect URIs: %v", err)
+	}
+	if _, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{uri(0), uri(1)}}); err != nil {
+		t.Fatalf("3 KiB of redirect URIs: %v", err)
+	}
+}
+
+func TestRegisterRefusedOverUnusedCap(t *testing.T) {
+	f := newFixture(t)
+	for i := range MaxUnusedClients {
+		if err := f.repo.InsertClient(f.ctx, model.OAuthClient{
+			ID: fmt.Sprintf("c-%05d", i), Name: "x", RedirectURIs: []string{"https://a.test/cb"}, CreatedAt: f.clock.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var oe *OAuthError
+	_, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{"https://a.test/cb"}})
+	if !errors.As(err, &oe) || oe.Status != 503 || oe.Code != "temporarily_unavailable" {
+		t.Fatalf("registration over the cap: %v", err)
+	}
+	// Approved clients do not count, and the purge frees the store.
+	if err := f.repo.MarkClientUsed(f.ctx, "c-00000", f.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{"https://a.test/cb"}}); err != nil {
+		t.Fatalf("one approved client frees a slot: %v", err)
+	}
+	f.clock.Advance(UnusedClientTTL + time.Minute)
+	if _, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{"https://a.test/cb"}}); err != nil {
+		t.Fatalf("after the purge: %v", err)
 	}
 }

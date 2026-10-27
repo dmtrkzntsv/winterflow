@@ -29,8 +29,12 @@ const (
 	// refresh token is a concurrent refresh or a lost answer, not theft.
 	RefreshGrace = 60 * time.Second
 	// UnusedClientTTL is how long a registered client nobody approved is
-	// kept.
-	UnusedClientTTL = 30 * 24 * time.Hour
+	// kept: registration is open, so a short life bounds what it can store
+	// on a small box (a client is registered right before its consent page).
+	UnusedClientTTL = 24 * time.Hour
+	// MaxUnusedClients refuses new registrations while this many clients
+	// nobody approved are stored (open registration on an SD card).
+	MaxUnusedClients = 1000
 	// DeadRetention keeps revoked or expired grants this long before
 	// housekeeping deletes them.
 	DeadRetention = 30 * 24 * time.Hour

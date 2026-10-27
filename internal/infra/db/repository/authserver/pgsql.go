@@ -29,6 +29,10 @@ func (pgsqlQuerier) PurgeUnusedOAuthClients(ctx context.Context, db backend.DBTX
 	return pgsqlgen.New(db).PurgeUnusedOAuthClients(ctx, createdBefore)
 }
 
+func (pgsqlQuerier) CountUnusedOAuthClients(ctx context.Context, db backend.DBTX) (int64, error) {
+	return pgsqlgen.New(db).CountUnusedOAuthClients(ctx)
+}
+
 func (pgsqlQuerier) InsertOAuthCode(ctx context.Context, db backend.DBTX, p insertCodeParams) error {
 	return pgsqlgen.New(db).InsertOAuthCode(ctx, pgsqlgen.InsertOAuthCodeParams(p))
 }

@@ -17,10 +17,17 @@ const (
 	maxClientName     = 100
 	maxRedirectURIs   = 10
 	maxRedirectURILen = 2048
+	// maxRedirectURIBytes caps a client's redirect URIs together.
+	maxRedirectURIBytes = 4096
 )
 
+// errTooManyClients refuses a registration while MaxUnusedClients clients
+// nobody approved are stored.
+var errTooManyClients = &OAuthError{Status: 503, Code: "temporarily_unavailable", Description: "too many pending client registrations, try again later"}
+
 // Register is open dynamic client registration (RFC 7591); the route's
-// per-IP limiter bounds it. A client that asks for a client_secret_* auth
+// per-IP limiter, MaxUnusedClients, UnusedClientTTL and the redirect URI caps
+// bound it. A client that asks for a client_secret_* auth
 // method gets a secret (returned once, stored hashed); the default is a
 // public client.
 func (u *UseCase) Register(ctx context.Context, req model.ClientRegistration) (model.RegisteredClient, error) {
@@ -37,7 +44,12 @@ func (u *UseCase) Register(ctx context.Context, req model.ClientRegistration) (m
 	if n := len(req.RedirectURIs); n < 1 || n > maxRedirectURIs {
 		return model.RegisteredClient{}, &OAuthError{Status: 400, Code: "invalid_redirect_uri", Description: "between 1 and 10 redirect_uris are required"}
 	}
+	total := 0
 	for _, uri := range req.RedirectURIs {
+		total += len(uri)
+		if total > maxRedirectURIBytes {
+			return model.RegisteredClient{}, &OAuthError{Status: 400, Code: "invalid_redirect_uri", Description: "redirect URIs are too long together"}
+		}
 		if len(uri) > maxRedirectURILen {
 			return model.RegisteredClient{}, &OAuthError{Status: 400, Code: "invalid_redirect_uri", Description: "redirect URI is too long"}
 		}
@@ -74,6 +86,13 @@ func (u *UseCase) Register(ctx context.Context, req model.ClientRegistration) (m
 	now := u.now().UTC()
 	if _, err := u.repo.PurgeUnusedClients(ctx, now.Add(-UnusedClientTTL)); err != nil {
 		slog.WarnContext(ctx, "authserver: purge unused clients failed", "error", err)
+	}
+	unused, err := u.repo.CountUnusedClients(ctx)
+	if err != nil {
+		return model.RegisteredClient{}, err
+	}
+	if unused >= MaxUnusedClients {
+		return model.RegisteredClient{}, errTooManyClients
 	}
 	client := model.OAuthClient{ID: util.GenerateID(), Name: name, RedirectURIs: req.RedirectURIs, CreatedAt: now}
 	res := model.RegisteredClient{

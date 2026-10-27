@@ -40,6 +40,7 @@ type querier interface {
 	GetOAuthClient(ctx context.Context, db backend.DBTX, id string) (clientRow, error)
 	MarkOAuthClientUsed(ctx context.Context, db backend.DBTX, p markClientParams) error
 	PurgeUnusedOAuthClients(ctx context.Context, db backend.DBTX, createdBefore types.DateTime) (int64, error)
+	CountUnusedOAuthClients(ctx context.Context, db backend.DBTX) (int64, error)
 
 	InsertOAuthCode(ctx context.Context, db backend.DBTX, p insertCodeParams) error
 	ConsumeOAuthCode(ctx context.Context, db backend.DBTX, codeHash string) (codeRow, error)
@@ -115,6 +116,11 @@ func (r *Repo) MarkClientUsed(ctx context.Context, id string, now time.Time) err
 // createdBefore.
 func (r *Repo) PurgeUnusedClients(ctx context.Context, createdBefore time.Time) (int64, error) {
 	return r.q.PurgeUnusedOAuthClients(ctx, r.db(ctx), types.DateTime(createdBefore))
+}
+
+// CountUnusedClients counts clients never approved.
+func (r *Repo) CountUnusedClients(ctx context.Context) (int64, error) {
+	return r.q.CountUnusedOAuthClients(ctx, r.db(ctx))
 }
 
 // InsertCode stores an authorization code by its hash.

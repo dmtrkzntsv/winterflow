@@ -13,6 +13,9 @@ UPDATE oauth_clients SET last_used_at = ? WHERE id = ?;
 -- name: PurgeUnusedOAuthClients :execrows
 DELETE FROM oauth_clients WHERE last_used_at IS NULL AND created_at < ?;
 
+-- name: CountUnusedOAuthClients :one
+SELECT COUNT(*) FROM oauth_clients WHERE last_used_at IS NULL;
+
 -- name: InsertOAuthCode :exec
 INSERT INTO oauth_codes (code_hash, client_id, user_id, redirect_uri, code_challenge, resource, created_at, expires_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?);

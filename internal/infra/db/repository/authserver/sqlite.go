@@ -28,6 +28,10 @@ func (sqliteQuerier) PurgeUnusedOAuthClients(ctx context.Context, db backend.DBT
 	return sqlitegen.New(db).PurgeUnusedOAuthClients(ctx, createdBefore)
 }
 
+func (sqliteQuerier) CountUnusedOAuthClients(ctx context.Context, db backend.DBTX) (int64, error) {
+	return sqlitegen.New(db).CountUnusedOAuthClients(ctx)
+}
+
 func (sqliteQuerier) InsertOAuthCode(ctx context.Context, db backend.DBTX, p insertCodeParams) error {
 	return sqlitegen.New(db).InsertOAuthCode(ctx, p)
 }

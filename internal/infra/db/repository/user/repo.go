@@ -11,11 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/auth/password"
 	"winterflow/internal/infra/db/backend"
 	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
 	"winterflow/internal/infra/db/types"
@@ -314,11 +313,6 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func hashPassword(password string) (string, error) {
-	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(h), err
-}
-
 // CountUsers reports how many users exist.
 func (r *Repo) CountUsers(ctx context.Context) (int, error) {
 	n, err := r.q.CountUsers(ctx, r.tx.Querier(ctx))
@@ -356,9 +350,9 @@ func created(u insertUserParams) model.User {
 // first login's email+password: user + personal org (owner) + local connected
 // account + credentials. Refuses when any user already exists: the count is
 // re-checked inside the transaction so a racing double-submit has one winner.
-func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, password string) (model.User, error) {
+func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := hashPassword(password)
+	hash, err := password.Hash(pw)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -392,7 +386,7 @@ func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, password st
 
 // VerifyLocalCredentials checks an email+password pair;
 // model.ErrInvalidCredentials on any mismatch.
-func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, password string) (model.User, error) {
+func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, pw string) (model.User, error) {
 	creds, err := r.q.GetCredentialsByEmail(ctx, r.tx.Querier(ctx), normalizeEmail(email))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -400,10 +394,31 @@ func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, password strin
 		}
 		return model.User{}, err
 	}
-	if bcrypt.CompareHashAndPassword([]byte(creds.PasswordHash), []byte(password)) != nil {
+	ok, needsRehash, err := password.Verify(creds.PasswordHash, pw)
+	if err != nil {
+		return model.User{}, err
+	}
+	if !ok {
 		return model.User{}, model.ErrInvalidCredentials
 	}
+	if needsRehash {
+		r.rehash(ctx, creds.UserID, pw, creds.MustChangePassword)
+	}
 	return r.GetUser(ctx, creds.UserID)
+}
+
+// rehash upgrades a verified legacy hash to the current scheme. A failure is
+// logged and never fails the login: the old hash still works next time.
+func (r *Repo) rehash(ctx context.Context, userID, pw string, mustChange bool) {
+	hash, err := password.Hash(pw)
+	if err == nil {
+		_, err = r.q.UpdatePassword(ctx, r.tx.Querier(ctx), passwordParams{
+			PasswordHash: hash, MustChangePassword: mustChange, UpdatedAt: types.NewDateTime(), UserID: userID,
+		})
+	}
+	if err != nil {
+		r.log.Error("rehash password", "error", err)
+	}
 }
 
 // CreateMemberUser creates an account inside an existing organization:
@@ -411,7 +426,7 @@ func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, password strin
 // membership. No personal org. The stored role is model.RoleAdmin.
 func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := hashPassword(tempPassword)
+	hash, err := password.Hash(tempPassword)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -434,8 +449,8 @@ func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPas
 
 // SetPassword replaces the hash and must-change flag;
 // model.ErrorUserNotFound for a user without local credentials.
-func (r *Repo) SetPassword(ctx context.Context, userID, password string, mustChange bool) error {
-	hash, err := hashPassword(password)
+func (r *Repo) SetPassword(ctx context.Context, userID, pw string, mustChange bool) error {
+	hash, err := password.Hash(pw)
 	if err != nil {
 		return err
 	}
@@ -529,9 +544,9 @@ func (r *Repo) RemoveMember(ctx context.Context, orgID, callerID, userID string)
 
 // RegisterLocalUser is open self-signup (distributed topology): user + their
 // OWN organization (owner) + credentials + local connected account.
-func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, password string) (model.User, error) {
+func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := hashPassword(password)
+	hash, err := password.Hash(pw)
 	if err != nil {
 		return model.User{}, err
 	}

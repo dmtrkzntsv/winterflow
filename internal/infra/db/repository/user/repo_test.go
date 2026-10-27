@@ -12,6 +12,8 @@ import (
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
 	"winterflow/pkg/pat"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func newRepo(t *testing.T) (*Repo, *db.DB) {
@@ -610,5 +612,27 @@ func TestCreateMemberUserIsAtomic(t *testing.T) {
 	}
 	if _, err := repo.VerifyLocalCredentials(ctx, "ghost@x.io", "temp-password1"); !errors.Is(err, model.ErrInvalidCredentials) {
 		t.Fatalf("credentials survived: %v", err)
+	}
+}
+
+func TestVerifyLocalCredentialsRehashes(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	u := mustBootstrap(t, repo, "Bcrypt User", "legacy@x.io", "legacy-pass-1")
+	legacy, err := bcrypt.GenerateFromPassword([]byte("legacy-pass-1"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `UPDATE user_credentials SET password_hash = ? WHERE user_id = ?`), string(legacy), u.ID)
+
+	if _, err := repo.VerifyLocalCredentials(ctx, "legacy@x.io", "legacy-pass-1"); err != nil {
+		t.Fatal(err)
+	}
+	got := dbtest.QueryString(t, d, `SELECT password_hash FROM user_credentials WHERE user_id = '`+u.ID+`'`)
+	if !strings.HasPrefix(got, "$argon2id$") {
+		t.Fatalf("stored hash = %q, want argon2id", got)
+	}
+	if _, err := repo.VerifyLocalCredentials(ctx, "legacy@x.io", "legacy-pass-1"); err != nil {
+		t.Fatalf("login after rehash: %v", err)
 	}
 }

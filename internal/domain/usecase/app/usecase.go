@@ -461,6 +461,12 @@ func (s CheckedSave) AppID() string { return s.app.ID }
 // over SSE. An app a live template instance manages is refused: it changes
 // through its instance (the instance routes use CheckSave and DispatchSave).
 func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
+	return uc.SaveAppObserved(ctx, userID, serverID, app, payload, draft, nil)
+}
+
+// SaveAppObserved is SaveApp with an observer on the result (it runs after
+// the catalog record is persisted).
+func (uc *UseCase) SaveAppObserved(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool, observe Observer) (string, error) {
 	if err := uc.requireUnmanaged(ctx, serverID, app.ID); err != nil {
 		return "", err
 	}
@@ -468,7 +474,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	if err != nil {
 		return "", err
 	}
-	return uc.DispatchSave(ctx, userID, checked, nil)
+	return uc.DispatchSave(ctx, userID, checked, observe)
 }
 
 // requireUnmanaged refuses an app a live template instance manages

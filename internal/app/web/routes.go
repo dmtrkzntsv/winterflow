@@ -27,6 +27,7 @@ import (
 	htemplates "winterflow/internal/app/web/handler/templates"
 	huser "winterflow/internal/app/web/handler/user"
 	webmcp "winterflow/internal/app/web/mcp"
+	mcptools "winterflow/internal/app/web/mcp/tools"
 	"winterflow/internal/app/web/middleware/authn"
 	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/middleware/userlimit"
@@ -254,7 +255,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: rollouts})
 	mcpRoutes := webmcp.Routes(webmcp.Edge{
 		Auth: sessionAuth, AllowOAuth: d.AuthServer.Enabled(), Challenge: d.AuthServer.Challenge(),
-		Register: webmcp.Compose(),
+		Register: mcptools.New(mcptools.FromDeps(d)),
 	}, g)
 
 	routes := []api.Route{{

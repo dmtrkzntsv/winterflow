@@ -116,6 +116,12 @@ func TestObservedDispatchesKeepTheirResult(t *testing.T) {
 // The …Observed variants the MCP tools use dispatch what their plain
 // forms do, keep their result for ObservedResultTTL and run the observer
 // after their own result handling; the plain forms set no wait.
+// saveProbe is a save with nothing to check beyond its compose file.
+var saveProbe = command.AppPayload{
+	Config: []byte(`{"name":"web"}`),
+	Files:  []command.ContentItem{{Name: "compose.yml", Content: []byte("services:\n  web:\n    image: nginx\n")}},
+}
+
 func TestObservedVariants(t *testing.T) {
 	disp := &recordingDispatcher{}
 	uc := NewUseCase(&Deps{
@@ -162,6 +168,11 @@ func TestObservedVariants(t *testing.T) {
 		{command.TypeDomainDelete,
 			func(o Observer) (string, error) { return uc.DeleteDomainObserved(ctx, "u", "srv", "x.test", o) },
 			func() (string, error) { return uc.DeleteDomain(ctx, "u", "srv", "x.test") }},
+		{command.TypeAppSave,
+			func(o Observer) (string, error) {
+				return uc.SaveAppObserved(ctx, "u", "srv", model.App{Name: "web"}, saveProbe, false, o)
+			},
+			func() (string, error) { return uc.SaveApp(ctx, "u", "srv", model.App{Name: "web"}, saveProbe, false) }},
 	} {
 		seen := 0
 		id, err := tc.observed(func(port.CommandResult) { seen++ })

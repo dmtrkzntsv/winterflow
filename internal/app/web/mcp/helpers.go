@@ -38,11 +38,17 @@ func ErrorResult(err error) *sdk.CallToolResult {
 	switch {
 	case errors.Is(err, model.ErrManagedByTemplate):
 		return ErrorText(ManagedAppMessage)
-	case errors.Is(err, model.ErrRejected), errors.Is(err, model.ErrNotFound),
-		errors.Is(err, model.ErrConflict), errors.Is(err, model.ErrForbidden):
+	case IsDomainError(err):
 		return ErrorText(err.Error())
 	}
 	return ErrorText(internalMessage)
+}
+
+// IsDomainError reports whether err is a classified domain error, one whose
+// message is the caller's to read.
+func IsDomainError(err error) bool {
+	return errors.Is(err, model.ErrRejected) || errors.Is(err, model.ErrNotFound) ||
+		errors.Is(err, model.ErrConflict) || errors.Is(err, model.ErrForbidden)
 }
 
 // ErrorText is a tool error (isError) with msg as its text.

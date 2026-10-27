@@ -542,6 +542,37 @@ func TestVerifyLocalCredentialsRehashes(t *testing.T) {
 	}
 }
 
+// A rehash racing a password change must not write the old password back: the
+// UPDATE applies only while the verified hash is still the stored one.
+func TestRehashSkipsChangedPassword(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	u := mustBootstrap(t, repo, "Race User", "race@x.io", "old-pass-1")
+	legacy, err := bcrypt.GenerateFromPassword([]byte("old-pass-1"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The login verified this legacy hash; the reset then lands first.
+	if err := repo.SetPassword(ctx, u.ID, "new-pass-1", false); err != nil {
+		t.Fatal(err)
+	}
+	repo.rehash(ctx, u.ID, "old-pass-1", string(legacy))
+	if _, err := repo.VerifyLocalCredentials(ctx, "race@x.io", "old-pass-1"); !errors.Is(err, model.ErrInvalidCredentials) {
+		t.Fatalf("old password works after the reset: %v", err)
+	}
+	if _, err := repo.VerifyLocalCredentials(ctx, "race@x.io", "new-pass-1"); err != nil {
+		t.Fatalf("new password lost: %v", err)
+	}
+}
+
+func TestVerifyUnknownEmailIsInvalid(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	if _, err := repo.VerifyLocalCredentials(ctx, "nobody@x.io", "pw"); !errors.Is(err, model.ErrInvalidCredentials) {
+		t.Fatalf("unknown email = %v, want ErrInvalidCredentials", err)
+	}
+}
+
 func TestCreateProviderUser(t *testing.T) {
 	r, _ := newRepo(t)
 	ctx := dbtest.Ctx(t)

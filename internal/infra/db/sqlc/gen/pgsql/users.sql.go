@@ -189,6 +189,34 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
 	return err
 }
 
+const rehashPassword = `-- name: RehashPassword :execrows
+UPDATE user_credentials
+SET password_hash = $1, updated_at = $2
+WHERE user_id = $3 AND password_hash = $4
+`
+
+type RehashPasswordParams struct {
+	PasswordHash string
+	UpdatedAt    types.DateTime
+	UserID       string
+	OldHash      string
+}
+
+// Replaces a verified legacy hash only while it is still the stored one, so a
+// password changed meanwhile is never overwritten with the old one.
+func (q *Queries) RehashPassword(ctx context.Context, arg RehashPasswordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehashPassword,
+		arg.PasswordHash,
+		arg.UpdatedAt,
+		arg.UserID,
+		arg.OldHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updatePassword = `-- name: UpdatePassword :execrows
 UPDATE user_credentials
 SET password_hash = $1, must_change_password = $2, updated_at = $3

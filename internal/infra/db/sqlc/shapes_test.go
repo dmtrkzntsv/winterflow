@@ -98,6 +98,8 @@ var (
 	_ = pgsqlgen.UpdateOrganizationParams(sqlitegen.UpdateOrganizationParams{})
 	_ = sqlitegen.UpdatePasswordParams(pgsqlgen.UpdatePasswordParams{})
 	_ = pgsqlgen.UpdatePasswordParams(sqlitegen.UpdatePasswordParams{})
+	_ = sqlitegen.RehashPasswordParams(pgsqlgen.RehashPasswordParams{})
+	_ = pgsqlgen.RehashPasswordParams(sqlitegen.RehashPasswordParams{})
 	_ = sqlitegen.UpsertAppParams(pgsqlgen.UpsertAppParams{})
 	_ = pgsqlgen.UpsertAppParams(sqlitegen.UpsertAppParams{})
 	_ = sqlitegen.UpsertCapabilityParams(pgsqlgen.UpsertCapabilityParams{})

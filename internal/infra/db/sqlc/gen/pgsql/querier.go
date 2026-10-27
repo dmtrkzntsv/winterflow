@@ -319,6 +319,9 @@ type Querier interface {
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
+	// Replaces a verified legacy hash only while it is still the stored one, so a
+	// password changed meanwhile is never overwritten with the old one.
+	RehashPassword(ctx context.Context, arg RehashPasswordParams) (int64, error)
 	// Moves a legacy row (Google accounts linked by the previous auth library
 	// were keyed by the SHA-1 of the subject) to the subject itself.
 	RekeyIdentity(ctx context.Context, arg RekeyIdentityParams) (int64, error)

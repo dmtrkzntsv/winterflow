@@ -30,6 +30,7 @@ type (
 	identityParams    = sqlitegen.InsertIdentityParams
 	credentialsParams = sqlitegen.InsertCredentialsParams
 	passwordParams    = sqlitegen.UpdatePasswordParams
+	rehashParams      = sqlitegen.RehashPasswordParams
 	insertOrgParams   = sqlitegen.InsertOrganizationParams
 	updateOrgParams   = sqlitegen.UpdateOrganizationParams
 	membershipParams  = sqlitegen.InsertOrganizationUserParams
@@ -52,6 +53,7 @@ type querier interface {
 	GetCredentialsByUser(ctx context.Context, db backend.DBTX, userID string) (credentialsRow, error)
 	EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error)
 	UpdatePassword(ctx context.Context, db backend.DBTX, p passwordParams) (int64, error)
+	RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error)
 	// organizations.sql
 	InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error
 	GetOrganization(ctx context.Context, db backend.DBTX, organizationID string) (organizationRow, error)
@@ -238,7 +240,7 @@ func created(u insertUserParams) model.User {
 // re-checked inside the transaction so a racing double-submit has one winner.
 func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := password.Hash(pw)
+	hash, err := password.Hash(ctx, pw)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -276,11 +278,16 @@ func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, pw string) (mo
 	creds, err := r.q.GetCredentialsByEmail(ctx, r.tx.Querier(ctx), normalizeEmail(email))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// Spend what a real verify costs, so an unknown email answers
+			// as slowly as a wrong password (no account-existence oracle).
+			if err := password.VerifyDummy(ctx, pw); err != nil {
+				return model.User{}, err
+			}
 			return model.User{}, model.ErrInvalidCredentials
 		}
 		return model.User{}, err
 	}
-	ok, needsRehash, err := password.Verify(creds.PasswordHash, pw)
+	ok, needsRehash, err := password.Verify(ctx, creds.PasswordHash, pw)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -288,18 +295,20 @@ func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, pw string) (mo
 		return model.User{}, model.ErrInvalidCredentials
 	}
 	if needsRehash {
-		r.rehash(ctx, creds.UserID, pw, creds.MustChangePassword)
+		r.rehash(ctx, creds.UserID, pw, creds.PasswordHash)
 	}
 	return r.GetUser(ctx, creds.UserID)
 }
 
-// rehash upgrades a verified legacy hash to the current scheme. A failure is
-// logged and never fails the login: the old hash still works next time.
-func (r *Repo) rehash(ctx context.Context, userID, pw string, mustChange bool) {
-	hash, err := password.Hash(pw)
+// rehash upgrades a verified legacy hash to the current scheme, only while
+// oldHash is still the stored one: a password changed or reset since the
+// verify is never overwritten with the old password. A failure is logged and
+// never fails the login: the old hash still works next time.
+func (r *Repo) rehash(ctx context.Context, userID, pw, oldHash string) {
+	hash, err := password.Hash(ctx, pw)
 	if err == nil {
-		_, err = r.q.UpdatePassword(ctx, r.tx.Querier(ctx), passwordParams{
-			PasswordHash: hash, MustChangePassword: mustChange, UpdatedAt: types.NewDateTime(), UserID: userID,
+		_, err = r.q.RehashPassword(ctx, r.tx.Querier(ctx), rehashParams{
+			PasswordHash: hash, UpdatedAt: types.NewDateTime(), UserID: userID, OldHash: oldHash,
 		})
 	}
 	if err != nil {
@@ -312,7 +321,7 @@ func (r *Repo) rehash(ctx context.Context, userID, pw string, mustChange bool) {
 // membership. No personal org. The stored role is model.RoleAdmin.
 func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := password.Hash(tempPassword)
+	hash, err := password.Hash(ctx, tempPassword)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -336,7 +345,7 @@ func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPas
 // SetPassword replaces the hash and must-change flag;
 // model.ErrorUserNotFound for a user without local credentials.
 func (r *Repo) SetPassword(ctx context.Context, userID, pw string, mustChange bool) error {
-	hash, err := password.Hash(pw)
+	hash, err := password.Hash(ctx, pw)
 	if err != nil {
 		return err
 	}
@@ -433,7 +442,7 @@ func (r *Repo) RemoveMember(ctx context.Context, orgID, callerID, userID string)
 // OWN organization (owner) + credentials + local connected account.
 func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := password.Hash(pw)
+	hash, err := password.Hash(ctx, pw)
 	if err != nil {
 		return model.User{}, err
 	}

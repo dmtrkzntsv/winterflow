@@ -3,12 +3,14 @@
 package password
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
@@ -33,9 +35,33 @@ const (
 	maxLanes     uint8  = 16
 )
 
+// MaxConcurrent is how many Hash/Verify calls may run at once in this
+// process. Each argon2id computation allocates memoryKiB (19 MiB); without a
+// bound a login flood from a few IPs could run dozens at once and OOM a small
+// box. Callers beyond the cap wait for a slot, bounded by their ctx.
+const MaxConcurrent = 2
+
+var slots = make(chan struct{}, MaxConcurrent)
+
+// acquire takes a slot or returns ctx's error once it is done.
+func acquire(ctx context.Context) (release func(), err error) {
+	select {
+	case slots <- struct{}{}:
+		return func() { <-slots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // Hash returns an argon2id PHC string:
 // $argon2id$v=19$m=<KiB>,t=<passes>,p=<lanes>$<b64 salt>$<b64 key> (raw std base64).
-func Hash(pw string) (string, error) {
+// It waits for one of MaxConcurrent slots; ctx bounds the wait.
+func Hash(ctx context.Context, pw string) (string, error) {
+	release, err := acquire(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	salt := make([]byte, saltLen)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
 		return "", err
@@ -53,8 +79,14 @@ func encode(pw string, salt []byte, m, t uint32, p uint8, kl uint32) string {
 // Verify checks pw against an argon2id PHC or a bcrypt ($2a$/$2b$/$2y$) hash.
 // A mismatch or malformed/unknown hash is ok=false with a nil error.
 // needsRehash is set only when ok is true and the hash is bcrypt or argon2id
-// with weaker parameters than Hash currently produces.
-func Verify(hash, pw string) (ok bool, needsRehash bool, err error) {
+// with weaker parameters than Hash currently produces. It waits for one of
+// MaxConcurrent slots; ctx bounds the wait (its error is returned).
+func Verify(ctx context.Context, hash, pw string) (ok bool, needsRehash bool, err error) {
+	release, err := acquire(ctx)
+	if err != nil {
+		return false, false, err
+	}
+	defer release()
 	switch {
 	case strings.HasPrefix(hash, "$argon2id$"):
 		m, t, p, good := verifyArgon2id(hash, pw)
@@ -101,4 +133,26 @@ func verifyArgon2id(stored, pw string) (m, t uint32, p uint8, ok bool) {
 	computed := argon2.IDKey([]byte(pw), salt, t, m, p, uint32(len(key)))
 	ok = subtle.ConstantTimeCompare(computed, key) == 1
 	return
+}
+
+var (
+	dummyOnce sync.Once
+	dummyHash string
+)
+
+// VerifyDummy spends what a Verify of a real argon2id hash costs and always
+// fails, so a login for an unknown email takes as long as one for a known
+// email with a wrong password (no account-existence oracle). It takes a slot
+// like Verify; a ctx error is returned.
+func VerifyDummy(ctx context.Context, pw string) error {
+	dummyOnce.Do(func() {
+		salt := make([]byte, saltLen)
+		_, _ = io.ReadFull(rand.Reader, salt)
+		// A random password nobody knows: the comparison never succeeds.
+		secret := make([]byte, 32)
+		_, _ = io.ReadFull(rand.Reader, secret)
+		dummyHash = encode(string(secret), salt, memoryKiB, passes, lanes, keyLen)
+	})
+	_, _, err := Verify(ctx, dummyHash, pw)
+	return err
 }

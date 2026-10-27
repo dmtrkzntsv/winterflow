@@ -43,3 +43,10 @@ SELECT EXISTS (SELECT 1 FROM user_credentials WHERE email = ?);
 UPDATE user_credentials
 SET password_hash = ?, must_change_password = ?, updated_at = ?
 WHERE user_id = ?;
+
+-- name: RehashPassword :execrows
+-- Replaces a verified legacy hash only while it is still the stored one, so a
+-- password changed meanwhile is never overwritten with the old one.
+UPDATE user_credentials
+SET password_hash = ?, updated_at = ?
+WHERE user_id = ? AND password_hash = sqlc.arg(old_hash);

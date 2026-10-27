@@ -66,6 +66,10 @@ func (pgsqlQuerier) UpdatePassword(ctx context.Context, db backend.DBTX, p passw
 	return pgsqlgen.New(db).UpdatePassword(ctx, pgsqlgen.UpdatePasswordParams(p))
 }
 
+func (pgsqlQuerier) RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error) {
+	return pgsqlgen.New(db).RehashPassword(ctx, pgsqlgen.RehashPasswordParams(p))
+}
+
 func (pgsqlQuerier) InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error {
 	return pgsqlgen.New(db).InsertOrganization(ctx, pgsqlgen.InsertOrganizationParams(p))
 }

@@ -63,6 +63,10 @@ func (sqliteQuerier) UpdatePassword(ctx context.Context, db backend.DBTX, p pass
 	return sqlitegen.New(db).UpdatePassword(ctx, p)
 }
 
+func (sqliteQuerier) RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error) {
+	return sqlitegen.New(db).RehashPassword(ctx, p)
+}
+
 func (sqliteQuerier) InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error {
 	return sqlitegen.New(db).InsertOrganization(ctx, p)
 }

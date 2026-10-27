@@ -3,6 +3,7 @@ package notification
 import (
 	"bufio"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,10 +45,7 @@ func TestStreamIsSubscribedWhenHeadersArrive(t *testing.T) {
 	}
 
 	nm.Publish("u1", model.Notification{Type: model.NotificationOperationResult, Ref: "r1"})
-	line, err := bufio.NewReader(resp.Body).ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
-	}
+	line := nextData(t, bufio.NewReader(resp.Body))
 	if !strings.HasPrefix(line, "data: ") || !strings.Contains(line, `"ref":"r1"`) {
 		t.Fatalf("event = %q", line)
 	}
@@ -60,5 +58,54 @@ func TestStreamRequiresUser(t *testing.T) {
 	h.Stream(rec, httptest.NewRequest(http.MethodGet, "/api/v1/sse", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// nextData returns the stream's next data line, skipping the retry field and
+// blank separators.
+func nextData(t *testing.T, br *bufio.Reader) string {
+	t.Helper()
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(line, "data: ") {
+			return line
+		}
+	}
+}
+
+// A stream is authenticated once, at connect: it must end after its
+// lifetime so the browser reconnects through the auth middleware (a revoked
+// session stops receiving events), and it announces a short retry.
+func TestStreamEndsAfterLifetime(t *testing.T) {
+	if streamLifetime+streamJitter > 15*time.Minute {
+		t.Fatalf("stream lifetime %v+%v is too long for revocation to bite", streamLifetime, streamJitter)
+	}
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"})
+	nm := notificationsvc.NewNotificationManager(log)
+	h := NewHandler(&Deps{Logger: log, NotificationManager: nm})
+	if d := h.lifetime(); d < streamLifetime || d >= streamLifetime+streamJitter {
+		t.Fatalf("default lifetime = %v", d)
+	}
+	h.lifetime = func() time.Duration { return 100 * time.Millisecond }
+	srv := httptest.NewServer(asUser("u1", http.HandlerFunc(h.Stream)))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body) // returns once the server ends the stream
+	if err != nil {
+		t.Fatalf("stream did not end cleanly: %v", err)
+	}
+	if !strings.HasPrefix(string(body), "retry: 1000\n\n") {
+		t.Fatalf("body = %q, want a retry field first", body)
 	}
 }

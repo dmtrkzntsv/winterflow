@@ -60,6 +60,23 @@ describe("NotificationsProvider", () => {
     expect(latest()).not.toBe(first);
   });
 
+  // The server ends every stream after about ten minutes (a stream is
+  // authenticated only at connect); the browser's EventSource reconnects on
+  // its own. That must stay invisible: the same stream object comes back,
+  // no new one is opened, a pending waitFor still resolves.
+  it("rides out a server-ended stream without a new EventSource or a lost waitFor", async () => {
+    const { latest, send } = mount();
+    act(() => streams[0].onopen?.());
+    const pending = latest().waitFor("r1");
+    act(() => streams[0].onerror?.());
+    expect(latest().connected).toBe(false);
+    act(() => streams[0].onopen?.());
+    expect(latest().connected).toBe(true);
+    expect(streams).toHaveLength(1);
+    send({ type: "app.save", ref: "r1", status: 0 });
+    await expect(pending).resolves.toMatchObject({ ref: "r1" });
+  });
+
   it("delivers notifications to subscribers, past a faulty one and a malformed message", () => {
     const { latest, send } = mount();
     const got: string[] = [];

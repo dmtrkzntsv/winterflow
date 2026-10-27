@@ -115,6 +115,18 @@ type AppDomain struct {
 	UpdatedAt    types.DateTime
 }
 
+type CommandResult struct {
+	RequestID  string
+	OrgID      string
+	ServerID   string
+	Kind       string
+	Status     string
+	Result     *string
+	Error      *string
+	CreatedAt  types.DateTime
+	FinishedAt *types.DateTime
+}
+
 type HubCertificate struct {
 	Fingerprint string
 	HubID       string

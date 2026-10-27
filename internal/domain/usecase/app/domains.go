@@ -22,7 +22,13 @@ func (uc *UseCase) ServerDomains(ctx context.Context, serverID string) ([]model.
 // reconciles the server_domains index and is delivered over SSE to userID
 // (none for the system's own sync when an agent comes online).
 func (uc *UseCase) ListServerDomains(ctx context.Context, userID, serverID string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.ListServerDomainsObserved(ctx, userID, serverID, nil)
+}
+
+// ListServerDomainsObserved is ListServerDomains with an observer on the
+// result (it runs after the index is reconciled).
+func (uc *UseCase) ListServerDomainsObserved(ctx context.Context, userID, serverID string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeDomainList,
@@ -44,13 +50,21 @@ func (uc *UseCase) ListServerDomains(ctx context.Context, userID, serverID strin
 				uc.log.Error("ListServerDomains: sync index", "error", err, "server_id", serverID)
 			}
 		},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // CreateDomain dispatches domain.create (callers validate req first). On
 // the agent's confirmation the registration enters the index.
 func (uc *UseCase) CreateDomain(ctx context.Context, userID, serverID string, req command.CreateDomainRequest) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.CreateDomainObserved(ctx, userID, serverID, req, nil)
+}
+
+// CreateDomainObserved is CreateDomain with an observer on the result (it
+// runs after the index is updated).
+func (uc *UseCase) CreateDomainObserved(ctx context.Context, userID, serverID string, req command.CreateDomainRequest, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeDomainCreate,
@@ -68,13 +82,21 @@ func (uc *UseCase) CreateDomain(ctx context.Context, userID, serverID string, re
 				uc.log.Error("CreateDomain: update index", "error", err, "server_id", serverID)
 			}
 		},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // DeleteDomain dispatches domain.delete. On the agent's confirmation the
 // registration leaves the index; a refusal (in use) changes nothing.
 func (uc *UseCase) DeleteDomain(ctx context.Context, userID, serverID, name string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.DeleteDomainObserved(ctx, userID, serverID, name, nil)
+}
+
+// DeleteDomainObserved is DeleteDomain with an observer on the result (it
+// runs after the index is updated).
+func (uc *UseCase) DeleteDomainObserved(ctx context.Context, userID, serverID, name string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeDomainDelete,
@@ -87,5 +109,7 @@ func (uc *UseCase) DeleteDomain(ctx context.Context, userID, serverID, name stri
 				uc.log.Error("DeleteDomain: update index", "error", err, "server_id", serverID)
 			}
 		},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }

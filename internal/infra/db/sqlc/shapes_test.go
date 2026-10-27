@@ -10,6 +10,16 @@ import (
 // values with plain Go conversions. A query whose two versions disagree (a
 // missing override, a different column order) fails to compile here.
 var (
+	_ = sqlitegen.CommandResult(pgsqlgen.CommandResult{})
+	_ = pgsqlgen.CommandResult(sqlitegen.CommandResult{})
+	_ = sqlitegen.InsertCommandResultParams(pgsqlgen.InsertCommandResultParams{})
+	_ = pgsqlgen.InsertCommandResultParams(sqlitegen.InsertCommandResultParams{})
+	_ = sqlitegen.FinishCommandResultParams(pgsqlgen.FinishCommandResultParams{})
+	_ = pgsqlgen.FinishCommandResultParams(sqlitegen.FinishCommandResultParams{})
+	_ = sqlitegen.GetCommandResultParams(pgsqlgen.GetCommandResultParams{})
+	_ = pgsqlgen.GetCommandResultParams(sqlitegen.GetCommandResultParams{})
+	_ = sqlitegen.MarkStaleCommandResultsParams(pgsqlgen.MarkStaleCommandResultsParams{})
+	_ = pgsqlgen.MarkStaleCommandResultsParams(sqlitegen.MarkStaleCommandResultsParams{})
 	_ = sqlitegen.MetricSample(pgsqlgen.MetricSample{})
 	_ = pgsqlgen.MetricSample(sqlitegen.MetricSample{})
 	_ = sqlitegen.InsertMetricSampleParams(pgsqlgen.InsertMetricSampleParams{})

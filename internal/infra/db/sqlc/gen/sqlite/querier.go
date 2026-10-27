@@ -93,6 +93,7 @@ type Querier interface {
 	// rollout ended or a stop was requested (it would end stopped, losing the
 	// extension).
 	ExtendRollout(ctx context.Context, arg ExtendRolloutParams) (int64, error)
+	FinishCommandResult(ctx context.Context, arg FinishCommandResultParams) (int64, error)
 	// Stopped or failed. A failure keeps the current app: it names what failed.
 	FinishRollout(ctx context.Context, arg FinishRolloutParams) (int64, error)
 	// FireAlertState moves a (rule, target) to firing unless it already is;
@@ -111,6 +112,7 @@ type Querier interface {
 	GetAlertServerOrganizationID(ctx context.Context, serverID string) (string, error)
 	GetApp(ctx context.Context, appID string) (App, error)
 	GetCapability(ctx context.Context, arg GetCapabilityParams) (string, error)
+	GetCommandResult(ctx context.Context, arg GetCommandResultParams) (CommandResult, error)
 	GetConnectedAccountUserID(ctx context.Context, arg GetConnectedAccountUserIDParams) (string, error)
 	GetCredentialsByEmail(ctx context.Context, email string) (UserCredential, error)
 	GetCredentialsByUser(ctx context.Context, userID string) (UserCredential, error)
@@ -163,6 +165,8 @@ type Querier interface {
 	InsertAlertRule(ctx context.Context, arg InsertAlertRuleParams) error
 	InsertAppDomain(ctx context.Context, arg InsertAppDomainParams) error
 	InsertCertificate(ctx context.Context, arg InsertCertificateParams) error
+	// Results of MCP-dispatched commands.
+	InsertCommandResult(ctx context.Context, arg InsertCommandResultParams) error
 	InsertConnectedAccount(ctx context.Context, arg InsertConnectedAccountParams) error
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
 	// Agent enrollments (code-based pairing).
@@ -304,8 +308,10 @@ type Querier interface {
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
 	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
 	MarkOAuthClientUsed(ctx context.Context, arg MarkOAuthClientUsedParams) error
+	MarkStaleCommandResults(ctx context.Context, arg MarkStaleCommandResultsParams) (int64, error)
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
 	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
+	PruneCommandResults(ctx context.Context, finishedAt *types.DateTime) (int64, error)
 	PruneEnrollments(ctx context.Context, arg PruneEnrollmentsParams) error
 	PruneHubJoinTokens(ctx context.Context, arg PruneHubJoinTokensParams) error
 	// Keeps the newest ended rollouts of a scope.

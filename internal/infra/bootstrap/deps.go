@@ -8,6 +8,7 @@ import (
 	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/authn"
 	"winterflow/internal/domain/usecase/authserver"
+	"winterflow/internal/domain/usecase/cmdresult"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
@@ -61,7 +62,10 @@ type Deps struct {
 	// by StartRollouts once commands can flow (after the in-process bridge
 	// or the response subscriber). Every handler that queues a rollout must
 	// use this one value (its Wake reaches that worker).
-	Rollouts            *rollouts.UseCase
+	Rollouts *rollouts.UseCase
+	// CommandResults records the commands MCP tools dispatch and their
+	// outcomes (swept hourly by WireCore's maintenance loop).
+	CommandResults      *cmdresult.Store
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache

@@ -18,6 +18,7 @@ import (
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
+	cmdresultrepo "winterflow/internal/infra/db/repository/cmdresult"
 	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
 	hubcertrepo "winterflow/internal/infra/db/repository/hubcert"
 	hubtokenrepo "winterflow/internal/infra/db/repository/hubtoken"
@@ -140,6 +141,16 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 	if err := hubCerts.Trust(ctx, "hub-01", "fp-2", time.Now().In(zone)); err != nil {
 		t.Fatal(err)
+	}
+
+	cmdResults := must(cmdresultrepo.New(d.Tx, d.Driver))
+	if err := cmdResults.Create(ctx, model.CommandRecord{
+		RequestID: "req-1", OrgID: "org-1", ServerID: srv.ID, Kind: "app.get", Status: model.CommandRunning, CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := cmdResults.Finish(ctx, "req-1", model.CommandSucceeded, nil, "", at); err != nil || !ok {
+		t.Fatalf("finish command result: %v, %v", ok, err)
 	}
 
 	appID := dbtest.ID(301)

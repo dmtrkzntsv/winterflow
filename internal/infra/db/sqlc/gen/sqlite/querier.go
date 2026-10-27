@@ -297,6 +297,10 @@ type Querier interface {
 	// transaction. SQLite has no row locks (its writers are serialized), so
 	// this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockUserIdentities(ctx context.Context, userID string) (string, error)
+	// LockUserOAuthGrants re-reads the user inside a code exchange's
+	// transaction. SQLite has no row locks (its writers are serialized), so
+	// this is a plain SELECT; Postgres adds FOR NO KEY UPDATE.
+	LockUserOAuthGrants(ctx context.Context, userID string) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
 	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
 	MarkOAuthClientUsed(ctx context.Context, arg MarkOAuthClientUsedParams) error

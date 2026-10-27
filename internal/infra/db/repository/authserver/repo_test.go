@@ -3,10 +3,12 @@ package authserver
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/db/backend"
 	"winterflow/internal/infra/db/dbtest"
 	"winterflow/pkg/util"
 )
@@ -177,5 +179,98 @@ func TestRepo_RevokeOtherGrants(t *testing.T) {
 	}
 	if ids, err := r.RevokeOtherGrants(ctx, userID, client, keep, now); err != nil || len(ids) != 0 {
 		t.Fatalf("already revoked grants must not be returned again: %v %v", ids, err)
+	}
+}
+
+func TestRepo_LockUserGrantsUnknownUser(t *testing.T) {
+	r, ctx := newRepo(t)
+	if err := r.LockUserGrants(ctx, dbtest.ID(10)); err != nil {
+		t.Fatalf("lock = %v", err)
+	}
+	if err := r.LockUserGrants(ctx, dbtest.ID(99)); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("unknown user: want NotFound, got %v", err)
+	}
+}
+
+// TestRepo_LockUserGrantsSerializesExchanges replays two code exchanges for
+// one user and client on two Postgres connections (READ COMMITTED). Without
+// the lock the second exchange's RevokeOtherGrants cannot see the first's
+// uncommitted grant and both stay live; with it the second waits, then
+// replaces the first. SQLite has one connection, so its exchanges are
+// serialized already.
+func TestRepo_LockUserGrantsSerializesExchanges(t *testing.T) {
+	d := dbtest.Open(t)
+	if d.Driver != backend.Postgres {
+		t.Skip("Postgres only: SQLite runs one transaction at a time")
+	}
+	r, err := New(d.Tx, d.Driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.SeedOrg(t, d, dbtest.ID(1))
+	dbtest.SeedMember(t, d, dbtest.ID(10), dbtest.ID(1))
+	ctx := dbtest.Ctx(t)
+	userID := dbtest.ID(10)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	c := model.OAuthClient{ID: util.GenerateID(), Name: "Claude", RedirectURIs: []string{"https://claude.ai/cb"}, CreatedAt: now}
+	if err := r.InsertClient(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	grant := func(hash string) model.OAuthGrant {
+		return model.OAuthGrant{ID: util.GenerateID(), UserID: userID, ClientID: c.ID, RefreshTokenHash: hash,
+			CreatedAt: now, LastUsedAt: now, ExpiresAt: now.Add(time.Hour)}
+	}
+	exchange := func(ctx context.Context, g model.OAuthGrant, held func()) ([]string, error) {
+		var revoked []string
+		err := d.Tx.WithTx(ctx, func(ctx context.Context) error {
+			if err := r.LockUserGrants(ctx, userID); err != nil {
+				return err
+			}
+			if err := r.InsertGrant(ctx, g); err != nil {
+				return err
+			}
+			held()
+			var err error
+			revoked, err = r.RevokeOtherGrants(ctx, userID, c.ID, g.ID, now)
+			return err
+		})
+		return revoked, err
+	}
+
+	gA, gB := grant("ra"), grant("rb")
+	aHolds, releaseA := make(chan struct{}), make(chan struct{})
+	aDone := make(chan error, 1)
+	go func() {
+		_, err := exchange(ctx, gA, func() { close(aHolds); <-releaseA })
+		aDone <- err
+	}()
+	<-aHolds
+
+	var bInside atomic.Bool
+	type result struct {
+		revoked []string
+		err     error
+	}
+	bDone := make(chan result, 1)
+	go func() {
+		revoked, err := exchange(ctx, gB, func() { bInside.Store(true) })
+		bDone <- result{revoked, err}
+	}()
+	time.Sleep(300 * time.Millisecond)
+	if bInside.Load() {
+		close(releaseA)
+		t.Fatal("the second exchange inserted its grant while the first held the lock")
+	}
+	close(releaseA)
+	if err := <-aDone; err != nil {
+		t.Fatalf("first exchange: %v", err)
+	}
+	b := <-bDone
+	if b.err != nil || len(b.revoked) != 1 || b.revoked[0] != gA.ID {
+		t.Fatalf("second exchange revoked %v (%v), want [%s]", b.revoked, b.err, gA.ID)
+	}
+	live, err := r.ListUnrevokedGrants(ctx, userID)
+	if err != nil || len(live) != 1 || live[0].Grant.ID != gB.ID {
+		t.Fatalf("live grants = %+v, %v; want only %s", live, err, gB.ID)
 	}
 }

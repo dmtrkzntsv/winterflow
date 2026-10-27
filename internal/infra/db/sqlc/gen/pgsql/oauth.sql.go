@@ -628,6 +628,24 @@ func (q *Queries) LockUserIdentities(ctx context.Context, userID string) (string
 	return user_id, err
 }
 
+const lockUserOAuthGrants = `-- name: LockUserOAuthGrants :one
+SELECT user_id FROM users WHERE user_id = $1
+FOR NO KEY UPDATE
+`
+
+// LockUserOAuthGrants row-locks the user inside a code exchange's
+// transaction before its grant is inserted, so two exchanges for one user
+// run one after the other and the later one's RevokeOtherOAuthGrants sees
+// the earlier one's committed grant (under READ COMMITTED it would
+// otherwise see neither, leaving both live). FOR NO KEY UPDATE leaves
+// inserts that only reference the user (KEY SHARE) unblocked.
+func (q *Queries) LockUserOAuthGrants(ctx context.Context, userID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, lockUserOAuthGrants, userID)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const markOAuthClientUsed = `-- name: MarkOAuthClientUsed :exec
 UPDATE oauth_clients SET last_used_at = $1 WHERE id = $2
 `

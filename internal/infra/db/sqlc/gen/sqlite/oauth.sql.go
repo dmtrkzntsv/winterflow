@@ -627,6 +627,20 @@ func (q *Queries) LockUserIdentities(ctx context.Context, userID string) (string
 	return user_id, err
 }
 
+const lockUserOAuthGrants = `-- name: LockUserOAuthGrants :one
+SELECT user_id FROM users WHERE user_id = ?
+`
+
+// LockUserOAuthGrants re-reads the user inside a code exchange's
+// transaction. SQLite has no row locks (its writers are serialized), so
+// this is a plain SELECT; Postgres adds FOR NO KEY UPDATE.
+func (q *Queries) LockUserOAuthGrants(ctx context.Context, userID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, lockUserOAuthGrants, userID)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const markOAuthClientUsed = `-- name: MarkOAuthClientUsed :exec
 UPDATE oauth_clients SET last_used_at = ? WHERE id = ?
 `

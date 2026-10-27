@@ -1,8 +1,11 @@
 package authserver
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -10,6 +13,8 @@ import (
 	"time"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/db/backend"
 	"winterflow/pkg/util"
 )
 
@@ -416,5 +421,84 @@ func TestApproveCodeCarriesIssuer(t *testing.T) {
 	u, _ := url.Parse(to)
 	if u.Query().Get("iss") != testURL {
 		t.Fatalf("iss = %q", u.Query().Get("iss"))
+	}
+}
+
+// lockOrder records, per call, the repository steps an exchange takes and
+// whether each ran inside the exchange's transaction.
+type lockOrder struct {
+	port.AuthServerRepository
+	tx    *backend.TxManager
+	mu    sync.Mutex
+	steps []string
+}
+
+func (l *lockOrder) note(ctx context.Context, step string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, inTx := l.tx.Querier(ctx).(*sql.Tx); !inTx {
+		step += " outside tx"
+	}
+	l.steps = append(l.steps, step)
+}
+
+func (l *lockOrder) LockUserGrants(ctx context.Context, userID string) error {
+	l.note(ctx, "lock "+userID)
+	return l.AuthServerRepository.LockUserGrants(ctx, userID)
+}
+
+func (l *lockOrder) InsertGrant(ctx context.Context, g model.OAuthGrant) error {
+	l.note(ctx, "insert")
+	return l.AuthServerRepository.InsertGrant(ctx, g)
+}
+
+func (l *lockOrder) RevokeOtherGrants(ctx context.Context, userID, clientID, keepID string, now time.Time) ([]string, error) {
+	l.note(ctx, "revoke others")
+	return l.AuthServerRepository.RevokeOtherGrants(ctx, userID, clientID, keepID, now)
+}
+
+// TestExchange_LocksUserBeforeInsertingGrant: the exchange takes the user's
+// grant lock inside its transaction before the grant goes in, so a
+// concurrent exchange for the same user and client (on Postgres) waits and
+// then sees, and replaces, this one's grant.
+func TestExchange_LocksUserBeforeInsertingGrant(t *testing.T) {
+	f := newFixture(t)
+	rec := &lockOrder{AuthServerRepository: f.repo, tx: f.d.Tx}
+	f.s = New(rec, f.tokens, f.d.Tx, testURL, f.clock.Now)
+	cid, code := f.approve(t)
+	rec.steps = nil
+	if _, err := f.exchange(cid, code); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"lock " + f.user, "insert", "revoke others"}
+	if !slices.Equal(rec.steps, want) {
+		t.Fatalf("steps = %q, want %q", rec.steps, want)
+	}
+}
+
+// TestExchange_ConcurrentForSameClientLeavesOneGrant: two codes for one
+// user and client redeemed at once leave a single live grant.
+func TestExchange_ConcurrentForSameClientLeavesOneGrant(t *testing.T) {
+	f := newFixture(t)
+	cid, code1 := f.approve(t)
+	code2 := f.approveFor(t, cid)
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, code := range []string{code1, code2} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[i] = f.exchange(cid, code)
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, err := f.repo.ListUnrevokedGrants(f.ctx, f.user)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("live grants = %d (%v), want 1", len(live), err)
 	}
 }

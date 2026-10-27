@@ -95,6 +95,15 @@ func (u *UseCase) exchange(ctx context.Context, req model.TokenRequest) (model.T
 		if err != nil {
 			return err
 		}
+		// Serializes this user's exchanges, so RevokeOtherGrants below
+		// sees a concurrent exchange's grant (committed first) and
+		// replaces it, instead of both staying live.
+		if err := u.repo.LockUserGrants(ctx, code.UserID); err != nil {
+			if errors.Is(err, model.ErrNotFound) {
+				return errInvalidGrant
+			}
+			return err
+		}
 		g := model.OAuthGrant{ID: util.GenerateID(), UserID: code.UserID, ClientID: c.ID, RefreshTokenHash: refreshHash,
 			CreatedAt: now, LastUsedAt: now, ExpiresAt: now.Add(GrantIdleTTL)}
 		if err := u.repo.InsertGrant(ctx, g); err != nil {

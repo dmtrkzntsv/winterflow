@@ -298,6 +298,13 @@ type Querier interface {
 	// transaction, so a link and an unlink (or two unlinks) of one user run
 	// one after the other.
 	LockUserIdentities(ctx context.Context, userID string) (string, error)
+	// LockUserOAuthGrants row-locks the user inside a code exchange's
+	// transaction before its grant is inserted, so two exchanges for one user
+	// run one after the other and the later one's RevokeOtherOAuthGrants sees
+	// the earlier one's committed grant (under READ COMMITTED it would
+	// otherwise see neither, leaving both live). FOR NO KEY UPDATE leaves
+	// inserts that only reference the user (KEY SHARE) unblocked.
+	LockUserOAuthGrants(ctx context.Context, userID string) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
 	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
 	MarkOAuthClientUsed(ctx context.Context, arg MarkOAuthClientUsedParams) error

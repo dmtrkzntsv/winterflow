@@ -69,6 +69,12 @@ UPDATE oauth_grants SET revoked_at = ?
 WHERE user_id = ? AND client_id = ? AND id <> ? AND revoked_at IS NULL
 RETURNING id;
 
+-- LockUserOAuthGrants re-reads the user inside a code exchange's
+-- transaction. SQLite has no row locks (its writers are serialized), so
+-- this is a plain SELECT; Postgres adds FOR NO KEY UPDATE.
+-- name: LockUserOAuthGrants :one
+SELECT user_id FROM users WHERE user_id = ?;
+
 -- name: ListUnrevokedOAuthGrants :many
 SELECT g.id, g.user_id, g.client_id, g.refresh_token_hash, g.prev_refresh_token_hash, g.rotated_at,
        g.created_at, g.last_used_at, g.expires_at, g.revoked_at, c.name, c.redirect_uris

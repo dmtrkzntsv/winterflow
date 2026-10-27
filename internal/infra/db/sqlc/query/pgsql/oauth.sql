@@ -69,6 +69,16 @@ UPDATE oauth_grants SET revoked_at = $1
 WHERE user_id = $2 AND client_id = $3 AND id <> $4 AND revoked_at IS NULL
 RETURNING id;
 
+-- LockUserOAuthGrants row-locks the user inside a code exchange's
+-- transaction before its grant is inserted, so two exchanges for one user
+-- run one after the other and the later one's RevokeOtherOAuthGrants sees
+-- the earlier one's committed grant (under READ COMMITTED it would
+-- otherwise see neither, leaving both live). FOR NO KEY UPDATE leaves
+-- inserts that only reference the user (KEY SHARE) unblocked.
+-- name: LockUserOAuthGrants :one
+SELECT user_id FROM users WHERE user_id = $1
+FOR NO KEY UPDATE;
+
 -- name: ListUnrevokedOAuthGrants :many
 SELECT g.id, g.user_id, g.client_id, g.refresh_token_hash, g.prev_refresh_token_hash, g.rotated_at,
        g.created_at, g.last_used_at, g.expires_at, g.revoked_at, c.name, c.redirect_uris

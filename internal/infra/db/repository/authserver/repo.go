@@ -55,6 +55,7 @@ type querier interface {
 	RevokeOAuthGrant(ctx context.Context, db backend.DBTX, p revokeParams) (int64, error)
 	RevokeUserOAuthGrants(ctx context.Context, db backend.DBTX, p revokeUserParams) (int64, error)
 	RevokeOtherOAuthGrants(ctx context.Context, db backend.DBTX, p revokeOtherParams) ([]string, error)
+	LockUserOAuthGrants(ctx context.Context, db backend.DBTX, userID string) (string, error)
 	ListUnrevokedOAuthGrants(ctx context.Context, db backend.DBTX, userID string) ([]listGrantRow, error)
 	DeleteDeadOAuthGrants(ctx context.Context, db backend.DBTX, p deleteDeadParams) (int64, error)
 }
@@ -212,6 +213,17 @@ func (r *Repo) RevokeOtherGrants(ctx context.Context, userID, clientID, keepID s
 	return r.q.RevokeOtherOAuthGrants(ctx, r.db(ctx), revokeOtherParams{
 		RevokedAt: ptrTime(&now), UserID: userID, ClientID: clientID, ID: keepID,
 	})
+}
+
+// LockUserGrants row-locks the user until the transaction ends (Postgres;
+// SQLite's single connection already serializes); model.ErrNotFound when
+// the user is gone.
+func (r *Repo) LockUserGrants(ctx context.Context, userID string) error {
+	_, err := r.q.LockUserOAuthGrants(ctx, r.db(ctx), userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.ErrNotFound
+	}
+	return err
 }
 
 // ListUnrevokedGrants lists the user's unrevoked grants with their clients.

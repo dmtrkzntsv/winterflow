@@ -40,6 +40,11 @@ type AuthServerRepository interface {
 	// RevokeOtherGrants revokes the user's unrevoked grants for the client
 	// except keepID, returning the ids it revoked.
 	RevokeOtherGrants(ctx context.Context, userID, clientID, keepID string, now time.Time) ([]string, error)
+	// LockUserGrants serializes grant changes for the user until the
+	// surrounding transaction ends (model.ErrNotFound when the user is
+	// gone): taken before a code exchange inserts its grant, so two
+	// concurrent exchanges cannot both miss each other's grant.
+	LockUserGrants(ctx context.Context, userID string) error
 	// ListUnrevokedGrants lists the user's unrevoked grants with their
 	// clients, oldest first.
 	ListUnrevokedGrants(ctx context.Context, userID string) ([]model.ConnectedGrant, error)

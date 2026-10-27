@@ -19,7 +19,8 @@ var (
 	ErrTokenNotFound = errors.New("token not found")
 	// ErrInvalidCredentials is returned for a wrong email/password pair.
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	// ErrEmailTaken is returned when local credentials already use the email.
+	// ErrEmailTaken is returned when an account already answers to the
+	// email: a password account's, or a linked sign-in provider's.
 	ErrEmailTaken = errors.New("email already in use")
 	// ErrNotBootstrap is returned when a bootstrap is attempted on a
 	// non-empty instance (users already exist).

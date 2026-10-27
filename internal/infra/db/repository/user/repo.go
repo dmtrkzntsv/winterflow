@@ -52,6 +52,7 @@ type querier interface {
 	GetCredentialsByEmail(ctx context.Context, db backend.DBTX, email string) (credentialsRow, error)
 	GetCredentialsByUser(ctx context.Context, db backend.DBTX, userID string) (credentialsRow, error)
 	EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error)
+	LockUserCreation(ctx context.Context, db backend.DBTX) error
 	UpdatePassword(ctx context.Context, db backend.DBTX, p passwordParams) (int64, error)
 	RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error)
 	// organizations.sql
@@ -122,6 +123,9 @@ func (r *Repo) CreateUser(ctx context.Context, d dto.UserDTO) (model.User, error
 		LastSeen:  now,
 	}
 	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
+		if err := r.beginCreate(ctx, ""); err != nil {
+			return err
+		}
 		db := r.tx.Querier(ctx)
 		if err := r.q.InsertOrganization(ctx, db, insertOrgParams{OrganizationID: orgID, Name: strings.ToLower(d.Name) + "'s org", CreatedAt: now}); err != nil {
 			return err
@@ -207,6 +211,32 @@ func (r *Repo) CountUsers(ctx context.Context) (int, error) {
 	return int(n), err
 }
 
+// beginCreate opens every user-creating transaction: it takes the
+// instance-wide user-creation lock (a transaction-scoped advisory lock on
+// Postgres; SQLite serializes transactions already), so "the first user
+// becomes the owner" and "an email answers to one account" are decided
+// against every account committed before this one, never against a
+// snapshot a concurrent creator is about to change. When email is not empty
+// it is refused with model.ErrEmailTaken while any account answers to it: a
+// password account's email or a provider identity's (case-insensitive).
+func (r *Repo) beginCreate(ctx context.Context, email string) error {
+	db := r.tx.Querier(ctx)
+	if err := r.q.LockUserCreation(ctx, db); err != nil {
+		return fmt.Errorf("lock user creation: %w", err)
+	}
+	if email == "" {
+		return nil
+	}
+	taken, err := r.q.EmailTaken(ctx, db, normalizeEmail(email))
+	if err != nil {
+		return err
+	}
+	if taken {
+		return model.ErrEmailTaken
+	}
+	return nil
+}
+
 // localAccount inserts the rows every local (email + password) account has:
 // user, credentials, connected account "local"/email, membership.
 func (r *Repo) localAccount(ctx context.Context, orgID, role string, user insertUserParams, email, hash string, mustChange bool) error {
@@ -237,7 +267,8 @@ func created(u insertUserParams) model.User {
 // BootstrapLocalAdmin creates the very first account of an instance from the
 // first login's email+password: user + personal org (owner) + local connected
 // account + credentials. Refuses when any user already exists: the count is
-// re-checked inside the transaction so a racing double-submit has one winner.
+// re-checked inside the transaction, under the user-creation lock, so a
+// racing double-submit (or a racing first provider sign-in) has one winner.
 func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
 	hash, err := password.Hash(ctx, pw)
@@ -254,6 +285,9 @@ func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, pw string) 
 	orgID := util.GenerateID()
 	user := newUser(name)
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
+		if err := r.beginCreate(ctx, ""); err != nil {
+			return err
+		}
 		n, err := r.q.CountUsers(ctx, r.tx.Querier(ctx))
 		if err != nil {
 			return err
@@ -327,12 +361,8 @@ func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPas
 	}
 	user := newUser(name)
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
-		taken, err := r.q.EmailTaken(ctx, r.tx.Querier(ctx), email)
-		if err != nil {
+		if err := r.beginCreate(ctx, email); err != nil {
 			return err
-		}
-		if taken {
-			return model.ErrEmailTaken
 		}
 		return r.localAccount(ctx, orgID, model.RoleAdmin.Value(), user, email, hash, true)
 	})
@@ -449,12 +479,8 @@ func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, pw string) (m
 	orgID := util.GenerateID()
 	user := newUser(name)
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
-		taken, err := r.q.EmailTaken(ctx, r.tx.Querier(ctx), email)
-		if err != nil {
+		if err := r.beginCreate(ctx, email); err != nil {
 			return err
-		}
-		if taken {
-			return model.ErrEmailTaken
 		}
 		if err := r.q.InsertOrganization(ctx, r.tx.Querier(ctx), insertOrgParams{OrganizationID: orgID, Name: name + "'s org", CreatedAt: types.NewDateTime()}); err != nil {
 			return err
@@ -471,12 +497,16 @@ func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, pw string) (m
 // user named name, their own organization (owner) and the linked identity
 // id (its UserID is filled in), in one transaction. firstOnly makes it the
 // instance's claim step instead: refused with model.ErrNotBootstrap unless
-// there are no users yet, re-checked inside the transaction so two racing
-// first sign-ins have one winner.
+// there are no users yet, re-checked inside the transaction under the
+// user-creation lock so two racing first sign-ins have one winner. An
+// identity email any account already answers to is model.ErrEmailTaken.
 func (r *Repo) CreateProviderUser(ctx context.Context, name string, id model.Identity, firstOnly bool) (model.User, error) {
 	orgID := util.GenerateID()
 	user := newUser(name)
 	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
+		if err := r.beginCreate(ctx, id.Email); err != nil {
+			return err
+		}
 		db := r.tx.Querier(ctx)
 		if firstOnly {
 			n, err := r.q.CountUsers(ctx, db)

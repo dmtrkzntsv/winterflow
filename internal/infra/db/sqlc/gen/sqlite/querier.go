@@ -88,6 +88,9 @@ type Querier interface {
 	// A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteUser(ctx context.Context, userID string) error
+	// Whether an account already answers to this (normalized, lower-case)
+	// address: a password account's email, or the email a linked sign-in
+	// provider vouched for. Compared case-insensitively.
 	EmailTaken(ctx context.Context, email string) (bool, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
 	// rollout ended or a stop was requested (it would end stopped, losing the
@@ -293,6 +296,9 @@ type Querier interface {
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// LockUserCreation serializes account creation on Postgres; SQLite has
+	// one connection and serializes transactions already, so this is a no-op.
+	LockUserCreation(ctx context.Context) error
 	// LockUserIdentities re-reads the user inside an identity write's
 	// transaction. SQLite has no row locks (its writers are serialized), so
 	// this is a plain SELECT; Postgres adds FOR UPDATE.
@@ -366,7 +372,8 @@ type Querier interface {
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
 	// Whether an account already answers to this address: a password
-	// account's email, or the email a linked provider vouched for.
+	// account's email, or the email a linked provider vouched for; the same
+	// rule as users.sql's EmailTaken (the address arrives lower-cased).
 	SignInEmailInUse(ctx context.Context, address string) (bool, error)
 	// The feed every catalog template now reflects: a later sync of an older
 	// feed is refused as a whole.

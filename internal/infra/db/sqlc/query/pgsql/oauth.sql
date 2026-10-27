@@ -144,11 +144,12 @@ SELECT EXISTS (SELECT 1 FROM user_credentials WHERE user_id = $1);
 
 -- name: SignInEmailInUse :one
 -- Whether an account already answers to this address: a password
--- account's email, or the email a linked provider vouched for.
+-- account's email, or the email a linked provider vouched for; the same
+-- rule as users.sql's EmailTaken (the address arrives lower-cased).
 SELECT EXISTS (
-    SELECT 1 FROM user_credentials c WHERE c.email = sqlc.arg(address)
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = sqlc.arg(address)::text
     UNION ALL
-    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND a.email = sqlc.arg(address)
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND lower(a.email) = sqlc.arg(address)::text
 );
 
 -- name: UpdateIdentityEmail :execrows

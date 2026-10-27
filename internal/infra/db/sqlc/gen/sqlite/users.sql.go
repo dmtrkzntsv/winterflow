@@ -32,9 +32,16 @@ func (q *Queries) DeleteUser(ctx context.Context, userID string) error {
 }
 
 const emailTaken = `-- name: EmailTaken :one
-SELECT EXISTS (SELECT 1 FROM user_credentials WHERE email = ?)
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = CAST(?1 AS TEXT)
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND lower(a.email) = CAST(?1 AS TEXT)
+)
 `
 
+// Whether an account already answers to this (normalized, lower-case)
+// address: a password account's email, or the email a linked sign-in
+// provider vouched for. Compared case-insensitively.
 func (q *Queries) EmailTaken(ctx context.Context, email string) (bool, error) {
 	row := q.db.QueryRowContext(ctx, emailTaken, email)
 	var exists bool
@@ -186,6 +193,17 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
 		arg.CreatedAt,
 		arg.LastSeen,
 	)
+	return err
+}
+
+const lockUserCreation = `-- name: LockUserCreation :exec
+SELECT 1
+`
+
+// LockUserCreation serializes account creation on Postgres; SQLite has
+// one connection and serializes transactions already, so this is a no-op.
+func (q *Queries) LockUserCreation(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, lockUserCreation)
 	return err
 }
 

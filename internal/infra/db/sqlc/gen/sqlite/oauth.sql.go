@@ -808,14 +808,15 @@ func (q *Queries) RotateOAuthGrant(ctx context.Context, arg RotateOAuthGrantPara
 
 const signInEmailInUse = `-- name: SignInEmailInUse :one
 SELECT EXISTS (
-    SELECT 1 FROM user_credentials c WHERE c.email = ?1
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = CAST(?1 AS TEXT)
     UNION ALL
-    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND a.email = ?1
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND lower(a.email) = CAST(?1 AS TEXT)
 )
 `
 
 // Whether an account already answers to this address: a password
-// account's email, or the email a linked provider vouched for.
+// account's email, or the email a linked provider vouched for; the same
+// rule as users.sql's EmailTaken (the address arrives lower-cased).
 func (q *Queries) SignInEmailInUse(ctx context.Context, address string) (bool, error) {
 	row := q.db.QueryRowContext(ctx, signInEmailInUse, address)
 	var exists bool

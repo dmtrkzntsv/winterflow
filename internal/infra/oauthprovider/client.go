@@ -71,9 +71,13 @@ type Client struct {
 	issuer Issuer
 	http   *http.Client
 
+	// now is the clock the JWKS cache runs on (tests inject one).
+	now func() time.Time
+
 	mu         sync.Mutex
 	disc       *Discovery
 	keys       map[string]crypto.PublicKey
+	keysUntil  time.Time // the cached JWKS is refetched from then on
 	lastMissAt time.Time
 }
 
@@ -88,7 +92,7 @@ func NewClient(issuer Issuer, hc *http.Client) *Client {
 		hc = &cp
 	}
 	issuer.IssuerURL = strings.TrimSuffix(issuer.IssuerURL, "/")
-	return &Client{issuer: issuer, http: hc}
+	return &Client{issuer: issuer, http: hc, now: time.Now}
 }
 
 // ValidateIssuerURL enforces on a configured issuer the rule validateEndpoint

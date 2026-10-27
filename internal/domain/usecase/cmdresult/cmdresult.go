@@ -93,9 +93,14 @@ func (s *Store) Finish(ctx context.Context, requestID string, res port.CommandRe
 }
 
 // Get reads the org's record of a command; another org's, or none, is
-// model.ErrNotFound.
+// model.ErrNotFound. A record running longer than StaleAfter reads
+// unknown at once (Sweep stores that within the hour).
 func (s *Store) Get(ctx context.Context, orgID, requestID string) (Record, error) {
-	return s.repo.Get(ctx, orgID, requestID)
+	rec, err := s.repo.Get(ctx, orgID, requestID)
+	if err == nil && rec.Status == Running && rec.CreatedAt.Before(s.now().Add(-StaleAfter)) {
+		rec.Status = Unknown
+	}
+	return rec, err
 }
 
 // Await waits at most bound for the command's outcome. With local (the
@@ -251,9 +256,11 @@ func capText(s string) string {
 }
 
 // truncate fits a result's JSON into MaxResultBytes. A JSON object keeps
-// its fields and gains "truncated": true, its largest arrays losing their
-// first elements (a log's oldest lines) until it fits; anything else, or
-// an object that still does not fit, is stored as {"truncated":true}.
+// its fields and gains "truncated": true; its arrays are emptied, then
+// refilled with the tail of each (a log's newest lines), the smallest
+// first, each taking at most an even share of the bytes left. Anything
+// else, or an object that does not fit even with its arrays empty, is
+// stored as {"truncated":true}.
 func truncate(raw []byte) json.RawMessage {
 	if len(raw) <= MaxResultBytes {
 		return raw
@@ -264,50 +271,58 @@ func truncate(raw []byte) json.RawMessage {
 	}
 	obj["truncated"] = json.RawMessage("true")
 	arrays := make(map[string][]json.RawMessage)
+	sizes := make(map[string]int)
 	for k, v := range obj {
 		var items []json.RawMessage
 		if json.Unmarshal(v, &items) == nil && len(items) > 0 {
 			arrays[k] = items
+			sizes[k] = len(v)
+			obj[k] = json.RawMessage("[]")
 		}
+	}
+	base, err := encode(obj)
+	if err != nil || len(base) > MaxResultBytes {
+		return truncatedMarker
 	}
 	keys := make([]string, 0, len(arrays))
 	for k := range arrays {
 		keys = append(keys, k)
 	}
-	sort.Slice(keys, func(i, j int) bool { return len(obj[keys[i]]) > len(obj[keys[j]]) })
-	for _, k := range keys {
-		items := arrays[k]
-		obj[k] = json.RawMessage("[]")
-		base, err := encode(obj)
-		if err != nil {
-			return truncatedMarker
+	sort.Slice(keys, func(i, j int) bool {
+		if sizes[keys[i]] != sizes[keys[j]] {
+			return sizes[keys[i]] < sizes[keys[j]]
 		}
-		// Keep the longest tail that fits beside the rest (one byte per
-		// element for its comma; a re-encoded element is never longer).
-		budget, keep := MaxResultBytes-len(base), 0
+		return keys[i] < keys[j]
+	})
+	// One byte per element for its comma; a re-encoded element is never
+	// longer than its source.
+	left := MaxResultBytes - len(base)
+	for n, k := range keys {
+		items := arrays[k]
+		share := left / (len(keys) - n)
+		spent, keep := 0, 0
 		for i := len(items) - 1; i >= 0; i-- {
-			if budget -= len(items[i]) + 1; budget < 0 {
+			if spent+len(items[i])+1 > share {
 				break
 			}
+			spent += len(items[i]) + 1
 			keep++
 		}
-		if keep > 0 {
-			tail, err := encode(items[len(items)-keep:])
-			if err != nil {
-				return truncatedMarker
-			}
-			obj[k] = tail
+		left -= spent
+		if keep == 0 {
+			continue
 		}
-		out, err := encode(obj)
+		tail, err := encode(items[len(items)-keep:])
 		if err != nil {
 			return truncatedMarker
 		}
-		if len(out) <= MaxResultBytes {
-			return out
-		}
-		obj[k] = json.RawMessage("[]")
+		obj[k] = tail
 	}
-	return truncatedMarker
+	out, err := encode(obj)
+	if err != nil || len(out) > MaxResultBytes {
+		return truncatedMarker
+	}
+	return out
 }
 
 // encode is compact JSON without HTML escaping (json.Marshal would grow

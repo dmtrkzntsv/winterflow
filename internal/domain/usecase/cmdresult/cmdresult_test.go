@@ -316,3 +316,60 @@ func TestFinishTruncates(t *testing.T) {
 		t.Fatalf("small stored as %s", got.Result)
 	}
 }
+
+// A command running past StaleAfter reads unknown before any sweep, on Get
+// and on Await's poll.
+func TestStaleRunningReadsUnknown(t *testing.T) {
+	s, c, ctx := newStore(t)
+	begin(t, ctx, s, "req-1")
+	c.Advance(14 * time.Minute)
+	if got := get(t, ctx, s, "req-1"); got.Status != cmdresult.Running {
+		t.Fatalf("14 min old = %s, want running", got.Status)
+	}
+	c.Advance(2 * time.Minute)
+	if got := get(t, ctx, s, "req-1"); got.Status != cmdresult.Unknown {
+		t.Fatalf("16 min old = %s, want unknown", got.Status)
+	}
+	start := time.Now()
+	rec, err := s.Await(ctx, "org-1", "req-1", nil, 10*time.Second)
+	if err != nil || rec.Status != cmdresult.Unknown || time.Since(start) > time.Second {
+		t.Fatalf("await = %s, %v after %v", rec.Status, err, time.Since(start))
+	}
+}
+
+// Two arrays that each overflow the cap on their own both shrink to fit,
+// each keeping its tail; a small array is kept whole.
+func TestFinishTruncatesSeveralArrays(t *testing.T) {
+	s, _, ctx := newStore(t)
+	begin(t, ctx, s, "two")
+	line := strings.Repeat("z", 1000)
+	var a, b []string
+	for range 2000 { // ~2 MiB each
+		a = append(a, line)
+		b = append(b, line)
+	}
+	a[len(a)-1], b[len(b)-1] = "a-last", "b-last"
+	raw, _ := json.Marshal(map[string]any{"a": a, "b": b, "small": []int{1, 2, 3}})
+	if err := s.Finish(ctx, "two", port.CommandResult{Success: true, Payload: raw}); err != nil {
+		t.Fatal(err)
+	}
+	got := get(t, ctx, s, "two")
+	if len(got.Result) > cmdresult.MaxResultBytes {
+		t.Fatalf("stored %d bytes", len(got.Result))
+	}
+	var cut struct {
+		A, B      []string
+		Small     []int
+		Truncated bool
+	}
+	if err := json.Unmarshal(got.Result, &cut); err != nil {
+		t.Fatal(err)
+	}
+	if !cut.Truncated || len(cut.Small) != 3 || len(cut.A) == 0 || len(cut.B) == 0 ||
+		cut.A[len(cut.A)-1] != "a-last" || cut.B[len(cut.B)-1] != "b-last" {
+		t.Fatalf("truncated %v, small %v, a %d, b %d", cut.Truncated, cut.Small, len(cut.A), len(cut.B))
+	}
+	if len(got.Result) < cmdresult.MaxResultBytes-4096 {
+		t.Fatalf("kept only %d bytes", len(got.Result))
+	}
+}

@@ -1,6 +1,5 @@
 // Package user implements port.UserRepository: users, their organizations
-// and memberships, connected accounts, local credentials and personal
-// access tokens.
+// and memberships, connected accounts and local credentials.
 package user
 
 import (
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
@@ -19,23 +17,18 @@ import (
 	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
 	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/logger"
-	"winterflow/pkg/pat"
 	"winterflow/pkg/util"
 )
 
 type (
 	userRow           = sqlitegen.User
 	credentialsRow    = sqlitegen.UserCredential
-	tokenRow          = sqlitegen.AccessToken
 	organizationRow   = sqlitegen.Organization
 	insertUserParams  = sqlitegen.InsertUserParams
 	accountParams     = sqlitegen.InsertConnectedAccountParams
 	accountKeyParams  = sqlitegen.GetConnectedAccountUserIDParams
 	credentialsParams = sqlitegen.InsertCredentialsParams
 	passwordParams    = sqlitegen.UpdatePasswordParams
-	insertTokenParams = sqlitegen.InsertTokenParams
-	touchTokenParams  = sqlitegen.TouchTokenLastUsedParams
-	deleteTokenParams = sqlitegen.DeleteTokenParams
 	insertOrgParams   = sqlitegen.InsertOrganizationParams
 	updateOrgParams   = sqlitegen.UpdateOrganizationParams
 	membershipParams  = sqlitegen.InsertOrganizationUserParams
@@ -57,12 +50,6 @@ type querier interface {
 	GetCredentialsByUser(ctx context.Context, db backend.DBTX, userID string) (credentialsRow, error)
 	EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error)
 	UpdatePassword(ctx context.Context, db backend.DBTX, p passwordParams) (int64, error)
-	// tokens.sql
-	InsertToken(ctx context.Context, db backend.DBTX, p insertTokenParams) error
-	GetTokenByHash(ctx context.Context, db backend.DBTX, tokenHash string) (tokenRow, error)
-	TouchTokenLastUsed(ctx context.Context, db backend.DBTX, p touchTokenParams) error
-	ListTokensByUser(ctx context.Context, db backend.DBTX, userID string) ([]tokenRow, error)
-	DeleteToken(ctx context.Context, db backend.DBTX, p deleteTokenParams) (int64, error)
 	// organizations.sql
 	InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error
 	GetOrganization(ctx context.Context, db backend.DBTX, organizationID string) (organizationRow, error)
@@ -197,109 +184,6 @@ func (r *Repo) PrimaryOrganizationID(ctx context.Context, userID string) (string
 		return "", err
 	}
 	return id, nil
-}
-
-// lastUsedWriteInterval throttles last_used_at updates so a busy API client
-// costs at most one write per minute, not one per request.
-const lastUsedWriteInterval = time.Minute
-
-// FindByToken resolves a PAT to its user, enforcing expiry, and stamps
-// last_used_at at most once a minute (a failed stamp is only logged).
-func (r *Repo) FindByToken(ctx context.Context, plaintext string) (model.User, error) {
-	t, err := r.q.GetTokenByHash(ctx, r.tx.Querier(ctx), pat.Hash(plaintext))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return model.User{}, model.ErrInvalidToken
-		}
-		return model.User{}, err
-	}
-	if t.ExpiresAt != nil && time.Now().After(t.ExpiresAt.Time()) {
-		return model.User{}, model.ErrInvalidToken
-	}
-	if t.LastUsedAt == nil || time.Since(t.LastUsedAt.Time()) > lastUsedWriteInterval {
-		now := types.NewDateTime()
-		if err := r.q.TouchTokenLastUsed(ctx, r.tx.Querier(ctx), touchTokenParams{LastUsedAt: &now, ID: t.ID}); err != nil {
-			r.log.Error("FindByToken: stamp last_used_at", "error", err)
-		}
-	}
-	return r.GetUser(ctx, t.UserID)
-}
-
-// CreateToken mints a PAT. Only its hash is stored; the plaintext is
-// returned once.
-func (r *Repo) CreateToken(ctx context.Context, userID, name string, expiresAt *time.Time) (model.UserToken, string, error) {
-	plaintext, hash, prefix, err := pat.Generate()
-	if err != nil {
-		return model.UserToken{}, "", err
-	}
-	row := insertTokenParams{
-		ID:          util.GenerateID(),
-		UserID:      userID,
-		Name:        &name,
-		TokenPrefix: &prefix,
-		TokenHash:   hash,
-		CreatedAt:   types.NewDateTime(),
-	}
-	if expiresAt != nil {
-		dt := types.DateTime(*expiresAt)
-		row.ExpiresAt = &dt
-	}
-	if err := r.q.InsertToken(ctx, r.tx.Querier(ctx), row); err != nil {
-		return model.UserToken{}, "", err
-	}
-	return toDomainToken(tokenRow{ID: row.ID, UserID: row.UserID, Name: row.Name, TokenPrefix: row.TokenPrefix, CreatedAt: row.CreatedAt, LastUsedAt: row.LastUsedAt, ExpiresAt: row.ExpiresAt}), plaintext, nil
-}
-
-// ListTokens returns the user's tokens, newest first.
-func (r *Repo) ListTokens(ctx context.Context, userID string) ([]model.UserToken, error) {
-	rows, err := r.q.ListTokensByUser(ctx, r.tx.Querier(ctx), userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.UserToken, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, toDomainToken(row))
-	}
-	return out, nil
-}
-
-// DeleteToken removes the user's token; model.ErrTokenNotFound when the id
-// does not exist or belongs to someone else.
-func (r *Repo) DeleteToken(ctx context.Context, userID, tokenID string) error {
-	n, err := r.q.DeleteToken(ctx, r.tx.Querier(ctx), deleteTokenParams{ID: tokenID, UserID: userID})
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return model.ErrTokenNotFound
-	}
-	return nil
-}
-
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-func toDomainToken(t tokenRow) model.UserToken {
-	out := model.UserToken{
-		ID:        t.ID,
-		UserID:    t.UserID,
-		Name:      deref(t.Name),
-		Prefix:    deref(t.TokenPrefix),
-		CreatedAt: t.CreatedAt.Time(),
-	}
-	if t.ExpiresAt != nil {
-		x := t.ExpiresAt.Time()
-		out.ExpiresAt = &x
-	}
-	if t.LastUsedAt != nil {
-		x := t.LastUsedAt.Time()
-		out.LastUsedAt = &x
-	}
-	return out
 }
 
 // --- local credentials & org membership -------------------------------------
@@ -513,7 +397,8 @@ func (r *Repo) ListMembers(ctx context.Context, orgID string) ([]model.Member, e
 }
 
 // RemoveMember deletes the member's user row outright (memberships,
-// credentials, connected accounts, and PATs go with it via FK cascade).
+// credentials, connected accounts and access tokens go with it via FK
+// cascade).
 // Only a member of orgID can be removed: anyone else is
 // model.ErrorUserNotFound and stays untouched.
 //

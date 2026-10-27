@@ -10,6 +10,7 @@ import (
 	authprvd "winterflow/internal/app/web/auth"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
+	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/middleware/realip"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
@@ -143,12 +144,12 @@ func (s *Server) registerAuth() {
 			// The PAT is the password; the username is ignored. The basic-auth
 			// path bypasses the provider check, so we set the real user id
 			// directly (and via the user_id attr that util.GetUserID reads).
-			user, err := s.Deps.UserService.FindByToken(context.Background(), pat)
+			userID, err := patauth.AuthenticatePAT(context.Background(), s.Deps.Authn, pat)
 			if err != nil {
 				return false, token.User{}, errors.New("invalid token")
 			}
-			u := token.User{ID: user.ID, Name: user.Name}
-			u.SetStrAttr("user_id", user.ID)
+			u := token.User{ID: userID}
+			u.SetStrAttr("user_id", userID)
 			return true, u, nil
 		},
 	}

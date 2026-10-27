@@ -16,16 +16,30 @@ import (
 	"winterflow/pkg/pat"
 )
 
-// TokenResolver is the slice of port.UserService this middleware needs.
-type TokenResolver interface {
-	FindByToken(ctx context.Context, token string) (model.User, error)
+// Authenticator resolves a raw access token (the authn usecase).
+type Authenticator interface {
+	Authenticate(ctx context.Context, raw string) (model.Principal, error)
+}
+
+// AuthenticatePAT resolves raw to the user it acts for, accepting only a
+// personal access token: model.ErrUnauthorized for anything else (an OAuth
+// token is for /mcp only).
+func AuthenticatePAT(ctx context.Context, a Authenticator, raw string) (string, error) {
+	p, err := a.Authenticate(ctx, raw)
+	if err != nil {
+		return "", err
+	}
+	if p.Kind != model.TokenPAT {
+		return "", model.ErrUnauthorized
+	}
+	return p.UserID, nil
 }
 
 const bearerPAT = "Bearer " + pat.TokenPrefix
 
 // Middleware returns an auth middleware: PAT bearer requests are resolved
 // against the DB; everything else is delegated to jwtAuth (go-pkgz).
-func Middleware(users TokenResolver, jwtAuth func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+func Middleware(tokens Authenticator, jwtAuth func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		viaJWT := jwtAuth(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,15 +48,15 @@ func Middleware(users TokenResolver, jwtAuth func(http.Handler) http.Handler) fu
 				viaJWT.ServeHTTP(w, r)
 				return
 			}
-			user, err := users.FindByToken(r.Context(), strings.TrimPrefix(auth, "Bearer "))
+			userID, err := AuthenticatePAT(r.Context(), tokens, strings.TrimPrefix(auth, "Bearer "))
 			if err != nil {
 				webutil.Unauthorized(w)
 				return
 			}
 			// Mirror the claims shape the JWT path produces: the internal user
 			// id lives in the "user_id" attribute (read by util.GetUserID).
-			u := token.User{ID: user.ID, Name: user.Name}
-			u.SetStrAttr("user_id", user.ID)
+			u := token.User{ID: userID}
+			u.SetStrAttr("user_id", userID)
 			next.ServeHTTP(w, token.SetUserInfo(r, u))
 		})
 	}

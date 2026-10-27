@@ -62,35 +62,6 @@ func (pgsqlQuerier) UpdatePassword(ctx context.Context, db backend.DBTX, p passw
 	return pgsqlgen.New(db).UpdatePassword(ctx, pgsqlgen.UpdatePasswordParams(p))
 }
 
-func (pgsqlQuerier) InsertToken(ctx context.Context, db backend.DBTX, p insertTokenParams) error {
-	return pgsqlgen.New(db).InsertToken(ctx, pgsqlgen.InsertTokenParams(p))
-}
-
-func (pgsqlQuerier) GetTokenByHash(ctx context.Context, db backend.DBTX, tokenHash string) (tokenRow, error) {
-	row, err := pgsqlgen.New(db).GetTokenByHash(ctx, tokenHash)
-	return tokenRow(row), err
-}
-
-func (pgsqlQuerier) TouchTokenLastUsed(ctx context.Context, db backend.DBTX, p touchTokenParams) error {
-	return pgsqlgen.New(db).TouchTokenLastUsed(ctx, pgsqlgen.TouchTokenLastUsedParams(p))
-}
-
-func (pgsqlQuerier) ListTokensByUser(ctx context.Context, db backend.DBTX, userID string) ([]tokenRow, error) {
-	rows, err := pgsqlgen.New(db).ListTokensByUser(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]tokenRow, len(rows))
-	for i, row := range rows {
-		out[i] = tokenRow(row)
-	}
-	return out, nil
-}
-
-func (pgsqlQuerier) DeleteToken(ctx context.Context, db backend.DBTX, p deleteTokenParams) (int64, error) {
-	return pgsqlgen.New(db).DeleteToken(ctx, pgsqlgen.DeleteTokenParams(p))
-}
-
 func (pgsqlQuerier) InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error {
 	return pgsqlgen.New(db).InsertOrganization(ctx, pgsqlgen.InsertOrganizationParams(p))
 }

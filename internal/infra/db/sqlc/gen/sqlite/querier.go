@@ -90,8 +90,6 @@ type Querier interface {
 	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
 	// A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
-	// Transitional, see InsertToken.
-	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
@@ -158,8 +156,6 @@ type Querier interface {
 	GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNameParams) (string, error)
 	GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error)
 	GetTemplateRevision(ctx context.Context, arg GetTemplateRevisionParams) (TemplateRevision, error)
-	// Transitional, see InsertToken.
-	GetTokenByHash(ctx context.Context, tokenHash string) (AccessToken, error)
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
 	HasAnyServer(ctx context.Context) (bool, error)
@@ -214,9 +210,6 @@ type Querier interface {
 	// the race to another replica).
 	InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error)
 	InsertTemplateRevision(ctx context.Context, arg InsertTemplateRevisionParams) error
-	// Transitional: the user repository's personal-token code, until the
-	// authentication rewrite replaces it. Always a full-scope pat.
-	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
 	IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error)
 	ListAccessTokensByUser(ctx context.Context, arg ListAccessTokensByUserParams) ([]AccessToken, error)
@@ -287,8 +280,6 @@ type Querier interface {
 	// live instances: instances counts them, behind those on a revision older
 	// than the latest.
 	ListTemplates(ctx context.Context, arg ListTemplatesParams) ([]ListTemplatesRow, error)
-	// Transitional, see InsertToken.
-	ListTokensByUser(ctx context.Context, userID string) ([]AccessToken, error)
 	ListUnrevokedOAuthGrants(ctx context.Context, userID string) ([]ListUnrevokedOAuthGrantsRow, error)
 	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
@@ -341,8 +332,10 @@ type Querier interface {
 	// other unrevoked grant for the same (user, client) goes, returning the ids so
 	// their access tokens can be revoked too.
 	RevokeOtherOAuthGrants(ctx context.Context, arg RevokeOtherOAuthGrantsParams) ([]string, error)
-	// Set-based: one statement revokes the user's live tokens of a kind. The
-	// excepted id is the presenting token (an id matching nothing revokes all).
+	// One of the user's live tokens of a kind; zero rows when it is another
+	// user's, another kind, unknown or already revoked.
+	RevokeUserAccessToken(ctx context.Context, arg RevokeUserAccessTokenParams) (int64, error)
+	// Set-based: one statement revokes the user's live tokens of a kind.
 	RevokeUserAccessTokens(ctx context.Context, arg RevokeUserAccessTokensParams) error
 	RevokeUserOAuthGrants(ctx context.Context, arg RevokeUserOAuthGrantsParams) (int64, error)
 	// Conditional on the hash being rotated away, so of two concurrent refreshes
@@ -371,8 +364,6 @@ type Querier interface {
 	// row, so a request that read the row before a revoke cannot undo it.
 	TouchAccessToken(ctx context.Context, arg TouchAccessTokenParams) (int64, error)
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
-	// Transitional, see InsertToken.
-	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)
 	// A catalog template's name and metadata in place, withdrawn_at cleared:
 	// 0 rows when a newer feed wrote it.

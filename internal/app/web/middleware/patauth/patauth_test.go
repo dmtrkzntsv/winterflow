@@ -10,13 +10,17 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-type fakeUsers struct{ valid string }
+// fakeTokens knows one PAT and one OAuth token.
+type fakeTokens struct{}
 
-func (f *fakeUsers) FindByToken(_ context.Context, tok string) (model.User, error) {
-	if tok == f.valid {
-		return model.User{ID: "user-1", Name: "Alice"}, nil
+func (fakeTokens) Authenticate(_ context.Context, raw string) (model.Principal, error) {
+	switch raw {
+	case "wfp_good":
+		return model.Principal{UserID: "user-1", Kind: model.TokenPAT}, nil
+	case "wfp_oauth": // a stored kind that is not a PAT, whatever its prefix
+		return model.Principal{UserID: "user-1", Kind: model.TokenOAuth}, nil
 	}
-	return model.User{}, model.ErrInvalidToken
+	return model.Principal{}, model.ErrUnauthorized
 }
 
 // jwtMarker stands in for the go-pkgz JWT middleware so the test can see
@@ -30,7 +34,7 @@ func jwtMarker(next http.Handler) http.Handler {
 
 func run(t *testing.T, authorization string) *httptest.ResponseRecorder {
 	t.Helper()
-	mw := Middleware(&fakeUsers{valid: "wfp_good"}, jwtMarker)
+	mw := Middleware(fakeTokens{}, jwtMarker)
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, err := webutil.GetUserID(r)
 		if err != nil {
@@ -61,6 +65,12 @@ func TestInvalidPATIs401NotFallthrough(t *testing.T) {
 	}
 	if w.Header().Get("X-Fell-Through") == "jwt" {
 		t.Error("invalid wfp_ token must not fall through to JWT parsing")
+	}
+}
+
+func TestNonPATKindIs401(t *testing.T) {
+	if w := run(t, "Bearer wfp_oauth"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d, want 401", w.Code)
 	}
 }
 

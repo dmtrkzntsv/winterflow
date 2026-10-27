@@ -20,10 +20,14 @@ UPDATE access_tokens SET last_used_at = $1, expires_at = $2 WHERE id = $3 AND re
 -- name: RevokeAccessToken :exec
 UPDATE access_tokens SET revoked_at = $1 WHERE id = $2 AND revoked_at IS NULL;
 
+-- name: RevokeUserAccessToken :execrows
+-- One of the user's live tokens of a kind; zero rows when it is another
+-- user's, another kind, unknown or already revoked.
+UPDATE access_tokens SET revoked_at = $1 WHERE id = $2 AND user_id = $3 AND kind = $4 AND revoked_at IS NULL;
+
 -- name: RevokeUserAccessTokens :exec
--- Set-based: one statement revokes the user's live tokens of a kind. The
--- excepted id is the presenting token (an id matching nothing revokes all).
-UPDATE access_tokens SET revoked_at = $1 WHERE user_id = $2 AND kind = $3 AND revoked_at IS NULL AND id <> $4;
+-- Set-based: one statement revokes the user's live tokens of a kind.
+UPDATE access_tokens SET revoked_at = $1 WHERE user_id = $2 AND kind = $3 AND revoked_at IS NULL;
 
 -- name: RevokeAccessTokensByGrant :exec
 UPDATE access_tokens SET revoked_at = $1 WHERE grant_id = $2 AND revoked_at IS NULL;
@@ -38,27 +42,3 @@ DELETE FROM access_tokens WHERE id = $1;
 DELETE FROM access_tokens
 WHERE (revoked_at IS NOT NULL AND revoked_at < $1)
    OR (expires_at IS NOT NULL AND expires_at < $2);
-
--- name: InsertToken :exec
--- Transitional: the user repository's personal-token code, until the
--- authentication rewrite replaces it. Always a full-scope pat.
-INSERT INTO access_tokens (id, user_id, kind, token_hash, scope, name, token_prefix, created_at, last_used_at, expires_at)
-VALUES ($1, $2, 'pat', $3, 'full', $4, $5, $6, $7, $8);
-
--- name: GetTokenByHash :one
--- Transitional, see InsertToken.
-SELECT * FROM access_tokens WHERE token_hash = $1 AND kind = 'pat' AND revoked_at IS NULL;
-
--- name: TouchTokenLastUsed :exec
--- Transitional, see InsertToken.
-UPDATE access_tokens SET last_used_at = $1 WHERE id = $2;
-
--- name: ListTokensByUser :many
--- Transitional, see InsertToken.
-SELECT * FROM access_tokens
-WHERE user_id = $1 AND kind = 'pat' AND revoked_at IS NULL
-ORDER BY created_at DESC, id DESC;
-
--- name: DeleteToken :execrows
--- Transitional, see InsertToken.
-DELETE FROM access_tokens WHERE id = $1 AND user_id = $2 AND kind = 'pat';

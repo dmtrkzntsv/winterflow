@@ -39,24 +39,6 @@ func (q *Queries) DeleteDeadAccessTokens(ctx context.Context, arg DeleteDeadAcce
 	return result.RowsAffected()
 }
 
-const deleteToken = `-- name: DeleteToken :execrows
-DELETE FROM access_tokens WHERE id = ? AND user_id = ? AND kind = 'pat'
-`
-
-type DeleteTokenParams struct {
-	ID     string
-	UserID string
-}
-
-// Transitional, see InsertToken.
-func (q *Queries) DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteToken, arg.ID, arg.UserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const getAccessTokenByHash = `-- name: GetAccessTokenByHash :one
 SELECT id, user_id, kind, token_hash, scope, name, token_prefix, user_agent, grant_id, created_at, last_used_at, expires_at, revoked_at FROM access_tokens WHERE token_hash = ?
 `
@@ -88,32 +70,6 @@ SELECT id, user_id, kind, token_hash, scope, name, token_prefix, user_agent, gra
 
 func (q *Queries) GetAccessTokenByID(ctx context.Context, id string) (AccessToken, error) {
 	row := q.db.QueryRowContext(ctx, getAccessTokenByID, id)
-	var i AccessToken
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.Kind,
-		&i.TokenHash,
-		&i.Scope,
-		&i.Name,
-		&i.TokenPrefix,
-		&i.UserAgent,
-		&i.GrantID,
-		&i.CreatedAt,
-		&i.LastUsedAt,
-		&i.ExpiresAt,
-		&i.RevokedAt,
-	)
-	return i, err
-}
-
-const getTokenByHash = `-- name: GetTokenByHash :one
-SELECT id, user_id, kind, token_hash, scope, name, token_prefix, user_agent, grant_id, created_at, last_used_at, expires_at, revoked_at FROM access_tokens WHERE token_hash = ? AND kind = 'pat' AND revoked_at IS NULL
-`
-
-// Transitional, see InsertToken.
-func (q *Queries) GetTokenByHash(ctx context.Context, tokenHash string) (AccessToken, error) {
-	row := q.db.QueryRowContext(ctx, getTokenByHash, tokenHash)
 	var i AccessToken
 	err := row.Scan(
 		&i.ID,
@@ -175,38 +131,6 @@ func (q *Queries) InsertAccessToken(ctx context.Context, arg InsertAccessTokenPa
 	return err
 }
 
-const insertToken = `-- name: InsertToken :exec
-INSERT INTO access_tokens (id, user_id, kind, token_hash, scope, name, token_prefix, created_at, last_used_at, expires_at)
-VALUES (?, ?, 'pat', ?, 'full', ?, ?, ?, ?, ?)
-`
-
-type InsertTokenParams struct {
-	ID          string
-	UserID      string
-	TokenHash   string
-	Name        *string
-	TokenPrefix *string
-	CreatedAt   types.DateTime
-	LastUsedAt  *types.DateTime
-	ExpiresAt   *types.DateTime
-}
-
-// Transitional: the user repository's personal-token code, until the
-// authentication rewrite replaces it. Always a full-scope pat.
-func (q *Queries) InsertToken(ctx context.Context, arg InsertTokenParams) error {
-	_, err := q.db.ExecContext(ctx, insertToken,
-		arg.ID,
-		arg.UserID,
-		arg.TokenHash,
-		arg.Name,
-		arg.TokenPrefix,
-		arg.CreatedAt,
-		arg.LastUsedAt,
-		arg.ExpiresAt,
-	)
-	return err
-}
-
 const listAccessTokensByUser = `-- name: ListAccessTokensByUser :many
 SELECT id, user_id, kind, token_hash, scope, name, token_prefix, user_agent, grant_id, created_at, last_used_at, expires_at, revoked_at FROM access_tokens WHERE user_id = ? AND kind = ? ORDER BY created_at, id
 `
@@ -218,50 +142,6 @@ type ListAccessTokensByUserParams struct {
 
 func (q *Queries) ListAccessTokensByUser(ctx context.Context, arg ListAccessTokensByUserParams) ([]AccessToken, error) {
 	rows, err := q.db.QueryContext(ctx, listAccessTokensByUser, arg.UserID, arg.Kind)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AccessToken{}
-	for rows.Next() {
-		var i AccessToken
-		if err := rows.Scan(
-			&i.ID,
-			&i.UserID,
-			&i.Kind,
-			&i.TokenHash,
-			&i.Scope,
-			&i.Name,
-			&i.TokenPrefix,
-			&i.UserAgent,
-			&i.GrantID,
-			&i.CreatedAt,
-			&i.LastUsedAt,
-			&i.ExpiresAt,
-			&i.RevokedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listTokensByUser = `-- name: ListTokensByUser :many
-SELECT id, user_id, kind, token_hash, scope, name, token_prefix, user_agent, grant_id, created_at, last_used_at, expires_at, revoked_at FROM access_tokens
-WHERE user_id = ? AND kind = 'pat' AND revoked_at IS NULL
-ORDER BY created_at DESC, id DESC
-`
-
-// Transitional, see InsertToken.
-func (q *Queries) ListTokensByUser(ctx context.Context, userID string) ([]AccessToken, error) {
-	rows, err := q.db.QueryContext(ctx, listTokensByUser, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -325,26 +205,45 @@ func (q *Queries) RevokeAccessTokensByGrant(ctx context.Context, arg RevokeAcces
 	return err
 }
 
+const revokeUserAccessToken = `-- name: RevokeUserAccessToken :execrows
+UPDATE access_tokens SET revoked_at = ? WHERE id = ? AND user_id = ? AND kind = ? AND revoked_at IS NULL
+`
+
+type RevokeUserAccessTokenParams struct {
+	RevokedAt *types.DateTime
+	ID        string
+	UserID    string
+	Kind      string
+}
+
+// One of the user's live tokens of a kind; zero rows when it is another
+// user's, another kind, unknown or already revoked.
+func (q *Queries) RevokeUserAccessToken(ctx context.Context, arg RevokeUserAccessTokenParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeUserAccessToken,
+		arg.RevokedAt,
+		arg.ID,
+		arg.UserID,
+		arg.Kind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const revokeUserAccessTokens = `-- name: RevokeUserAccessTokens :exec
-UPDATE access_tokens SET revoked_at = ? WHERE user_id = ? AND kind = ? AND revoked_at IS NULL AND id <> ?
+UPDATE access_tokens SET revoked_at = ? WHERE user_id = ? AND kind = ? AND revoked_at IS NULL
 `
 
 type RevokeUserAccessTokensParams struct {
 	RevokedAt *types.DateTime
 	UserID    string
 	Kind      string
-	ID        string
 }
 
-// Set-based: one statement revokes the user's live tokens of a kind. The
-// excepted id is the presenting token (an id matching nothing revokes all).
+// Set-based: one statement revokes the user's live tokens of a kind.
 func (q *Queries) RevokeUserAccessTokens(ctx context.Context, arg RevokeUserAccessTokensParams) error {
-	_, err := q.db.ExecContext(ctx, revokeUserAccessTokens,
-		arg.RevokedAt,
-		arg.UserID,
-		arg.Kind,
-		arg.ID,
-	)
+	_, err := q.db.ExecContext(ctx, revokeUserAccessTokens, arg.RevokedAt, arg.UserID, arg.Kind)
 	return err
 }
 
@@ -366,19 +265,4 @@ func (q *Queries) TouchAccessToken(ctx context.Context, arg TouchAccessTokenPara
 		return 0, err
 	}
 	return result.RowsAffected()
-}
-
-const touchTokenLastUsed = `-- name: TouchTokenLastUsed :exec
-UPDATE access_tokens SET last_used_at = ? WHERE id = ?
-`
-
-type TouchTokenLastUsedParams struct {
-	LastUsedAt *types.DateTime
-	ID         string
-}
-
-// Transitional, see InsertToken.
-func (q *Queries) TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error {
-	_, err := q.db.ExecContext(ctx, touchTokenLastUsed, arg.LastUsedAt, arg.ID)
-	return err
 }

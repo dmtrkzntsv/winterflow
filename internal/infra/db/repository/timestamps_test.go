@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/backend"
 	"winterflow/internal/infra/db/dbtest"
+	accesstokenrepo "winterflow/internal/infra/db/repository/accesstoken"
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
@@ -70,12 +71,16 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	if _, err := users.CreateMemberUser(ctx, orgID, "Member", "member@example.com", "temporary password"); err != nil {
 		t.Fatal(err)
 	}
+	tokens := must(accesstokenrepo.New(d.Tx, d.Driver))
 	expires := time.Now().In(zone).Add(24 * time.Hour) // future, non-UTC, sub-second
-	_, plaintext, err := users.CreateToken(ctx, admin.ID, "ci", &expires)
-	if err != nil {
+	if err := tokens.Insert(ctx, model.AccessToken{ID: dbtest.ID(701), UserID: admin.ID, Kind: model.TokenSession,
+		Scope: model.ScopeFull, CreatedAt: at, LastUsedAt: at, ExpiresAt: &expires}, "h1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := users.FindByToken(ctx, plaintext); err != nil { // stamps last_used_at
+	if _, err := tokens.Touch(ctx, dbtest.ID(701), at.Add(time.Minute), &expires); err != nil {
+		t.Fatal(err)
+	}
+	if err := tokens.Revoke(ctx, dbtest.ID(701), at.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,18 +221,15 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The access-token and OAuth tables have no repository yet: write through
-	// the generated queries, which bind types.DateTime like every repository.
-	// (Replace with the repositories' own writes as they land.)
+	// The OAuth tables have no repository yet: write through the generated
+	// queries, which bind types.DateTime like every repository. (Replace
+	// with the repositories' own writes as they land.)
 	q := sqlitegen.New(d.Tx.Querier(ctx))
 	dt := types.DateTime(at)
 	revoked := types.DateTime(at.Add(time.Hour))
 	userID := admin.ID
-	tokenID, clientID, grantID := dbtest.ID(701), dbtest.ID(702), dbtest.ID(703)
+	clientID, grantID := dbtest.ID(702), dbtest.ID(703)
 	for _, err := range []error{
-		q.InsertAccessToken(ctx, sqlitegen.InsertAccessTokenParams{ID: tokenID, UserID: userID, Kind: "session", TokenHash: "h1", Scope: "full",
-			CreatedAt: dt, LastUsedAt: &dt, ExpiresAt: &dt}),
-		q.RevokeAccessToken(ctx, sqlitegen.RevokeAccessTokenParams{RevokedAt: &revoked, ID: tokenID}),
 		q.InsertOAuthClient(ctx, sqlitegen.InsertOAuthClientParams{ID: clientID, Name: "c", RedirectUris: "[]", CreatedAt: dt, LastUsedAt: &dt}),
 		q.InsertOAuthCode(ctx, sqlitegen.InsertOAuthCodeParams{CodeHash: "c1", ClientID: clientID, UserID: userID, RedirectUri: "u",
 			CodeChallenge: "x", Resource: "r", CreatedAt: dt, ExpiresAt: dt}),

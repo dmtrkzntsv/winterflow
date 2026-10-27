@@ -13,11 +13,11 @@ import (
 	"winterflow/pkg/logger"
 )
 
-// TokenStore is the slice of port.UserService this handler needs.
+// TokenStore is the slice of the authn usecase this handler needs.
 type TokenStore interface {
-	CreateToken(ctx context.Context, userID, name string, expiresAt *time.Time) (model.UserToken, string, error)
-	ListTokens(ctx context.Context, userID string) ([]model.UserToken, error)
-	DeleteToken(ctx context.Context, userID, tokenID string) error
+	CreatePAT(ctx context.Context, userID, name string, expiresAt *time.Time) (model.AccessToken, string, error)
+	ListPATs(ctx context.Context, userID string) ([]model.AccessToken, error)
+	DeletePAT(ctx context.Context, userID, tokenID string) error
 }
 
 // ProfileStore is the slice of port.UserService the profile and password
@@ -151,7 +151,7 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		t := time.Now().AddDate(0, 0, req.ExpiresInDays)
 		expiresAt = &t
 	}
-	rec, plaintext, err := h.tokens.CreateToken(r.Context(), userID, name, expiresAt)
+	rec, plaintext, err := h.tokens.CreatePAT(r.Context(), userID, name, expiresAt)
 	if err != nil {
 		h.log.Error("CreateToken", "error", err, "user_id", userID)
 		webutil.Error(w, "failed to create token", nil)
@@ -172,13 +172,31 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := h.tokens.ListTokens(r.Context(), userID)
+	list, err := h.tokens.ListPATs(r.Context(), userID)
 	if err != nil {
 		h.log.Error("GetTokens", "error", err, "user_id", userID)
 		webutil.Error(w, "failed to list tokens", nil)
 		return
 	}
-	webutil.Success(w, "tokens", list)
+	out := make([]model.UserToken, 0, len(list))
+	for _, t := range list {
+		out = append(out, tokenView(t))
+	}
+	webutil.Success(w, "tokens", out)
+}
+
+// tokenView is a PAT as the token list shows it (last_used_at null when it
+// was never used).
+func tokenView(t model.AccessToken) model.UserToken {
+	v := model.UserToken{
+		ID: t.ID, UserID: t.UserID, Name: t.Name, Prefix: t.Prefix,
+		ExpiresAt: t.ExpiresAt, CreatedAt: t.CreatedAt,
+	}
+	if !t.LastUsedAt.IsZero() {
+		last := t.LastUsedAt
+		v.LastUsedAt = &last
+	}
+	return v
 }
 
 // DeleteTokenRequest is the body of POST /api/v1/user/delete-token.
@@ -201,7 +219,7 @@ func (h *Handler) DeleteToken(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "token_id is required", nil)
 		return
 	}
-	if err := h.tokens.DeleteToken(r.Context(), userID, req.TokenID); err != nil {
+	if err := h.tokens.DeletePAT(r.Context(), userID, req.TokenID); err != nil {
 		webutil.Error(w, "token not found", nil)
 		return
 	}

@@ -11,7 +11,6 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
-	"winterflow/pkg/pat"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -69,15 +68,6 @@ func mustRegister(t *testing.T, r *Repo, name, email, password string) model.Use
 		t.Fatal(err)
 	}
 	return u
-}
-
-func mustToken(t *testing.T, r *Repo, userID, name string, expiresAt *time.Time) (model.UserToken, string) {
-	t.Helper()
-	rec, plaintext, err := r.CreateToken(dbtest.Ctx(t), userID, name, expiresAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rec, plaintext
 }
 
 func mustMembers(t *testing.T, r *Repo, orgID string) []model.Member {
@@ -146,92 +136,6 @@ func TestUserLookupsReturnNotFound(t *testing.T) {
 	}
 	if _, err := repo.PrimaryOrganizationID(ctx, dbtest.ID(404)); !errors.Is(err, model.ErrorUserNotFound) {
 		t.Fatalf("PrimaryOrganizationID err = %v", err)
-	}
-}
-
-func TestCreateTokenAndFindByToken(t *testing.T) {
-	repo, d := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	u := mustCreateUser(t, repo, dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g1"})
-
-	rec, plaintext := mustToken(t, repo, u.ID, "ci deploy", nil)
-	if rec.Name != "ci deploy" || rec.Prefix == "" || rec.ID == "" {
-		t.Fatalf("record = %+v", rec)
-	}
-	if !strings.HasPrefix(plaintext, "wfp_") || !strings.HasPrefix(plaintext, rec.Prefix) {
-		t.Fatalf("plaintext %q / prefix %q mismatch", plaintext, rec.Prefix)
-	}
-
-	got, err := repo.FindByToken(ctx, plaintext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ID != u.ID {
-		t.Errorf("resolved user %q, want %q", got.ID, u.ID)
-	}
-
-	// The DB must not contain the plaintext anywhere.
-	stored := dbtest.QueryString(t, d, `SELECT token_hash FROM access_tokens WHERE id = ?`, rec.ID)
-	if stored == plaintext || stored != pat.Hash(plaintext) {
-		t.Error("token stored in plaintext or not as its hash")
-	}
-}
-
-func TestFindByTokenRejectsUnknownAndExpired(t *testing.T) {
-	repo, _ := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	u := mustCreateUser(t, repo, dto.UserDTO{Name: "A", Provider: "google", AccountID: "g2"})
-
-	if _, err := repo.FindByToken(ctx, "wfp_nope"); !errors.Is(err, model.ErrInvalidToken) {
-		t.Errorf("unknown token: err = %v, want ErrInvalidToken", err)
-	}
-
-	past := time.Now().Add(-time.Hour)
-	_, expired := mustToken(t, repo, u.ID, "old", &past)
-	if _, err := repo.FindByToken(ctx, expired); !errors.Is(err, model.ErrInvalidToken) {
-		t.Errorf("expired token: err = %v, want ErrInvalidToken", err)
-	}
-}
-
-func TestFindByTokenStampsLastUsed(t *testing.T) {
-	repo, _ := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	u := mustCreateUser(t, repo, dto.UserDTO{Name: "A", Provider: "google", AccountID: "g3"})
-	rec, plaintext := mustToken(t, repo, u.ID, "t", nil)
-
-	if _, err := repo.FindByToken(ctx, plaintext); err != nil {
-		t.Fatal(err)
-	}
-	list, err := repo.ListTokens(ctx, u.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].ID != rec.ID {
-		t.Fatalf("list = %+v", list)
-	}
-	if list[0].LastUsedAt == nil {
-		t.Error("last_used_at not stamped on use")
-	}
-}
-
-func TestDeleteTokenScopedToUser(t *testing.T) {
-	repo, _ := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	owner := mustCreateUser(t, repo, dto.UserDTO{Name: "O", Provider: "google", AccountID: "g4"})
-	other := mustCreateUser(t, repo, dto.UserDTO{Name: "X", Provider: "google", AccountID: "g5"})
-	rec, plaintext := mustToken(t, repo, owner.ID, "mine", nil)
-
-	if err := repo.DeleteToken(ctx, other.ID, rec.ID); !errors.Is(err, model.ErrTokenNotFound) {
-		t.Errorf("cross-user delete: err = %v, want ErrTokenNotFound", err)
-	}
-	if err := repo.DeleteToken(ctx, owner.ID, rec.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.FindByToken(ctx, plaintext); !errors.Is(err, model.ErrInvalidToken) {
-		t.Error("token still resolves after delete")
-	}
-	if err := repo.DeleteToken(ctx, owner.ID, rec.ID); !errors.Is(err, model.ErrTokenNotFound) {
-		t.Errorf("double delete: err = %v, want ErrTokenNotFound", err)
 	}
 }
 
@@ -421,12 +325,13 @@ func TestRemoveMemberRefusesRemovedCaller(t *testing.T) {
 }
 
 func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
-	repo, _ := newRepo(t)
+	repo, d := newRepo(t)
 	ctx := dbtest.Ctx(t)
 	admin := mustBootstrap(t, repo, "", "boss@w.io", "bootpass-123")
 	orgID := mustPrimaryOrg(t, repo, admin.ID)
 	m := mustMember(t, repo, orgID, "M", "m@w.io", "temp-password1")
-	_, patPlain := mustToken(t, repo, m.ID, "m's token", nil)
+	dbtest.Exec(t, d, `INSERT INTO access_tokens (id, user_id, kind, token_hash, scope, created_at)
+		VALUES (?, ?, 'pat', 'hash-m', 'full', '2026-01-01 00:00:00')`, dbtest.ID(55), m.ID)
 
 	if err := repo.RemoveMember(ctx, orgID, admin.ID, m.ID); err != nil {
 		t.Fatal(err)
@@ -434,8 +339,8 @@ func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 	if _, err := repo.VerifyLocalCredentials(ctx, "m@w.io", "temp-password1"); !errors.Is(err, model.ErrInvalidCredentials) {
 		t.Error("removed member can still log in")
 	}
-	if _, err := repo.FindByToken(ctx, patPlain); !errors.Is(err, model.ErrInvalidToken) {
-		t.Error("removed member's PAT still resolves")
+	if n := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM access_tokens WHERE user_id = ?`, m.ID); n != "0" {
+		t.Errorf("removed member keeps %s access tokens", n)
 	}
 	if members := mustMembers(t, repo, orgID); len(members) != 1 {
 		t.Errorf("members after removal = %d, want 1", len(members))

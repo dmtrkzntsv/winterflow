@@ -15,8 +15,6 @@ type User struct {
 
 var (
 	ErrorUserNotFound = errors.New("user not found")
-	// ErrInvalidToken is returned for an unknown or expired access token.
-	ErrInvalidToken = errors.New("invalid token")
 	// ErrTokenNotFound is returned when a token id does not exist for the user.
 	ErrTokenNotFound = errors.New("token not found")
 	// ErrInvalidCredentials is returned for a wrong email/password pair.
@@ -47,8 +45,9 @@ type Member struct {
 	Provider string `json:"provider"`
 }
 
-// UserToken is a personal access token record. The plaintext is never stored;
-// Prefix (e.g. "wfp_9k3Ldx2p") identifies the token in lists.
+// UserToken is a personal access token as the token routes show it (an
+// AccessToken of kind pat). The plaintext is never stored; Prefix (e.g.
+// "wfp_9k3Ldx2p") identifies the token in lists.
 type UserToken struct {
 	ID         string     `json:"token_id"`
 	UserID     string     `json:"-"`

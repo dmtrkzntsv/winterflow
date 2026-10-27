@@ -12,9 +12,11 @@ import (
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/domain/usecase/agentauth"
+	"winterflow/internal/domain/usecase/authn"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
+	accesstokenrepo "winterflow/internal/infra/db/repository/accesstoken"
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
@@ -72,6 +74,9 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		history = r.metric
 	}
 
+	tokens := authn.New(r.accessToken, nil)
+	startTokenMaintenance(ctx, tokens, log)
+
 	// Alerts: the evaluator rides the events sink (samples, statuses,
 	// liveness sweep); the notifier sends through the org's channels.
 	al := wireAlerts(ctx, r.alert, history, newStatusFanout(r.server, nm, log), cfg, log)
@@ -114,6 +119,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		Log:                      log,
 		Cfg:                      cfg,
 		UserService:              r.user,
+		Authn:                    tokens,
 		ServerRepository:         r.server,
 		AppRepository:            r.app,
 		AppDomainRepository:      r.appDomain,
@@ -143,6 +149,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 // repos are the DB repositories, built for the connection's driver.
 type repos struct {
 	user          *userrepo.Repo
+	accessToken   *accesstokenrepo.Repo
 	server        *serverrepo.Repo
 	app           *apprepo.Repo
 	appDomain     *appdomainrepo.Repo
@@ -164,6 +171,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		err error
 	)
 	if r.user, err = userrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.accessToken, err = accesstokenrepo.New(conn.Tx, conn.Driver); err != nil {
 		return r, err
 	}
 	if r.server, err = serverrepo.New(conn.Tx, conn.Driver, log); err != nil {

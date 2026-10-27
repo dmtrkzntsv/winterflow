@@ -6,6 +6,7 @@ import (
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/domain/usecase/agenthub"
+	"winterflow/internal/domain/usecase/authn"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
@@ -27,7 +28,10 @@ type Deps struct {
 	Log *logger.Logger
 	Cfg *config.ServerConfig
 
-	UserService         port.UserService
+	UserService port.UserService
+	// Authn issues, authenticates and revokes access tokens (sessions,
+	// PATs, OAuth access tokens).
+	Authn               *authn.UseCase
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	AppDomainRepository port.AppDomainRepository

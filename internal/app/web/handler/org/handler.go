@@ -7,11 +7,13 @@ package org
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"net/http"
 	"strings"
 
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/usecase/authn"
 	"winterflow/pkg/logger"
 )
 
@@ -30,15 +32,18 @@ type OrgStore interface {
 type Deps struct {
 	Logger *logger.Logger
 	Users  OrgStore
+	// Tokens revokes a removed member's sessions, PATs and OAuth grants.
+	Tokens authn.TokenRevoker
 }
 
 type Handler struct {
-	log   *logger.Logger
-	users OrgStore
+	log    *logger.Logger
+	users  OrgStore
+	tokens authn.TokenRevoker
 }
 
 func NewHandler(d *Deps) *Handler {
-	return &Handler{log: d.Logger, users: d.Users}
+	return &Handler{log: d.Logger, users: d.Users, tokens: d.Tokens}
 }
 
 const tempPasswordLen = 16
@@ -161,8 +166,8 @@ type MemberRequest struct {
 }
 
 // RemoveMember deletes a member (and their user account) from the caller's
-// org. Self-removal is refused, so an org always keeps the member who
-// removed the others.
+// org and revokes everything they could sign in with. Self-removal is
+// refused, so an org always keeps the member who removed the others.
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	callerID, orgID, ok := h.callerOrg(w, r)
 	if !ok {
@@ -180,7 +185,10 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "you cannot remove yourself", nil)
 		return
 	}
-	if err := h.users.RemoveMember(r.Context(), orgID, callerID, req.UserID); err != nil {
+	if err := authn.RemoveMember(r.Context(), h.users, h.tokens, orgID, callerID, req.UserID); err != nil {
+		if !errors.Is(err, model.ErrorUserNotFound) {
+			h.log.Error("RemoveMember", "error", err, "user_id", req.UserID)
+		}
 		webutil.Error(w, "failed to remove member", nil)
 		return
 	}

@@ -44,7 +44,7 @@ func (s *Server) registerRoutes() {
 	amw := s.Auth.Middleware()
 	// authMW = PAT bearer first, JWT session otherwise. Every User route
 	// uses this so tokens work everywhere a browser session does.
-	authMW := patauth.Middleware(s.Deps.UserService, amw.Auth)
+	authMW := patauth.Middleware(s.Deps.Authn, amw.Auth)
 	// No role guard: every org member may do everything; server-addressed
 	// handlers still check the caller's org owns the server.
 	enrollLimiter := ratelimit.New(5, 30)
@@ -174,8 +174,8 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Box:     box,
 		Tester:  tester,
 	})
-	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
-	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
+	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.Authn, Users: d.UserService})
+	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService, Tokens: d.Authn})
 	// A nil rollout queue (the spec-only route table) must not become a
 	// non-nil interface in any of its consumers.
 	var (

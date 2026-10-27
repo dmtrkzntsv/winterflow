@@ -2,7 +2,6 @@ package port
 
 import (
 	"context"
-	"time"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 )
@@ -14,19 +13,6 @@ type UserRepository interface {
 	// PrimaryOrganizationID returns the organization the user belongs to.
 	// In the 1-user-per-org model this is the org created at signup.
 	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
-
-	// FindByToken resolves a personal access token to its user, enforcing
-	// expiry. Returns model.ErrInvalidToken when the token is unknown/expired.
-	FindByToken(ctx context.Context, token string) (model.User, error)
-
-	// CreateToken mints a PAT for the user. Returns the stored record and the
-	// plaintext — the only time the plaintext ever exists outside the caller.
-	CreateToken(ctx context.Context, userID, name string, expiresAt *time.Time) (model.UserToken, string, error)
-	// ListTokens returns the user's tokens, newest first. Never plaintext.
-	ListTokens(ctx context.Context, userID string) ([]model.UserToken, error)
-	// DeleteToken removes the user's token. model.ErrTokenNotFound if the id
-	// does not exist or belongs to another user.
-	DeleteToken(ctx context.Context, userID, tokenID string) error
 
 	// CountUsers reports how many users exist (0 = fresh instance, local
 	// login bootstraps the admin).
@@ -49,10 +35,12 @@ type UserRepository interface {
 	// ListMembers returns the org's memberships joined with their users.
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
 	// RemoveMember deletes the member's user row outright (cascades to
-	// credentials, accounts, PATs). model.ErrorUserNotFound when the user is
-	// not a member of orgID, or when callerID (the member removing them) no
-	// longer is: that is checked under a lock so concurrent mutual removals
-	// cannot empty the org.
+	// credentials, accounts, access tokens; callers go through
+	// authn.RemoveMember, which also revokes the member's grants).
+	// model.ErrorUserNotFound when the user is not a member of orgID, or
+	// when callerID (the member removing them) no longer is: that is
+	// checked under a lock so concurrent mutual removals cannot empty the
+	// org.
 	RemoveMember(ctx context.Context, orgID, callerID, userID string) error
 
 	// RegisterLocalUser is open self-signup: user + their own organization

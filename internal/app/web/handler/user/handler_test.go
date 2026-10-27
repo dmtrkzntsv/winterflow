@@ -16,20 +16,20 @@ import (
 )
 
 type fakeTokens struct {
-	created  []model.UserToken
+	created  []model.AccessToken
 	deleted  []string
 	deleteBy string
 }
 
-func (f *fakeTokens) CreateToken(_ context.Context, userID, name string, expiresAt *time.Time) (model.UserToken, string, error) {
-	rec := model.UserToken{ID: "tok-1", UserID: userID, Name: name, Prefix: "wfp_abcd1234", ExpiresAt: expiresAt, CreatedAt: time.Now()}
+func (f *fakeTokens) CreatePAT(_ context.Context, userID, name string, expiresAt *time.Time) (model.AccessToken, string, error) {
+	rec := model.AccessToken{ID: "tok-1", UserID: userID, Kind: model.TokenPAT, Name: name, Prefix: "wfp_abcd1234", ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.created = append(f.created, rec)
 	return rec, "wfp_abcd1234SECRETSECRETSECRETSECRETSECRET", nil
 }
-func (f *fakeTokens) ListTokens(_ context.Context, userID string) ([]model.UserToken, error) {
+func (f *fakeTokens) ListPATs(_ context.Context, userID string) ([]model.AccessToken, error) {
 	return f.created, nil
 }
-func (f *fakeTokens) DeleteToken(_ context.Context, userID, tokenID string) error {
+func (f *fakeTokens) DeletePAT(_ context.Context, userID, tokenID string) error {
 	f.deleteBy = userID
 	if tokenID != "tok-1" {
 		return model.ErrTokenNotFound
@@ -93,7 +93,9 @@ func TestCreateTokenRequiresName(t *testing.T) {
 
 func TestGetTokensListsWithoutPlaintext(t *testing.T) {
 	h, f := newHandler()
-	_, _, _ = f.CreateToken(context.Background(), "user-1", "ci", nil)
+	_, _, _ = f.CreatePAT(context.Background(), "user-1", "ci", nil)
+	used := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	f.created = append(f.created, model.AccessToken{ID: "tok-2", Kind: model.TokenPAT, Name: "used", LastUsedAt: used})
 	r := authed(httptest.NewRequest("GET", "/x", nil))
 	w := httptest.NewRecorder()
 	h.GetTokens(w, r)
@@ -102,6 +104,21 @@ func TestGetTokensListsWithoutPlaintext(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "SECRET") {
 		t.Error("list response leaks plaintext")
+	}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 2 || resp.Data[0]["token_id"] != "tok-1" || resp.Data[0]["prefix"] != "wfp_abcd1234" {
+		t.Fatalf("data = %v", resp.Data)
+	}
+	if resp.Data[0]["last_used_at"] != nil {
+		t.Errorf("never-used token: last_used_at = %v, want null", resp.Data[0]["last_used_at"])
+	}
+	if resp.Data[1]["last_used_at"] != "2026-10-01T12:00:00Z" {
+		t.Errorf("used token: last_used_at = %v", resp.Data[1]["last_used_at"])
 	}
 }
 

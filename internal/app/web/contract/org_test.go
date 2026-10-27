@@ -80,9 +80,7 @@ func TestOrgRoutes(t *testing.T) {
 			t.Fatalf("members after removing the creator = %+v", members)
 		}
 		// The creator's account is gone: their password no longer logs in.
-		e.anon().do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
-			"user": owner.email, "passwd": ownerPassword, "aud": "contract",
-		}}).expect(t, http.StatusForbidden)
+		e.anon().tryLogin(t, owner.email, ownerPassword).expect(t, http.StatusUnauthorized)
 	})
 }
 
@@ -100,9 +98,7 @@ func TestOrgMemberRoutesRefuseOtherOrgUsers(t *testing.T) {
 	}
 	stillLogsIn := func(t *testing.T) {
 		t.Helper()
-		e.anon().do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
-			"user": otherEmail, "passwd": otherPassword, "aud": "contract",
-		}}).expect(t, http.StatusOK)
+		e.anon().login(t, otherEmail, otherPassword)
 	}
 
 	t.Run("remove-member", func(t *testing.T) {

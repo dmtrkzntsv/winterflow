@@ -3,9 +3,7 @@ package contract_test
 import (
 	"context"
 	"net"
-	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,30 +44,6 @@ type env struct {
 
 	mu       sync.Mutex
 	requests map[string]string // request_id -> "METHOD /path" that dispatched it
-}
-
-// newServerMu guards the go-pkgz/auth jwt package global. token.NewService
-// writes jwt.MarshalSingleStringAsArray on every call (its sync.Once is
-// function-local), while minting a token on login reads it through
-// golang-jwt's ClaimStrings.MarshalJSON. Parallel tests therefore take the
-// write lock around web.NewServer and a read lock around each /auth/ request
-// (see serializeAuth). The only other reader is go-pkgz's refreshExpiredToken
-// path, which re-mints a token that is past its 5-minute TokenDuration; no
-// test env lives that long, so it never runs here. Production builds one
-// server per process, so this is a test-only hazard.
-var newServerMu sync.RWMutex
-
-// serializeAuth holds newServerMu's read lock for the duration of every
-// /auth/ request, the only ones that mint tokens, so no server build can
-// overlap a login. Long-lived requests (SSE) are deliberately not locked.
-func serializeAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/auth/") {
-			newServerMu.RLock()
-			defer newServerMu.RUnlock()
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 var testLog = logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "contract"})
@@ -114,12 +88,8 @@ func newEnv(t *testing.T) *env {
 	// consumes.
 	bootstrap.StartRollouts(ctx, deps)
 
-	// Exclusive: no /auth/ request in any env may run while NewServer writes
-	// the jwt global (see newServerMu).
-	newServerMu.Lock()
 	handler := web.NewServer(ctx, deps).Handler
-	newServerMu.Unlock()
-	srv := httptest.NewUnstartedServer(serializeAuth(record(handler)))
+	srv := httptest.NewUnstartedServer(record(handler))
 	// SSE handlers observe ctx through BaseContext: cancelling it ends
 	// streams so Close does not wait on them.
 	srv.Config.BaseContext = func(_ net.Listener) context.Context { return ctx }

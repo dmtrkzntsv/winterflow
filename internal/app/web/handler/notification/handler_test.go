@@ -8,8 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/model"
 	notificationsvc "winterflow/internal/domain/service/notification"
@@ -18,9 +17,7 @@ import (
 
 func asUser(id string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u := token.User{ID: id}
-		u.SetStrAttr("user_id", id)
-		next.ServeHTTP(w, token.SetUserInfo(r, u))
+		next.ServeHTTP(w, webutil.WithPrincipal(r, model.Principal{UserID: id, Kind: model.TokenSession}))
 	})
 }
 

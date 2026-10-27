@@ -25,11 +25,10 @@ func TestMain(m *testing.M) {
 	// depend on the developer's machine.
 	time.Local = time.UTC
 	for k, v := range map[string]string{
-		"JWT_SECRET":           "contract-secret",
-		"WEB_URL":              "http://127.0.0.1",
-		"AVATARS_STORAGE_PATH": tmp,
-		"AGENT_DATA_DIR":       tmp,
-		"INGRESS_ENABLED":      "false",
+		"JWT_SECRET":      "contract-secret",
+		"WEB_URL":         "http://127.0.0.1",
+		"AGENT_DATA_DIR":  tmp,
+		"INGRESS_ENABLED": "false",
 	} {
 		os.Setenv(k, v)
 	}

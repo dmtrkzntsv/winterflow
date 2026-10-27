@@ -17,14 +17,11 @@ import (
 )
 
 // TestRouteTableMatchesRouter proves the router serves exactly the table:
-// every non-Mounted route is registered, nothing else is (besides the two
-// library mounts), and every Mounted route lives under one of those mounts.
+// every route is registered and nothing else is. No route is Mounted: no
+// library serves routes of its own any more.
 func TestRouteTableMatchesRouter(t *testing.T) {
 	var walked []string
 	err := chi.Walk(testServer(t), func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if route == "/auth/*" || route == "/avatar/*" {
-			return nil
-		}
 		walked = append(walked, method+" "+route)
 		return nil
 	})
@@ -34,9 +31,7 @@ func TestRouteTableMatchesRouter(t *testing.T) {
 	var table []string
 	for _, rt := range APIRoutes() {
 		if rt.Mounted {
-			if !strings.HasPrefix(rt.Path, "/auth/") && !strings.HasPrefix(rt.Path, "/avatar/") {
-				t.Errorf("Mounted %s %s is outside the /auth and /avatar mounts", rt.Method, rt.Path)
-			}
+			t.Errorf("Mounted %s %s: no library mount serves it", rt.Method, rt.Path)
 			continue
 		}
 		if rt.Tag == "enroll" {

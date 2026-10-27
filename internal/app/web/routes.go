@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"winterflow/internal/app/web/spa"
@@ -8,7 +9,6 @@ import (
 	webdist "winterflow/web"
 
 	"winterflow/internal/app/web/api"
-	authprvd "winterflow/internal/app/web/auth"
 	hagenthub "winterflow/internal/app/web/handler/agenthub"
 	halerts "winterflow/internal/app/web/handler/alerts"
 	happ "winterflow/internal/app/web/handler/app"
@@ -24,7 +24,7 @@ import (
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
 	huser "winterflow/internal/app/web/handler/user"
-	"winterflow/internal/app/web/middleware/patauth"
+	"winterflow/internal/app/web/middleware/authn"
 	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/util"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
@@ -32,19 +32,14 @@ import (
 )
 
 func (s *Server) registerRoutes() {
-	// Auth endpoints are the API's only bcrypt-priced requests — throttle them
-	// per client IP so credential floods answer 429 instead of burning CPU.
-	// One limiter is shared by the go-pkgz /auth mount and /api/v1/auth/register.
+	// Login and register are the API's only password-priced requests —
+	// throttle them per client IP so credential floods answer 429 instead of
+	// burning CPU. One limiter is shared by both.
 	authLimiter := ratelimit.New(5, 10)
 
-	authRoutes, avaRoutes := s.Auth.Handlers()
-	s.Router.With(authLimiter.Middleware).Mount("/auth", authRoutes) // add auth handlers
-	s.Router.Mount("/avatar", avaRoutes)                             // add avatar handler
-
-	amw := s.Auth.Middleware()
-	// authMW = PAT bearer first, JWT session otherwise. Every User route
-	// uses this so tokens work everywhere a browser session does.
-	authMW := patauth.Middleware(s.Deps.Authn, amw.Auth)
+	// authMW resolves Bearer, Basic (token as password) or the session
+	// cookie; OAuth tokens are refused here (they are for /mcp only).
+	authMW := authn.Middleware(s.Deps.Authn, authn.Options{})
 	// No role guard: every org member may do everything; server-addressed
 	// handlers still check the caller's org owns the server.
 	enrollLimiter := ratelimit.New(5, 30)
@@ -86,12 +81,21 @@ func APIRoutes() []api.Route {
 	return routeTable(&bootstrap.Deps{}, api.Guards{})
 }
 
-// routeTable collects every handler package's routes, plus the health probe
-// and the go-pkgz mounts (documented only). The NotificationManager is shared
+// routeTable collects every handler package's routes, plus the health probe.
+// The NotificationManager is shared
 // across handlers: the SSE stream subscribes to it and the usecases publish
 // to it, so every handler MUST receive the same instance from d.
 func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
-	authAPI := hauth.NewHandler(&hauth.Deps{Logger: d.Log, Cfg: d.Cfg, Users: d.UserService})
+	var afterSignIn func(context.Context, string)
+	if d.Cfg != nil && d.Cfg.IsStandalone() {
+		// The embedded agent self-registered at boot with a pairing code but
+		// belongs to no org: claim it into the signing-in user's org, so the
+		// server "just appears".
+		afterSignIn = func(ctx context.Context, userID string) { autoClaimStandaloneServer(ctx, d, userID) }
+	}
+	authAPI := hauth.NewHandler(&hauth.Deps{
+		Logger: d.Log, Cfg: d.Cfg, Users: d.UserService, Sessions: d.Authn, AfterSignIn: afterSignIn,
+	})
 	notificationAPI := notification.NewHandler(&notification.Deps{
 		Logger:              d.Log,
 		NotificationManager: d.NotificationManager,
@@ -174,7 +178,10 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Box:     box,
 		Tester:  tester,
 	})
-	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.Authn, Users: d.UserService})
+	usersAPI := huser.NewHandler(&huser.Deps{
+		Logger: d.Log, Tokens: d.Authn, Users: d.UserService,
+		SecureCookies: d.Cfg != nil && d.Cfg.GetSecureCookies(),
+	})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService, Tokens: d.Authn})
 	// A nil rollout queue (the spec-only route table) must not become a
 	// non-nil interface in any of its consumers.
@@ -234,7 +241,6 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
 		rolloutsAPI.Routes(g),
-		authprvd.Routes(),
 	} {
 		routes = append(routes, table...)
 	}

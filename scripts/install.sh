@@ -425,12 +425,12 @@ LOG_LEVEL=info
 API_PORT=${API_PORT}
 WEB_URL=http://localhost:${API_PORT}
 
-# Generated at install time. Rotating it invalidates all sessions.
+# Generated at install time: the key alert notification channel URLs are
+# encrypted with. Rotating it means re-entering every channel URL.
 JWT_SECRET=${jwt_secret}
 
 DATABASE_URL=sqlite://${DATA_DIR}/winterflow.sqlite
 AGENT_DATA_DIR=${DATA_DIR}/data
-AVATARS_STORAGE_PATH=${DATA_DIR}/data/avatars
 
 HUB_CERT_DIR=${DATA_DIR}/data/hub-certs
 

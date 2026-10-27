@@ -68,7 +68,7 @@ type Error struct {
 	Data    Null   `json:"data" required:"true"`
 }
 
-// LibraryError is the error body of the go-pkgz /auth and /avatar routes.
+// LibraryError is the error body of Raw (library) routes.
 type LibraryError struct {
 	Error string `json:"error" required:"true"`
 }
@@ -171,8 +171,10 @@ func Build(routes []api.Route) (*openapi31.Spec, error) {
 	s.SetDescription(Description)
 	s.SetHTTPBearerTokenSecurity(SchemeBearer, "wfp_ personal access token",
 		"Personal access token (wfp_…) as `Authorization: Bearer`. It is also accepted as the Basic-auth password.")
-	s.SetAPIKeySecurity(SchemeCookie, "JWT", oapi.InCookie,
-		"JWT session cookie set by POST /auth/local/login (the X-JWT header is accepted too).")
+	s.SetAPIKeySecurity(SchemeCookie, "wf_session", oapi.InCookie,
+		"Session cookie set by POST /api/v1/auth/login and /api/v1/auth/register. "+
+			"A request it authenticates with a method other than GET, HEAD or OPTIONS must send "+
+			"`X-Winterflow-Request: 1`, else 403.")
 
 	for _, rt := range routes {
 		if err := b.addRoute(rt); err != nil {
@@ -359,11 +361,16 @@ func (b *builder) addRoute(rt api.Route) error {
 	return b.r.AddOperation(oc)
 }
 
-// errorCodes is rt.Errors plus 401 on User routes, sorted and de-duplicated.
+// errorCodes is rt.Errors plus 401 on User routes and 403 on User routes
+// that change state (a cookie-authenticated call without the CSRF header),
+// sorted and de-duplicated.
 func errorCodes(rt api.Route) []int {
 	codes := append([]int(nil), rt.Errors...)
 	if rt.Auth == api.User {
 		codes = append(codes, http.StatusUnauthorized)
+		if rt.Method != http.MethodGet && rt.Method != http.MethodHead {
+			codes = append(codes, http.StatusForbidden)
+		}
 	}
 	sort.Ints(codes)
 	out := codes[:0]
@@ -375,21 +382,17 @@ func errorCodes(rt api.Route) []int {
 	return out
 }
 
-// addError documents one error status. 401 comes from webutil (JSON) or
-// from the go-pkgz JWT middleware (text/plain "Unauthorized"); 429 is the
-// rate limiter's text/plain body; library routes answer {"error": "..."}.
+// addError documents one error status. 429 is the rate limiter's
+// text/plain body; library (Raw) routes answer {"error": "..."}; everything
+// else, the auth middleware's 401 included, is the webutil envelope.
 func addError(oc oapi.OperationContext, code int, raw bool) {
 	switch {
 	case code == http.StatusTooManyRequests:
 		oc.AddRespStructure("", oapi.WithContentType("text/plain"), oapi.WithHTTPStatus(code))
 	case raw:
-		// go-pkgz sometimes calls WriteHeader before rest.RenderJSON sets
-		// the Content-Type (/auth/user 401, unknown provider 400), so the
-		// same {"error": "..."} also arrives as sniffed text/plain.
+		// A library may call WriteHeader before setting the Content-Type,
+		// so the same {"error": "..."} can also arrive as sniffed text/plain.
 		oc.AddRespStructure(LibraryError{}, oapi.WithHTTPStatus(code))
-		oc.AddRespStructure("", oapi.WithContentType("text/plain"), oapi.WithHTTPStatus(code))
-	case code == http.StatusUnauthorized:
-		oc.AddRespStructure(Error{}, oapi.WithHTTPStatus(code))
 		oc.AddRespStructure("", oapi.WithContentType("text/plain"), oapi.WithHTTPStatus(code))
 	default:
 		oc.AddRespStructure(Error{}, oapi.WithHTTPStatus(code))

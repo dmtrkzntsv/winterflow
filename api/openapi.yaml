@@ -218,9 +218,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "503":
           content:
@@ -276,9 +273,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -331,10 +325,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -378,9 +375,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -431,10 +425,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -490,9 +487,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -545,9 +539,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -629,9 +620,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -695,9 +683,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -747,9 +732,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -798,10 +780,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -847,9 +832,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -904,10 +886,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -954,10 +939,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "429":
           content:
             text/plain:
@@ -1007,9 +995,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1066,9 +1051,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1121,9 +1103,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1182,9 +1161,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1240,9 +1216,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1296,9 +1269,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1369,9 +1339,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1430,9 +1397,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1498,9 +1462,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1556,9 +1517,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1611,9 +1569,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1674,9 +1629,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1732,9 +1684,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1796,9 +1745,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1853,9 +1799,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1920,9 +1863,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -1939,6 +1879,107 @@ paths:
       - backups
       x-operation-result:
         $ref: '#/components/schemas/UpdateBackupsResponse'
+  /api/v1/auth/login:
+    post:
+      description: 'The same 401 answers an unknown email and a wrong password. Requests
+        authenticated by the cookie that change state must send `X-Winterflow-Request:
+        1`.'
+      operationId: authLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/LoginResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Sign in with email and password; sets the wf_session cookie
+      tags:
+      - auth
+  /api/v1/auth/logout:
+    post:
+      operationId: authLogout
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      security:
+      - bearer: []
+      - cookie: []
+      summary: 'Sign out: revoke the presenting session and clear the cookie'
+      tags:
+      - auth
   /api/v1/auth/register:
     post:
       operationId: authRegister
@@ -1977,7 +2018,13 @@ paths:
               schema:
                 type: string
           description: Too Many Requests
-      summary: Create an account (first call claims a fresh instance)
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Create an account and sign it in (first call claims a fresh instance)
       tags:
       - auth
   /api/v1/auth/state:
@@ -2007,7 +2054,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Bad Request
-      summary: Whether the instance is fresh and registration is open
+      summary: Whether the instance is fresh, registration is open, and which sign-in
+        providers exist
       tags:
       - auth
   /api/v1/domain/create:
@@ -2057,9 +2105,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2120,9 +2165,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2178,9 +2220,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2234,9 +2273,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2304,9 +2340,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2406,9 +2439,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2481,9 +2511,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2576,9 +2603,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2670,9 +2694,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2749,9 +2770,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2817,9 +2835,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2896,9 +2911,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -2989,9 +3001,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3082,9 +3091,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3178,9 +3184,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3226,9 +3229,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -3294,9 +3294,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3355,9 +3352,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3418,9 +3412,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3476,9 +3467,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3531,10 +3519,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -3580,9 +3571,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3632,9 +3620,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -3674,9 +3659,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -3716,9 +3698,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -3758,9 +3737,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -3806,10 +3782,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -3853,10 +3832,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -3902,9 +3884,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -3955,10 +3934,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -4010,9 +3992,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4073,9 +4052,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4131,9 +4107,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4198,9 +4171,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "404":
           content:
@@ -4252,10 +4222,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -4305,9 +4278,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4366,9 +4336,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4422,9 +4389,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4480,9 +4444,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4528,9 +4489,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -4570,9 +4528,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -4620,9 +4575,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4674,10 +4626,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "429":
           content:
             text/plain:
@@ -4735,9 +4690,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4793,9 +4745,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4854,9 +4803,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4889,9 +4835,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -4944,9 +4887,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -4999,9 +4939,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5057,9 +4994,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5113,9 +5047,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5176,9 +5107,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5243,9 +5171,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5311,9 +5236,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5367,9 +5289,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5440,9 +5359,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "404":
           content:
@@ -5489,9 +5405,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -5538,10 +5451,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -5589,9 +5505,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -5659,10 +5572,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -5718,10 +5634,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -5765,10 +5684,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -5812,10 +5734,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -5854,9 +5779,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
@@ -5900,14 +5822,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
       security:
       - bearer: []
       - cookie: []
       summary: List the caller's personal access tokens
+      tags:
+      - user
+  /api/v1/user/logout-all:
+    post:
+      description: Personal access tokens and connected OAuth apps keep working.
+      operationId: userLogoutAll
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      security:
+      - bearer: []
+      - cookie: []
+      summary: 'Sign out everywhere: revoke every session of the caller and clear
+        the cookie'
       tags:
       - user
   /api/v1/volume/create:
@@ -5955,9 +5921,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -6018,9 +5981,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -6076,9 +6036,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
           description: Unauthorized
         "403":
           content:
@@ -6094,188 +6051,6 @@ paths:
       - docker
       x-operation-result:
         $ref: '#/components/schemas/ListVolumesResponse'
-  /auth/list:
-    get:
-      operationId: authList
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  type: string
-                type: array
-          description: OK
-        "429":
-          content:
-            text/plain:
-              schema:
-                type: string
-          description: Too Many Requests
-      summary: Names of the enabled login providers
-      tags:
-      - auth
-  /auth/local/login:
-    post:
-      operationId: authLocalLogin
-      parameters:
-      - in: query
-        name: sess
-        schema:
-          enum:
-          - "0"
-          - "1"
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/FormDataLoginForm'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SessionUser'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LibraryError'
-            text/plain:
-              schema:
-                type: string
-          description: Bad Request
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LibraryError'
-            text/plain:
-              schema:
-                type: string
-          description: Forbidden
-        "429":
-          content:
-            text/plain:
-              schema:
-                type: string
-          description: Too Many Requests
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LibraryError'
-            text/plain:
-              schema:
-                type: string
-          description: Internal Server Error
-      summary: Email+password login; sets the JWT cookie
-      tags:
-      - auth
-  /auth/logout:
-    get:
-      operationId: authLogout
-      responses:
-        "200":
-          description: OK
-        "429":
-          content:
-            text/plain:
-              schema:
-                type: string
-          description: Too Many Requests
-      summary: Clear the JWT cookie
-      tags:
-      - auth
-  /auth/status:
-    get:
-      operationId: authStatus
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthStatus'
-          description: OK
-        "429":
-          content:
-            text/plain:
-              schema:
-                type: string
-          description: Too Many Requests
-      summary: Whether the request carries a valid session
-      tags:
-      - auth
-  /auth/user:
-    get:
-      operationId: authUser
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SessionUser'
-          description: OK
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LibraryError'
-            text/plain:
-              schema:
-                type: string
-          description: Unauthorized
-        "429":
-          content:
-            text/plain:
-              schema:
-                type: string
-          description: Too Many Requests
-      summary: The session's user record
-      tags:
-      - auth
-  /avatar/{avatar}:
-    get:
-      operationId: avatar
-      parameters:
-      - in: path
-        name: avatar
-        required: true
-        schema:
-          type: string
-      responses:
-        "200":
-          content:
-            image/*:
-              schema:
-                type: string
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LibraryError'
-            text/plain:
-              schema:
-                type: string
-          description: Bad Request
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LibraryError'
-            text/plain:
-              schema:
-                type: string
-          description: Forbidden
-      summary: A stored avatar image
-      tags:
-      - auth
 components:
   schemas:
     AcceptedData:
@@ -6517,18 +6292,6 @@ components:
       required:
       - server_id
       - apps
-      type: object
-    AuthStatus:
-      properties:
-        status:
-          enum:
-          - logged in
-          - not logged in
-          type: string
-        user:
-          type: string
-      required:
-      - status
       type: object
     BackupChoice:
       properties:
@@ -7675,15 +7438,6 @@ components:
       - bind
       - pinned
       type: object
-    FormDataLoginForm:
-      properties:
-        aud:
-          type: string
-        passwd:
-          type: string
-        user:
-          type: string
-      type: object
     GetAppResponse:
       properties:
         app:
@@ -8156,13 +7910,6 @@ components:
       - at
       - server
       type: object
-    LibraryError:
-      properties:
-        error:
-          type: string
-      required:
-      - error
-      type: object
     ListAppsResponse:
       properties:
         apps:
@@ -8292,12 +8039,17 @@ components:
       type: object
     LoginRequest:
       properties:
-        aud:
+        email:
           type: string
-        passwd:
+        password:
           type: string
+      type: object
+    LoginResponse:
+      properties:
         user:
-          type: string
+          $ref: '#/components/schemas/SessionUser'
+      required:
+      - user
       type: object
     Member:
       properties:
@@ -8766,6 +8518,20 @@ components:
       - name
       - email
       - must_change_password
+      type: object
+    Provider:
+      properties:
+        id:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
+        name:
+          type: string
+      required:
+      - id
+      - name
       type: object
     PublicKeyResponse:
       properties:
@@ -9642,27 +9408,19 @@ components:
       type: object
     SessionUser:
       properties:
-        attrs:
-          additionalProperties: {}
-          type: object
-        aud:
+        avatar_url:
           type: string
         email:
           type: string
         id:
           type: string
-        ip:
-          type: string
         name:
           type: string
-        picture:
-          type: string
-        role:
-          type: string
       required:
-      - name
       - id
-      - picture
+      - name
+      - email
+      - avatar_url
       type: object
     SourcePayload:
       properties:
@@ -9710,11 +9468,21 @@ components:
       properties:
         bootstrap:
           type: boolean
+        oauth_server:
+          type: boolean
+        providers:
+          items:
+            $ref: '#/components/schemas/Provider'
+          type:
+          - array
+          - "null"
         registration_enabled:
           type: boolean
       required:
       - bootstrap
       - registration_enabled
+      - providers
+      - oauth_server
       type: object
     StatusResponse:
       properties:
@@ -10368,8 +10136,9 @@ components:
       scheme: bearer
       type: http
     cookie:
-      description: JWT session cookie set by POST /auth/local/login (the X-JWT header
-        is accepted too).
+      description: 'Session cookie set by POST /api/v1/auth/login and /api/v1/auth/register.
+        A request it authenticates with a method other than GET, HEAD or OPTIONS must
+        send `X-Winterflow-Request: 1`, else 403.'
       in: cookie
-      name: JWT
+      name: wf_session
       type: apiKey

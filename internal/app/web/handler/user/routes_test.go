@@ -15,6 +15,7 @@ func TestRoutes(t *testing.T) {
 		"POST /api/v1/user/delete-token",
 		"GET /api/v1/user/get-profile",
 		"POST /api/v1/user/change-password",
+		"POST /api/v1/user/logout-all",
 	}
 	var got []string
 	for _, rt := range routes {

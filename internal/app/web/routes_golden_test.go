@@ -27,9 +27,7 @@ var updateGolden = flag.Bool("update", false, "rewrite testdata/routes.golden")
 // called at construction time, so nil services are fine for walking routes.
 func testServer(t *testing.T) *chi.Mux {
 	t.Helper()
-	t.Setenv("JWT_SECRET", "test-secret")
 	t.Setenv("WEB_URL", "http://localhost")
-	t.Setenv("AVATARS_STORAGE_PATH", t.TempDir())
 	deps := &bootstrap.Deps{
 		Log: logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}),
 		Cfg: config.NewServerConfig("standalone"),

@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -92,22 +91,16 @@ func (c *ServerConfig) GetAllowedOrigins() string {
 	return v
 }
 
-// IsAuthSupported reports whether an OPTIONAL auth provider is configured.
-// The local email+password provider is always on and never consulted here.
+// IsAuthSupported reports whether an OPTIONAL sign-in provider is
+// configured, in either topology. The local email+password provider is
+// always on and never consulted here.
 func (c *ServerConfig) IsAuthSupported(a string) bool {
-	result := false
 	switch a {
 	case "google":
-		if !c.IsStandalone() {
-			gcid, gcs := c.GetGoogleAuth()
-			if gcid == "" || gcs == "" {
-				result = false
-			} else {
-				result = true
-			}
-		}
+		gcid, gcs := c.GetGoogleAuth()
+		return gcid != "" && gcs != ""
 	}
-	return result
+	return false
 }
 
 // IsRegistrationEnabled reports whether self-signup is open. Default on;
@@ -126,20 +119,11 @@ func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }
 
+// GetJwtSecret is JWT_SECRET. Despite the name it no longer signs anything
+// (sessions are opaque tokens): it is only the key alert notification
+// channel URLs are encrypted with.
 func (c *ServerConfig) GetJwtSecret() string {
 	return os.Getenv("JWT_SECRET")
-}
-
-func (c *ServerConfig) GetAvatarsStoragePath() string {
-	v := os.Getenv("AVATARS_STORAGE_PATH")
-	if v == "" {
-		dir, _ := os.Getwd()
-		v = filepath.Join(dir, "data/avatars")
-		if _, err := os.Stat(v); os.IsNotExist(err) {
-			_ = os.MkdirAll(v, os.ModePerm)
-		}
-	}
-	return v
 }
 
 func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {

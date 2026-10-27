@@ -9,8 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/app/web/api"
 	"winterflow/internal/domain/model"
@@ -42,7 +41,7 @@ func (q *queue) Stop(_ context.Context, orgID, id string) (model.RolloutView, er
 }
 
 func authed(r *http.Request) *http.Request {
-	return token.SetUserInfo(r, token.User{ID: "provider_u1", Attributes: map[string]any{"user_id": "u1"}})
+	return webutil.WithPrincipal(r, model.Principal{UserID: "u1", Kind: model.TokenSession})
 }
 
 func TestRoutes(t *testing.T) {

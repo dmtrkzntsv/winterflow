@@ -11,10 +11,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"winterflow/internal/app/web/middleware/authn"
 )
 
-// client is one caller of the API: anonymous, a JWT-cookie session, or a
-// PAT bearer. Every request and response it sends is validated against
+// client is one caller of the API: anonymous, a session cookie, or a PAT
+// bearer. Every request and response it sends is validated against
 // api/openapi.yaml.
 type client struct {
 	e      *env
@@ -98,6 +100,9 @@ func (c *client) do(t *testing.T, k call) *response {
 	if c.bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearer)
 	}
+	// As the web UI: every request says it is the app's own (the CSRF
+	// check on cookie-authenticated writes). A call's Header may override.
+	req.Header.Set(authn.CSRFHeader, "1")
 	for k, v := range k.Header {
 		req.Header[k] = v
 	}
@@ -175,8 +180,8 @@ func (c *client) accepted(t *testing.T, k call) string {
 const ownerPassword = "owner-password"
 
 // claim runs the first-run flow: register (claims the fresh instance) and
-// log in. The login auto-claims the pending embedded server. The client
-// holds the JWT cookie and an open SSE stream.
+// log in. Signing in auto-claims the pending embedded server. The client
+// holds the session cookie and an open SSE stream.
 func (e *env) claim(t *testing.T) *client {
 	t.Helper()
 	c := e.newClient()
@@ -194,12 +199,17 @@ func (e *env) claim(t *testing.T) *client {
 	return c
 }
 
-// login posts the go-pkgz local login; the cookie lands in the jar.
+// login signs in with email and password; the session cookie lands in the
+// jar.
 func (c *client) login(t *testing.T, email, password string) {
 	t.Helper()
-	c.do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
-		"user": email, "passwd": password, "aud": "contract",
-	}}).expect(t, http.StatusOK)
+	c.tryLogin(t, email, password).expect(t, http.StatusOK)
+}
+
+// tryLogin posts a login and returns the answer, whatever it is.
+func (c *client) tryLogin(t *testing.T, email, password string) *response {
+	t.Helper()
+	return c.post(t, "/api/v1/auth/login", map[string]string{"email": email, "password": password})
 }
 
 // pat mints a personal access token as c and returns a bearer-only client

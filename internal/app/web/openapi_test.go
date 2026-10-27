@@ -312,9 +312,6 @@ func TestOpenAPIMatchesWire(t *testing.T) {
 		{"unauthorized", http.MethodGet, "/api/v1/server/get-servers", 401, "application/json", func(w http.ResponseWriter) {
 			util.Unauthorized(w)
 		}},
-		{"go-pkgz unauthorized", http.MethodGet, "/api/v1/server/get-servers", 401, "text/plain", func(w http.ResponseWriter) {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		}},
 		{"forbidden", http.MethodGet, "/api/v1/registry/list", 403, "application/json", func(w http.ResponseWriter) {
 			util.Forbidden(w)
 		}},

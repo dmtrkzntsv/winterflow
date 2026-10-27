@@ -8,8 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/app/web/api"
 	"winterflow/internal/domain/model"
@@ -53,7 +52,7 @@ type orgs struct {
 func (o orgs) PrimaryOrganizationID(context.Context, string) (string, error) { return o.org, o.err }
 
 func authed(r *http.Request) *http.Request {
-	return token.SetUserInfo(r, token.User{ID: "provider_u1", Attributes: map[string]any{"user_id": "u1"}})
+	return webutil.WithPrincipal(r, model.Principal{UserID: "u1", Kind: model.TokenSession})
 }
 
 func serve(h http.HandlerFunc, method, target, body string) *httptest.ResponseRecorder {

@@ -36,5 +36,11 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Summary: "Change the caller's local password", Tag: "user",
 			Request: ChangePasswordRequest{}, Errors: bad,
 		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/user/logout-all", Handler: h.LogoutAll, Auth: api.User,
+			Summary: "Sign out everywhere: revoke every session of the caller and clear the cookie", Tag: "user",
+			Description: "Personal access tokens and connected OAuth apps keep working.",
+			Errors:      []int{http.StatusInternalServerError},
+		},
 	}
 }

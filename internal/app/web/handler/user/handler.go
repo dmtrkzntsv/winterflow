@@ -1,5 +1,6 @@
-// Package user serves user-scoped endpoints: personal access token
-// management. All three are synchronous DB operations (no agent round-trip).
+// Package user serves user-scoped endpoints: profile, password, personal
+// access tokens and signing out everywhere. All are synchronous DB
+// operations (no agent round-trip).
 package user
 
 import (
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"winterflow/internal/app/web/middleware/authn"
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/logger"
@@ -18,6 +20,7 @@ type TokenStore interface {
 	CreatePAT(ctx context.Context, userID, name string, expiresAt *time.Time) (model.AccessToken, string, error)
 	ListPATs(ctx context.Context, userID string) ([]model.AccessToken, error)
 	DeletePAT(ctx context.Context, userID, tokenID string) error
+	RevokeSessions(ctx context.Context, userID string) error
 }
 
 // ProfileStore is the slice of port.UserService the profile and password
@@ -33,16 +36,36 @@ type Deps struct {
 	Logger *logger.Logger
 	Tokens TokenStore
 	Users  ProfileStore
+	// SecureCookies sets the Secure flag on the cleared session cookie.
+	SecureCookies bool
 }
 
 type Handler struct {
-	log    *logger.Logger
-	tokens TokenStore
-	users  ProfileStore
+	log           *logger.Logger
+	tokens        TokenStore
+	users         ProfileStore
+	secureCookies bool
 }
 
 func NewHandler(d *Deps) *Handler {
-	return &Handler{log: d.Logger, tokens: d.Tokens, users: d.Users}
+	return &Handler{log: d.Logger, tokens: d.Tokens, users: d.Users, secureCookies: d.SecureCookies}
+}
+
+// LogoutAll signs the caller out everywhere: every session of theirs is
+// revoked, the presenting one included, and the cookie is cleared. Personal
+// access tokens and OAuth grants are left alone.
+func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	if err := h.tokens.RevokeSessions(r.Context(), userID); err != nil {
+		h.log.Error("LogoutAll", "error", err, "user_id", userID)
+		webutil.ErrorStatus(w, http.StatusInternalServerError, "failed to sign out everywhere")
+		return
+	}
+	authn.ClearSessionCookie(w, h.secureCookies)
+	webutil.Success(w, "signed out everywhere", nil)
 }
 
 // Profile is the data of GET /api/v1/user/get-profile. Email and

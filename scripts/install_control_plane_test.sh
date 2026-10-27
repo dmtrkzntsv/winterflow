@@ -419,7 +419,7 @@ STUB
         && pass "real run: aclfile holds the admin user" || fail "real run: aclfile holds the admin user" "$(cat "$acl" 2>/dev/null)"
     [ "$(stat -c %a "$acl")" = 600 ] && pass "real run: aclfile 0600" || fail "real run: aclfile 0600" "$(stat -c %a "$acl")"
     assert_contains "real run: redis conf names the aclfile" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "aclfile $acl"
-    [ -z "$(ls -A "$r1/var/lib/winterflow-control/api")" ] || [ "$(ls -A "$r1/var/lib/winterflow-control/api")" = avatars ] \
+    [ -z "$(ls -A "$r1/var/lib/winterflow-control/api")" ] \
         && pass "real run: hub-trust's temp file removed" || fail "real run: hub-trust's temp file removed" "$(ls -A "$r1/var/lib/winterflow-control/api")"
     assert_not_contains "real run: secret never on curl's command line" "$(cat "$r1/curl-args")" "$SECRET"
     assert_contains "real run: secret passed on curl's stdin" "$(cat "$r1/curl-stdin")" "$SECRET"

@@ -45,7 +45,7 @@ func TestHandler(t *testing.T) {
 		{"api path never gets shell", "GET", "/api/v1/nope", 404, "", ""},
 		{"api root reserved", "GET", "/api", 404, "", ""},
 		{"auth path reserved", "GET", "/auth/google/login", 404, "", ""},
-		{"avatar path reserved", "GET", "/avatar/x", 404, "", ""},
+		{"well-known path reserved", "GET", "/.well-known/oauth-authorization-server", 404, "", ""},
 		{"internal path reserved", "GET", "/_/nope", 404, "", ""},
 		// http.ServeFileFS itself rejects raw ".." URL paths with 400.
 		{"traversal rejected by stdlib", "GET", "/../../etc/passwd", 400, "", ""},

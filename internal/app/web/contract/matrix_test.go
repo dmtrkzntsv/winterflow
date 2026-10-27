@@ -161,6 +161,7 @@ var probes = map[string]probe{
 	"POST /api/v1/server/register": {malformed: post("/api/v1/server/register", map[string]any{"code": "1"})},
 
 	"POST /api/v1/auth/register":         {malformed: bad("POST", "/api/v1/auth/register")},
+	"POST /api/v1/auth/login":            {malformed: bad("POST", "/api/v1/auth/login")},
 	"POST /api/v1/user/create-token":     {malformed: post("/api/v1/user/create-token", map[string]any{"name": ""})},
 	"POST /api/v1/user/delete-token":     {malformed: bad("POST", "/api/v1/user/delete-token")},
 	"POST /api/v1/user/change-password":  {malformed: post("/api/v1/user/change-password", map[string]any{"current_password": "x", "new_password": "1"})},

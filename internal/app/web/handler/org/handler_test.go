@@ -7,8 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/logger"
@@ -71,9 +70,7 @@ func (f *fakeOrgStore) GetCredentials(_ context.Context, userID string) (model.C
 }
 
 func authed(r *http.Request) *http.Request {
-	u := token.User{ID: "admin-1"}
-	u.SetStrAttr("user_id", "admin-1")
-	return token.SetUserInfo(r, u)
+	return webutil.WithPrincipal(r, model.Principal{UserID: "admin-1", Kind: model.TokenSession})
 }
 
 func newHandler() (*Handler, *fakeOrgStore) {

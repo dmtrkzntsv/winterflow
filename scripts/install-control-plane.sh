@@ -563,7 +563,6 @@ REDIS_TLS=true
 REDIS_CA_CERT_PATH=${PKI_DIR}/ca.crt
 # The CA pair (ca.crt, ca.key) the API signs agent certificates with.
 HUB_CERT_DIR=${PKI_DIR}
-AVATARS_STORAGE_PATH=${API_HOME}/avatars
 EOF
 }
 
@@ -1366,7 +1365,7 @@ main() {
     install -d -m 755 -o root -g root "$DATA_DIR"
     ensure_system_user "$API_USER" "$API_HOME"
     ensure_system_user "$HUB_USER" "$HUB_HOME"
-    install -d -m 750 -o "$API_USER" -g "$API_USER" "$API_HOME" "$API_HOME/avatars"
+    install -d -m 750 -o "$API_USER" -g "$API_USER" "$API_HOME"
     install -d -m 750 -o "$HUB_USER" -g "$HUB_USER" "$HUB_HOME"
 
     log "Installing ${API_DEST} and ${HUB_DEST}"

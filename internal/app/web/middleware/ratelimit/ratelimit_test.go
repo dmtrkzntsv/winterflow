@@ -9,7 +9,7 @@ import (
 
 func serve(t *testing.T, mw http.Handler, remoteAddr string) *httptest.ResponseRecorder {
 	t.Helper()
-	r := httptest.NewRequest("POST", "/auth/local/login", nil)
+	r := httptest.NewRequest("POST", "/api/v1/auth/login", nil)
 	r.RemoteAddr = remoteAddr
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, r)

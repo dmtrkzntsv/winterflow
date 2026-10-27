@@ -222,11 +222,11 @@ func TestIsAuthSupported(t *testing.T) {
 		want     bool
 	}{
 		{
-			name:     "google disabled in standalone even with credentials",
+			name:     "google enabled in standalone with credentials",
 			mode:     "standalone",
 			provider: "google",
 			env:      map[string]string{"AUTH_GOOGLE_CLIENT_ID": "id", "AUTH_GOOGLE_CLIENT_SECRET": "sec"},
-			want:     false,
+			want:     true,
 		},
 		{
 			name:     "google enabled in distributed with credentials",
@@ -279,33 +279,6 @@ func TestGetAuthCredentialPairs(t *testing.T) {
 	t.Setenv("AUTH_GOOGLE_CLIENT_SECRET", "gsec")
 	if id, sec := c.GetGoogleAuth(); id != "gid" || sec != "gsec" {
 		t.Fatalf("GetGoogleAuth() = (%q, %q), want (gid, gsec)", id, sec)
-	}
-}
-
-func TestGetAvatarsStoragePath(t *testing.T) {
-	c := NewServerConfig("standalone")
-
-	// Explicit env value is returned verbatim, no directory creation.
-	t.Setenv("AVATARS_STORAGE_PATH", "/does/not/exist/avatars")
-	if got := c.GetAvatarsStoragePath(); got != "/does/not/exist/avatars" {
-		t.Fatalf("GetAvatarsStoragePath() = %q, want the env value", got)
-	}
-
-	// Default: data/avatars under the working directory, created on demand.
-	// Run from a temp dir so the repo tree is untouched.
-	unsetenv(t, "AVATARS_STORAGE_PATH")
-	t.Chdir(t.TempDir())
-	got := c.GetAvatarsStoragePath()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd: %v", err)
-	}
-	want := filepath.Join(cwd, "data/avatars")
-	if got != want {
-		t.Fatalf("default GetAvatarsStoragePath() = %q, want %q", got, want)
-	}
-	if fi, err := os.Stat(got); err != nil || !fi.IsDir() {
-		t.Fatalf("default avatars dir %q was not created: %v", got, err)
 	}
 }
 

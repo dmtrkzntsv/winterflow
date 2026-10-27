@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
+	"winterflow/internal/domain/model"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
@@ -45,7 +45,7 @@ func newHandler(t *testing.T) (*Handler, *fakeDispatcher) {
 }
 
 func authed(r *http.Request) *http.Request {
-	return token.SetUserInfo(r, token.User{ID: "provider_u1", Attributes: map[string]any{"user_id": "u1"}})
+	return webutil.WithPrincipal(r, model.Principal{UserID: "u1", Kind: model.TokenSession})
 }
 
 func TestDockerHandlersReturn202(t *testing.T) {

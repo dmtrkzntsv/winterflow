@@ -21,7 +21,8 @@ type Auth int
 const (
 	// Public routes run without the auth middleware.
 	Public Auth = iota
-	// User routes run behind authMW (PAT bearer, else the JWT session).
+	// User routes run behind authMW (Bearer or Basic token, else the
+	// session cookie).
 	User
 )
 
@@ -84,10 +85,11 @@ type Route struct {
 	// Form is an application/x-www-form-urlencoded alternative to Request.
 	Form any
 	// Errors lists documented error statuses besides the automatic 401 on
-	// User routes (e.g. 400, 403, 429).
+	// User routes and 403 on state-changing User routes (the CSRF check),
+	// e.g. 400, 403, 429.
 	Errors []int
-	// Mounted routes are served by a library mounted elsewhere (go-pkgz
-	// /auth, /avatar). They are documented but Register skips them.
+	// Mounted routes are served by a library mounted elsewhere. They are
+	// documented but Register skips them.
 	Mounted bool
 }
 

@@ -8,17 +8,23 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/go-pkgz/auth/v2/token"
+	"winterflow/internal/app/web/middleware/authn"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/logger"
 )
 
 type fakeTokens struct {
-	created  []model.AccessToken
-	deleted  []string
-	deleteBy string
+	created         []model.AccessToken
+	deleted         []string
+	deleteBy        string
+	sessionsRevoked []string
+}
+
+func (f *fakeTokens) RevokeSessions(_ context.Context, userID string) error {
+	f.sessionsRevoked = append(f.sessionsRevoked, userID)
+	return nil
 }
 
 func (f *fakeTokens) CreatePAT(_ context.Context, userID, name string, expiresAt *time.Time) (model.AccessToken, string, error) {
@@ -39,9 +45,7 @@ func (f *fakeTokens) DeletePAT(_ context.Context, userID, tokenID string) error 
 }
 
 func authed(r *http.Request) *http.Request {
-	u := token.User{ID: "user-1"}
-	u.SetStrAttr("user_id", "user-1")
-	return token.SetUserInfo(r, u)
+	return webutil.WithPrincipal(r, model.Principal{UserID: "user-1", Kind: model.TokenSession})
 }
 
 func newHandler() (*Handler, *fakeTokens) {
@@ -262,5 +266,37 @@ func TestChangePasswordGoogleOnly400(t *testing.T) {
 	h.ChangePassword(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", w.Code)
+	}
+}
+
+func TestLogoutAll(t *testing.T) {
+	h, f := newHandler()
+	w := httptest.NewRecorder()
+	h.LogoutAll(w, authed(httptest.NewRequest("POST", "/api/v1/user/logout-all", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body)
+	}
+	if len(f.sessionsRevoked) != 1 || f.sessionsRevoked[0] != "user-1" {
+		t.Fatalf("RevokeSessions calls = %v", f.sessionsRevoked)
+	}
+	// PATs are untouched.
+	if len(f.deleted) != 0 {
+		t.Fatalf("deleted PATs = %v", f.deleted)
+	}
+	var cleared *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == authn.CookieName {
+			cleared = c
+		}
+	}
+	if cleared == nil || cleared.MaxAge >= 0 || cleared.Value != "" {
+		t.Fatalf("cookie = %+v, want cleared", cleared)
+	}
+
+	// Unauthenticated: 401, nothing revoked.
+	w = httptest.NewRecorder()
+	h.LogoutAll(w, httptest.NewRequest("POST", "/api/v1/user/logout-all", nil))
+	if w.Code != http.StatusUnauthorized || len(f.sessionsRevoked) != 1 {
+		t.Fatalf("anonymous: code %d, calls %v", w.Code, f.sessionsRevoked)
 	}
 }

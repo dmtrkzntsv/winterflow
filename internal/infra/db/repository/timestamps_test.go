@@ -164,8 +164,18 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	if ok, err := secretReqs.Submit(ctx, dbtest.ID(801), map[string]string{"A": "c"}, at, expires); err != nil || !ok {
 		t.Fatalf("submit secret request: %v, %v", ok, err)
 	}
-	if ok, err := secretReqs.MarkUsed(ctx, dbtest.ID(801), at); err != nil || !ok {
+	if ok, err := secretReqs.Claim(ctx, dbtest.ID(801), "claim-1", at, expires); err != nil || !ok {
+		t.Fatalf("claim secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.MarkUsed(ctx, dbtest.ID(801), "claim-1", at); err != nil || !ok {
 		t.Fatalf("use secret request: %v, %v", ok, err)
+	}
+	// The second stays claimed: claimed_until is written.
+	if ok, err := secretReqs.Submit(ctx, dbtest.ID(802), map[string]string{"A": "c"}, at, expires); err != nil || !ok {
+		t.Fatalf("submit secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.Claim(ctx, dbtest.ID(802), "claim-2", at, expires); err != nil || !ok {
+		t.Fatalf("claim secret request: %v, %v", ok, err)
 	}
 
 	appID := dbtest.ID(301)

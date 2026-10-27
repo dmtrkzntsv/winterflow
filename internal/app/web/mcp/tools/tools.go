@@ -47,10 +47,8 @@ type Deps struct {
 	SharedVars port.SharedVariableRepository
 	// Results records the dispatched commands and their outcomes.
 	Results *cmdresult.Store
-	// SecretRequests stores secret links; AppCatalog is the API's app list
-	// (which apps exist, for a secret request's name check).
+	// SecretRequests stores secret links.
 	SecretRequests port.SecretRequestRepository
-	AppCatalog     port.AppRepository
 	// WebURL is where the user opens Winterflow (WEB_URL): secret links
 	// are built on it.
 	WebURL string
@@ -80,7 +78,6 @@ func FromDeps(d *bootstrap.Deps) Deps {
 		Results:    d.CommandResults,
 
 		SecretRequests: d.SecretRequestRepository,
-		AppCatalog:     d.AppRepository,
 		WebURL:         webURL(d),
 	}
 }
@@ -105,8 +102,7 @@ func instanceLinks(d *bootstrap.Deps) port.InstanceLinks {
 // tools is the registered tools' receiver.
 type tools struct {
 	Deps
-	// secrets is the secret links usecase, checking a request's names
-	// against the app's secret variables through the tools' agent read.
+	// secrets is the secret links usecase.
 	secrets *secretreq.UseCase
 }
 
@@ -116,11 +112,7 @@ func New(d Deps) webmcp.Register {
 		d.Wait = DefaultWait
 	}
 	t := &tools{Deps: d}
-	var apps secretreq.Apps
-	if d.AppCatalog != nil {
-		apps = d.AppCatalog
-	}
-	t.secrets = secretreq.New(secretreq.Deps{Repo: d.SecretRequests, Orgs: d.Users, Servers: d.Servers, Apps: apps, AppSecrets: t})
+	t.secrets = secretreq.New(secretreq.Deps{Repo: d.SecretRequests, Orgs: d.Users, Servers: d.Servers})
 	return webmcp.Compose(t.servers, t.apps, t.domains, t.docker, t.sharedVars, t.results, t.secretTools)
 }
 

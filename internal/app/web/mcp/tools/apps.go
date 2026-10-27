@@ -18,6 +18,7 @@ import (
 	"winterflow/internal/domain/port"
 	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/domain/usecase/cmdresult"
+	"winterflow/internal/domain/usecase/secretreq"
 )
 
 // Messages the save checks answer with.
@@ -276,22 +277,22 @@ const tooLargeMessage = "this app is too large to show over MCP; edit it in the 
 // answerApp is get_app's answer for a succeeded app.get record: never a
 // view of a result that was cut to fit.
 func answerApp(rec cmdresult.Record) *sdk.CallToolResult {
-	got, fail := decodeApp(rec.Result)
-	if fail != nil {
-		return fail
+	got, err := decodeApp(rec.Result)
+	if err != nil {
+		return webmcp.ErrorText(err.Error())
 	}
 	return webmcp.JSONResult(viewApp(got))
 }
 
 // decodeApp reads an app.get result, refusing one that was cut to fit or
-// that does not decode as an app.
-func decodeApp(raw []byte) (command.GetAppResponse, *sdk.CallToolResult) {
+// that does not decode as an app (a rejection whose text is the answer).
+func decodeApp(raw []byte) (command.GetAppResponse, error) {
 	var got command.GetAppResponse
 	if isTruncated(raw) {
-		return got, webmcp.ErrorText(tooLargeMessage)
+		return got, model.Rejected(tooLargeMessage)
 	}
 	if err := json.Unmarshal(raw, &got); err != nil || got.App.AppID == "" {
-		return got, webmcp.ErrorText("the agent's answer did not describe the app; try again, or open it in the Winterflow UI")
+		return got, model.Rejected("the agent's answer did not describe the app; try again, or open it in the Winterflow UI")
 	}
 	return got, nil
 }
@@ -345,15 +346,22 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	}
 	start := time.Now()
 	var (
-		fill   map[string]string
-		commit = func(bool) error { return nil }
+		fill  map[string]string
+		claim *secretreq.Claim
 	)
 	if in.SecretsFrom != "" {
 		var err error
-		fill, commit, err = t.secrets.Consume(ctx, userID, in.ServerID, in.AppID, in.SecretsFrom)
+		fill, claim, err = t.secrets.Consume(ctx, userID, in.ServerID, in.AppID, in.SecretsFrom)
 		if err != nil {
 			return t.fail(err, "read the secret request")
 		}
+		// Every path that does not dispatch releases the claim for a
+		// retry (Commit runs once: after a dispatch this is a no-op).
+		defer func() {
+			if err := claim.Commit(false); err != nil {
+				t.Log.Error("mcp: release a secret request", "error", err, "request_id", in.SecretsFrom)
+			}
+		}()
 		if fail := checkFill(in, fill); fail != nil {
 			return fail
 		}
@@ -369,16 +377,30 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	// The whole call stays within one wait: the stored-secrets read above
 	// came out of it.
 	bound := max(t.Wait-time.Since(start), time.Second)
+	var usedErr error
 	rec, fail := t.dispatchWithin(ctx, userID, in.ServerID, command.TypeAppSave, "save app", bound,
 		func(ctx context.Context, o appuc.Observer) (string, error) {
+			if claim == nil {
+				return t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			}
+			// Renew the claim right before dispatching: a save whose claim
+			// lapsed (and may be another's now) sends nothing.
+			if err := claim.Hold(ctx); err != nil {
+				return "", err
+			}
 			requestID, err := t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
 			// Once dispatched, the request is used (its ciphertexts went to
-			// the agent); a save refused before leaves it for a retry.
-			if cerr := commit(err == nil); cerr != nil {
-				t.Log.Error("mcp: mark a secret request used", "error", cerr, "request_id", in.SecretsFrom)
+			// the agent); a save refused before is released by the defer.
+			if err == nil {
+				usedErr = claim.Commit(true)
 			}
 			return requestID, err
 		})
+	if usedErr != nil {
+		t.Log.Error("mcp: mark a secret request used", "error", usedErr, "request_id", in.SecretsFrom)
+		return webmcp.ErrorText("the save was sent, but the secret request " + in.SecretsFrom +
+			" could not be marked used; do not reuse it: check the app with get_app_status, and ask again with request_secrets if needed")
+	}
 	if fail != nil {
 		return withSecretHint(fail, secrets)
 	}
@@ -589,11 +611,7 @@ func (t *tools) readApp(ctx context.Context, userID, serverID, appID, what strin
 	case !res.Success:
 		return command.GetAppResponse{}, model.Rejected("could not read " + what + ": " + res.Err().Error())
 	}
-	got, fail := decodeApp(res.Payload)
-	if fail != nil {
-		return command.GetAppResponse{}, model.Rejected(fail.Content[0].(*sdk.TextContent).Text)
-	}
-	return got, nil
+	return decodeApp(res.Payload)
 }
 
 // secretNames are the variables a save treats as secrets: those it marks

@@ -21,6 +21,7 @@ type Querier interface {
 	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
 	ClaimEnrollment(ctx context.Context, arg ClaimEnrollmentParams) (int64, error)
 	ClaimRollout(ctx context.Context, arg ClaimRolloutParams) (int64, error)
+	ClaimSecretRequest(ctx context.Context, arg ClaimSecretRequestParams) (int64, error)
 	// A live key (the partial unique index) inserts nothing (0 rows).
 	ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateInstanceParams) (int64, error)
 	// Done, unless the scope was extended since the worker read it (0 rows: it
@@ -89,7 +90,7 @@ type Querier interface {
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
-	ExpireSecretRequests(ctx context.Context, arg ExpireSecretRequestsParams) (int64, error)
+	ExpireSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
 	// rollout ended or a stop was requested (it would end stopped, losing the
 	// extension).
@@ -160,6 +161,7 @@ type Querier interface {
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
 	HasAnyServer(ctx context.Context) (bool, error)
+	HoldSecretRequest(ctx context.Context, arg HoldSecretRequestParams) (int64, error)
 	// Access tokens (access_tokens): login sessions, personal access tokens
 	// (kind pat) and OAuth server tokens (kind oauth), hashed at rest. Liveness
 	// (revoked/expired) is evaluated in Go, not SQL, so list/get return raw rows.
@@ -339,6 +341,7 @@ type Querier interface {
 	// at once; a time parks a rollout that waits on a server until the next poll
 	// is due, so the claimable list (LIMIT) does not fill with waiting ones.
 	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
+	ReleaseSecretRequest(ctx context.Context, arg ReleaseSecretRequestParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)
 	ReplaceEnrollmentCode(ctx context.Context, arg ReplaceEnrollmentCodeParams) (int64, error)

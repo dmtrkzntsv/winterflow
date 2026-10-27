@@ -34,8 +34,20 @@ func (pgsqlQuerier) UseSecretRequest(ctx context.Context, db backend.DBTX, p use
 	return pgsqlgen.New(db).UseSecretRequest(ctx, pgsqlgen.UseSecretRequestParams(p))
 }
 
-func (pgsqlQuerier) ExpireSecretRequests(ctx context.Context, db backend.DBTX, p expireParams) (int64, error) {
-	return pgsqlgen.New(db).ExpireSecretRequests(ctx, pgsqlgen.ExpireSecretRequestsParams(p))
+func (pgsqlQuerier) ClaimSecretRequest(ctx context.Context, db backend.DBTX, p claimParams) (int64, error) {
+	return pgsqlgen.New(db).ClaimSecretRequest(ctx, pgsqlgen.ClaimSecretRequestParams(p))
+}
+
+func (pgsqlQuerier) HoldSecretRequest(ctx context.Context, db backend.DBTX, p holdParams) (int64, error) {
+	return pgsqlgen.New(db).HoldSecretRequest(ctx, pgsqlgen.HoldSecretRequestParams(p))
+}
+
+func (pgsqlQuerier) ReleaseSecretRequest(ctx context.Context, db backend.DBTX, p releaseParams) (int64, error) {
+	return pgsqlgen.New(db).ReleaseSecretRequest(ctx, pgsqlgen.ReleaseSecretRequestParams(p))
+}
+
+func (pgsqlQuerier) ExpireSecretRequests(ctx context.Context, db backend.DBTX, now *types.DateTime) (int64, error) {
+	return pgsqlgen.New(db).ExpireSecretRequests(ctx, now)
 }
 
 func (pgsqlQuerier) PruneSecretRequests(ctx context.Context, db backend.DBTX, cutoff *types.DateTime) (int64, error) {

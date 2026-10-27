@@ -2,20 +2,18 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	webmcp "winterflow/internal/app/web/mcp"
-	"winterflow/internal/domain/model"
 )
 
 type requestSecretsInput struct {
 	ServerID string            `json:"server_id" jsonschema:"the server the app runs on, from list_servers"`
 	AppID    string            `json:"app_id,omitempty" jsonschema:"the app, from list_apps; omit for a new app"`
-	Names    []string          `json:"names" jsonschema:"the secret variables to ask for (at most 32), e.g. API_KEY; for an existing app each must be one of its secret variables"`
+	Names    []string          `json:"names" jsonschema:"the secret variables to ask for (at most 32), e.g. API_KEY; the save that uses the request (secrets_from) must declare each as a secret"`
 	Notes    map[string]string `json:"notes,omitempty" jsonschema:"an optional note per name, shown beside its field (at most 500 bytes each), e.g. where to find the value"`
 	Message  string            `json:"message,omitempty" jsonschema:"an optional message shown above the fields (at most 2000 bytes)"`
 }
@@ -73,36 +71,4 @@ func (t *tools) getSecretRequest(ctx context.Context, in secretRequestInput) *sd
 	return webmcp.JSONResult(map[string]any{
 		"status": req.Status, "names": req.Names, "expires_at": req.ExpiresAt.UTC().Format(time.RFC3339),
 	})
-}
-
-// SecretVariables reports an existing app's secret variables: the ones it
-// stores as secrets and the ones its compose files declare encrypted (read
-// from the agent, bounded like the keep check's read). An app the API does
-// not list on serverID is a new one.
-func (t *tools) SecretVariables(ctx context.Context, userID, serverID, appID string) (map[string]bool, bool, error) {
-	if t.AppCatalog != nil {
-		app, err := t.AppCatalog.GetApp(ctx, appID)
-		switch {
-		case errors.Is(err, model.ErrAppNotFound), err == nil && app.ServerID != serverID:
-			return nil, false, nil
-		case err != nil:
-			return nil, false, err
-		}
-	}
-	got, err := t.readApp(ctx, userID, serverID, appID, "the app's secret variables")
-	if err != nil {
-		return nil, false, err
-	}
-	names := map[string]bool{}
-	for _, v := range got.App.Variables {
-		if v.Encrypted {
-			names[v.ItemName()] = true
-		}
-	}
-	for _, v := range got.DeclaredVariables {
-		if v.Encrypted {
-			names[v.Name] = true
-		}
-	}
-	return names, true, nil
 }

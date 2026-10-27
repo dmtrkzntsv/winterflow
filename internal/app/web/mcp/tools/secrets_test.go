@@ -1,10 +1,14 @@
 package tools_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/db/dbtest"
@@ -107,29 +111,76 @@ func TestRequestSecretsLink(t *testing.T) {
 	}
 }
 
-// TestRequestSecretsExistingApp: an existing app's request names only its
-// secret variables, read from the agent.
+// TestRequestSecretsExistingApp: a request for an existing app may name a
+// secret the app does not have yet, and needs no agent: the save that uses
+// it is the binding check.
 func TestRequestSecretsExistingApp(t *testing.T) {
 	e := newEnv(t, nil)
 	alice := e.newUser(t, "alice@example.test")
-	s := e.session(t, alice)
 	var saved struct {
 		Result command.SaveAppResponse `json:"result"`
 	}
-	ok(t, s, "save_app", map[string]any{"server_id": alice.serverID, "name": "web",
+	ok(t, e.session(t, alice), "save_app", map[string]any{"server_id": alice.serverID, "name": "web",
 		"files": []map[string]any{{"name": "compose.yml", "content": compose}}, "draft": true}, &saved)
-	appID := saved.Result.AppID
-	e.agent.on(command.TypeAppGet, func(json.RawMessage) reply {
-		return reply{Payload: command.GetAppResponse{App: command.AppPayload{
-			AppID: appID, Config: []byte(`{}`), Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(compose)}},
-			Variables: []command.ContentItem{{Name: "TOKEN", Content: []byte("<encrypted>"), Encrypted: true}},
-		}}}
-	})
-	text, isErr := call(t, s, "request_secrets", map[string]any{"server_id": alice.serverID, "app_id": appID, "names": []string{"OTHER"}})
-	if !isErr || !strings.Contains(text, "OTHER is not a secret variable") {
-		t.Fatalf("an undeclared name = %q (isError %v)", text, isErr)
+	before := e.agent.total()
+	askSecrets(t, e, alice, map[string]any{"app_id": saved.Result.AppID, "names": []string{"NEW_SECRET"}})
+	if n := e.agent.total() - before; n != 0 {
+		t.Fatalf("request_secrets sent the agent %d commands", n)
 	}
-	askSecrets(t, e, alice, map[string]any{"app_id": appID, "names": []string{"TOKEN"}})
+}
+
+// TestSaveAppSecretsFromConcurrent: two saves racing with one secrets_from
+// send the agent one app.save; the other is told the request is in use.
+func TestSaveAppSecretsFromConcurrent(t *testing.T) {
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	storedToken(e)
+	// The keep check's app.get holds the first save (and its claim) while
+	// the second asks.
+	e.agent.delay(command.TypeAppGet, 300*time.Millisecond)
+	asked, raw := askSecrets(t, e, alice, map[string]any{"names": []string{"API_KEY"}})
+	e.submit(t, alice, raw, map[string]string{"API_KEY": "key-1"})
+	args := map[string]any{"server_id": alice.serverID, "app_id": "app-1", "name": "web", "secrets_from": asked.RequestID,
+		"files":     []map[string]any{{"name": "compose.yml", "content": secretCompose}},
+		"variables": []map[string]any{{"name": "TOKEN", "value": "<encrypted>", "encrypted": true}}}
+	type answer struct {
+		text  string
+		isErr bool
+	}
+	answers := make(chan answer, 2)
+	for _, s := range []*sdk.ClientSession{e.session(t, alice), e.session(t, alice)} {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			res, err := s.CallTool(ctx, &sdk.CallToolParams{Name: "save_app", Arguments: args})
+			if err != nil {
+				answers <- answer{err.Error(), true}
+				return
+			}
+			answers <- answer{res.Content[0].(*sdk.TextContent).Text, res.IsError}
+		}()
+	}
+	var oks, inUse int
+	for range 2 {
+		a := <-answers
+		switch {
+		case !a.isErr:
+			oks++
+		case strings.Contains(a.text, "already being used"):
+			inUse++
+		default:
+			t.Errorf("unexpected answer: %s", a.text)
+		}
+	}
+	if oks != 1 || inUse != 1 {
+		t.Fatalf("%d saves succeeded and %d were told it is in use, want 1 and 1", oks, inUse)
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 1 {
+		t.Fatalf("the agent received %d saves, want 1", n)
+	}
+	if st := secretStatus(t, e, alice, asked.RequestID); st != "used" {
+		t.Fatalf("status = %s", st)
+	}
 }
 
 func TestSaveAppSecretsFrom(t *testing.T) {

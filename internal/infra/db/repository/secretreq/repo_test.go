@@ -86,31 +86,81 @@ func TestLifecycle(t *testing.T) {
 		t.Fatalf("submitted = %+v", got)
 	}
 
-	used := sub.Add(time.Minute)
-	if ok, err := r.MarkUsed(ctx, id, used); err != nil || !ok {
+	claimAt := sub.Add(time.Minute)
+	if ok, err := r.Claim(ctx, id, "c-1", claimAt, claimAt.Add(2*time.Minute)); err != nil || !ok {
+		t.Fatalf("claim = %v, %v", ok, err)
+	}
+	// A live claim is not taken again; a release frees it.
+	if ok, err := r.Claim(ctx, id, "c-2", claimAt, claimAt.Add(2*time.Minute)); err != nil || ok {
+		t.Fatalf("second claim = %v, %v", ok, err)
+	}
+	got, _ = r.Get(ctx, org, id)
+	if got.Status != model.SecretClaimed || got.ClaimedUntil == nil || !got.ClaimedUntil.Equal(claimAt.Add(2*time.Minute)) {
+		t.Fatalf("claimed = %+v", got)
+	}
+	if ok, err := r.Release(ctx, id, "c-2"); err != nil || ok {
+		t.Fatalf("release by another claim = %v, %v", ok, err)
+	}
+	if ok, err := r.Release(ctx, id, "c-1"); err != nil || !ok {
+		t.Fatalf("release = %v, %v", ok, err)
+	}
+	if got, _ = r.Get(ctx, org, id); got.Status != model.SecretSubmitted || got.ClaimedUntil != nil {
+		t.Fatalf("released = %+v", got)
+	}
+	// A lapsed claim is taken over; its old holder can neither hold nor use it.
+	if ok, err := r.Claim(ctx, id, "c-3", claimAt, claimAt.Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("claim = %v, %v", ok, err)
+	}
+	later := claimAt.Add(time.Minute)
+	if ok, err := r.Claim(ctx, id, "c-4", later, later.Add(2*time.Minute)); err != nil || !ok {
+		t.Fatalf("claim after the lapse = %v, %v", ok, err)
+	}
+	if ok, err := r.Hold(ctx, id, "c-3", later.Add(time.Hour)); err != nil || ok {
+		t.Fatalf("hold of a lost claim = %v, %v", ok, err)
+	}
+	if ok, err := r.MarkUsed(ctx, id, "c-3", later); err != nil || ok {
+		t.Fatalf("use by a lost claim = %v, %v", ok, err)
+	}
+	if ok, err := r.Hold(ctx, id, "c-4", later.Add(3*time.Minute)); err != nil || !ok {
+		t.Fatalf("hold = %v, %v", ok, err)
+	}
+
+	used := later.Add(time.Second)
+	if ok, err := r.MarkUsed(ctx, id, "c-4", used); err != nil || !ok {
 		t.Fatalf("use = %v, %v", ok, err)
 	}
-	if ok, err := r.MarkUsed(ctx, id, used); err != nil || ok {
+	if ok, err := r.MarkUsed(ctx, id, "c-4", used); err != nil || ok {
 		t.Fatalf("second use = %v, %v", ok, err)
 	}
 	got, _ = r.Get(ctx, org, id)
-	if got.Status != model.SecretUsed || got.Ciphertexts != nil || got.UsedAt == nil || got.EndedAt == nil || !got.EndedAt.Equal(used) {
+	if got.Status != model.SecretUsed || got.Ciphertexts != nil || got.UsedAt == nil || got.EndedAt == nil ||
+		!got.EndedAt.Equal(used) || got.ClaimedUntil != nil {
 		t.Fatalf("used = %+v", got)
 	}
 }
 
 func TestExpireAndPrune(t *testing.T) {
 	r, ctx := open(t), context.Background()
-	pending, submitted, fresh := dbtest.ID(10), dbtest.ID(11), dbtest.ID(12)
+	pending, submitted, fresh, held := dbtest.ID(10), dbtest.ID(11), dbtest.ID(12), dbtest.ID(13)
 	create(t, r, pending, "h-pending", "", t0)
 	create(t, r, submitted, "h-submitted", "", t0)
 	create(t, r, fresh, "h-fresh", "", t0.Add(30*time.Hour))
-	if ok, err := r.Submit(ctx, submitted, map[string]string{"API_KEY": "c"}, t0.Add(time.Hour), t0.Add(25*time.Hour)); err != nil || !ok {
-		t.Fatalf("submit = %v, %v", ok, err)
+	create(t, r, held, "h-held", "", t0)
+	for _, id := range []string{submitted, held} {
+		if ok, err := r.Submit(ctx, id, map[string]string{"API_KEY": "c"}, t0.Add(time.Hour), t0.Add(25*time.Hour)); err != nil || !ok {
+			t.Fatalf("submit = %v, %v", ok, err)
+		}
+	}
+	// A save holds this one across its deadline: it is not expired under it.
+	if ok, err := r.Claim(ctx, held, "c", t0.Add(25*time.Hour-time.Minute), t0.Add(26*time.Hour+30*time.Minute)); err != nil || !ok {
+		t.Fatalf("claim = %v, %v", ok, err)
 	}
 	now := t0.Add(26 * time.Hour)
 	if n, err := r.Expire(ctx, now); err != nil || n != 2 {
 		t.Fatalf("expire = %d, %v", n, err)
+	}
+	if got, _ := r.Get(ctx, org, held); got.Status != model.SecretClaimed {
+		t.Fatalf("held = %+v", got)
 	}
 	got, _ := r.Get(ctx, org, submitted)
 	if got.Status != model.SecretExpired || got.Ciphertexts != nil || got.EndedAt == nil || !got.EndedAt.Equal(now) {
@@ -121,6 +171,10 @@ func TestExpireAndPrune(t *testing.T) {
 	}
 	if n, err := r.Prune(ctx, now); err != nil || n != 0 {
 		t.Fatalf("prune at the end = %d, %v", n, err)
+	}
+	// Once the claim lapses, the sweep expires it too.
+	if n, err := r.Expire(ctx, t0.Add(27*time.Hour)); err != nil || n != 1 {
+		t.Fatalf("expire after the lapse = %d, %v", n, err)
 	}
 	if n, err := r.Prune(ctx, now.Add(time.Second)); err != nil || n != 2 {
 		t.Fatalf("prune after = %d, %v", n, err)

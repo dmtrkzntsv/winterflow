@@ -54,16 +54,6 @@ func (apps) GetApp(_ context.Context, appID string) (model.App, error) {
 	return model.App{}, model.ErrAppNotFound
 }
 
-// appSecrets: app-1 exists with the secret variables API_KEY and DB_PASSWORD.
-type appSecrets struct{}
-
-func (appSecrets) SecretVariables(_ context.Context, _, _, appID string) (map[string]bool, bool, error) {
-	if appID == "app-1" {
-		return map[string]bool{"API_KEY": true, "DB_PASSWORD": true}, true, nil
-	}
-	return nil, false, nil
-}
-
 // clock is a settable now.
 type clock struct {
 	mu  sync.Mutex
@@ -90,7 +80,7 @@ func setup(t *testing.T) (*secretreq.UseCase, *clock) {
 	}
 	c := &clock{now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
 	return secretreq.New(secretreq.Deps{Repo: repo, Orgs: orgs{alice: orgA, bob: orgB}, Servers: servers{},
-		Apps: apps{}, AppSecrets: appSecrets{}, Now: c.Now}), c
+		Apps: apps{}, Now: c.Now}), c
 }
 
 // request creates alice's request for names on her server (app-1 when app).
@@ -135,7 +125,6 @@ func TestCreateValidatesNames(t *testing.T) {
 		{"note for another name", []string{"A"}, map[string]string{"B": "x"}, "", nil, "not in names"},
 		{"long note", []string{"A"}, map[string]string{"A": strings.Repeat("x", 501)}, "", nil, "at most 500"},
 		{"long message", []string{"A"}, nil, strings.Repeat("x", 2001), nil, "at most 2000"},
-		{"not a secret of the app", []string{"API_KEY", "OTHER"}, nil, "", &app, "OTHER is not a secret variable"},
 		{"invalid app id", []string{"A"}, nil, "", ptr("../x"), "invalid app_id"},
 	} {
 		_, _, err := u.Create(ctx, alice, serverA, c.appID, c.names, c.notes, c.msg)
@@ -155,8 +144,10 @@ func TestCreateValidatesNames(t *testing.T) {
 	if !strings.HasPrefix(raw, "wfx_") || len(raw) < 4+43 || req.Status != model.SecretPending || req.AppID != newApp {
 		t.Fatalf("created %+v, token %q", req, raw)
 	}
-	if _, _, err := u.Create(ctx, alice, serverA, &app, []string{"API_KEY"}, nil, ""); err != nil {
-		t.Fatalf("a declared secret of the app: %v", err)
+	// An existing app's request may name a secret it does not have yet:
+	// the save that uses the request is the binding check.
+	if _, _, err := u.Create(ctx, alice, serverA, &app, []string{"API_KEY", "NEW_SECRET"}, nil, ""); err != nil {
+		t.Fatalf("a new secret of an existing app: %v", err)
 	}
 }
 
@@ -287,17 +278,34 @@ func TestConsume(t *testing.T) {
 	if _, _, err := u.Consume(ctx, alice, serverA, "app-1", "not-an-id"); !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("consume of a bad id = %v", err)
 	}
-	got, commit, err := u.Consume(ctx, alice, serverA, "app-1", req.ID)
+	got, claim, err := u.Consume(ctx, alice, serverA, "app-1", req.ID)
 	if err != nil || got["API_KEY"] != ct {
 		t.Fatalf("consume = %v, %v", got, err)
 	}
-	if err := commit(false); err != nil {
+	// Held by one save, it is refused to another and reads submitted.
+	if _, _, err := u.Consume(ctx, alice, serverA, "app-1", req.ID); err == nil || !strings.Contains(err.Error(), "already being used") {
+		t.Fatalf("consume while claimed = %v", err)
+	}
+	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretSubmitted {
+		t.Fatalf("claimed reads %s", r.Status)
+	}
+	if err := claim.Commit(false); err != nil {
 		t.Fatal(err)
+	}
+	if err := claim.Commit(true); err != nil {
+		t.Fatalf("a second commit answers the first's result: %v", err)
 	}
 	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretSubmitted {
 		t.Fatalf("after a refused save = %s", r.Status)
 	}
-	if err := commit(true); err != nil {
+	_, claim, err = u.Consume(ctx, alice, serverA, "app-1", req.ID)
+	if err != nil {
+		t.Fatalf("consume after a release = %v", err)
+	}
+	if err := claim.Hold(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Commit(true); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretUsed {
@@ -305,6 +313,68 @@ func TestConsume(t *testing.T) {
 	}
 	if _, _, err := u.Consume(ctx, alice, serverA, "app-1", req.ID); err == nil || !strings.Contains(err.Error(), "used already") {
 		t.Fatalf("consume used = %v", err)
+	}
+}
+
+// TestClaimLapses: a crashed save's claim lapses after ClaimTTL; another
+// save takes the request, and the first can neither hold nor end it.
+func TestClaimLapses(t *testing.T) {
+	u, c := setup(t)
+	ctx := context.Background()
+	req, raw := request(t, u, false, "API_KEY")
+	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
+		t.Fatal(err)
+	}
+	_, first, err := u.Consume(ctx, alice, serverA, "", req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.add(secretreq.ClaimTTL)
+	_, second, err := u.Consume(ctx, alice, serverA, "", req.ID)
+	if err != nil {
+		t.Fatalf("consume after the claim lapsed = %v", err)
+	}
+	if err := first.Hold(ctx); err == nil || !strings.Contains(err.Error(), "already being used") {
+		t.Fatalf("the lapsed claim's hold = %v", err)
+	}
+	if err := first.Commit(true); err == nil || !strings.Contains(err.Error(), "claim was lost") {
+		t.Fatalf("the lapsed claim's commit = %v", err)
+	}
+	if err := second.Commit(true); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretUsed {
+		t.Fatalf("status = %s", r.Status)
+	}
+}
+
+// TestConcurrentConsume: of many saves racing for one request, one claims it.
+func TestConcurrentConsume(t *testing.T) {
+	u, _ := setup(t)
+	ctx := context.Background()
+	req, raw := request(t, u, false, "API_KEY")
+	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
+		t.Fatal(err)
+	}
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		claimed int
+	)
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, err := u.Consume(ctx, alice, serverA, "", req.ID); err == nil {
+				mu.Lock()
+				claimed++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if claimed != 1 {
+		t.Fatalf("%d saves claimed the request, want 1", claimed)
 	}
 }
 

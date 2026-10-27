@@ -257,22 +257,24 @@ type Rollout struct {
 }
 
 type SecretRequest struct {
-	ID          string
-	OrgID       string
-	ServerID    string
-	AppID       *string
-	CreatedBy   string
-	Names       string
-	Notes       string
-	Message     string
-	TokenHash   string
-	Status      string
-	Ciphertexts *string
-	CreatedAt   types.DateTime
-	ExpiresAt   types.DateTime
-	SubmittedAt *types.DateTime
-	UsedAt      *types.DateTime
-	EndedAt     *types.DateTime
+	ID           string
+	OrgID        string
+	ServerID     string
+	AppID        *string
+	CreatedBy    string
+	Names        string
+	Notes        string
+	Message      string
+	TokenHash    string
+	Status       string
+	Ciphertexts  *string
+	CreatedAt    types.DateTime
+	ExpiresAt    types.DateTime
+	SubmittedAt  *types.DateTime
+	UsedAt       *types.DateTime
+	EndedAt      *types.DateTime
+	ClaimID      *string
+	ClaimedUntil *types.DateTime
 }
 
 type Server struct {

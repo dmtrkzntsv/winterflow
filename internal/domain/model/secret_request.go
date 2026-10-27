@@ -10,6 +10,10 @@ const (
 	SecretPending SecretRequestStatus = "pending"
 	// SecretSubmitted holds the submitted ciphertexts until a save uses them.
 	SecretSubmitted SecretRequestStatus = "submitted"
+	// SecretClaimed: a save holds the request (until ClaimedUntil) while it
+	// checks and dispatches; no other save may use it meanwhile. A claim
+	// past its deadline reads as submitted.
+	SecretClaimed SecretRequestStatus = "claimed"
 	// SecretUsed: a save was dispatched with the ciphertexts (now deleted).
 	SecretUsed SecretRequestStatus = "used"
 	// SecretExpired: never submitted, or submitted and never used, in time.
@@ -38,13 +42,20 @@ type SecretRequest struct {
 	SubmittedAt *time.Time
 	UsedAt      *time.Time
 	EndedAt     *time.Time
+	// ClaimedUntil is a claimed request's claim deadline.
+	ClaimedUntil *time.Time
 }
 
 // StatusAt is the request's status at now: a pending or submitted request
 // past its deadline reads expired before the sweep marks it.
+// A claim past its deadline reads submitted (its save went away).
 func (r SecretRequest) StatusAt(now time.Time) SecretRequestStatus {
-	if (r.Status == SecretPending || r.Status == SecretSubmitted) && !now.Before(r.ExpiresAt) {
+	status := r.Status
+	if status == SecretClaimed && (r.ClaimedUntil == nil || !now.Before(*r.ClaimedUntil)) {
+		status = SecretSubmitted
+	}
+	if (status == SecretPending || status == SecretSubmitted) && !now.Before(r.ExpiresAt) {
 		return SecretExpired
 	}
-	return r.Status
+	return status
 }

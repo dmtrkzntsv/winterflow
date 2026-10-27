@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,20 +58,16 @@ const (
 	// 24 KiB).
 	MaxCiphertextBytes = 32 << 10
 
-	// commitTimeout bounds the write that marks a request used.
+	// commitTimeout bounds the write that ends or releases a claim.
 	commitTimeout = 30 * time.Second
+	// ClaimTTL is how long a save holds a claimed request: past the MCP
+	// wait (50 s) plus its margins, so a live save never loses its claim;
+	// a crashed one's lapses and the request reads submitted again.
+	ClaimTTL = 2 * time.Minute
 )
 
 // nameRE is the shape of a variable name compose interpolates.
 var nameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
-
-// AppSecrets reads an existing app's secret variables.
-type AppSecrets interface {
-	// SecretVariables reports the app's secret variables by name (stored
-	// as secrets, or declared encrypted in its compose files); found is
-	// false when the server has no such app (a new one).
-	SecretVariables(ctx context.Context, userID, serverID, appID string) (names map[string]bool, found bool, err error)
-}
 
 // Orgs resolves a user's organization.
 type Orgs interface {
@@ -94,9 +91,6 @@ type Deps struct {
 	Orgs    Orgs
 	Servers Servers
 	Apps    Apps
-	// AppSecrets, when set, checks that a request for an existing app
-	// names only its secret variables. Nil skips the check.
-	AppSecrets AppSecrets
 	// Now defaults to time.Now.
 	Now func() time.Time
 }
@@ -160,20 +154,6 @@ func (u *UseCase) Create(ctx context.Context, userID, serverID string, appID *st
 	}
 	if !owns {
 		return Request{}, "", fmt.Errorf("no such server in your organization: %w", model.ErrForbidden)
-	}
-	if app != "" && u.d.AppSecrets != nil {
-		secrets, found, err := u.d.AppSecrets.SecretVariables(ctx, userID, serverID, app)
-		if err != nil {
-			return Request{}, "", err
-		}
-		if found {
-			for _, n := range names {
-				if !secrets[n] {
-					return Request{}, "", rejected("%s is not a secret variable of the app: declare it in the "+
-						"compose file's x-winterflow.variables with encrypted: true and save the app first", n)
-				}
-			}
-		}
 	}
 	orgID, err := u.d.Orgs.PrimaryOrganizationID(ctx, userID)
 	if err != nil {
@@ -251,7 +231,10 @@ func (u *UseCase) Get(ctx context.Context, userID, id string) (Request, error) {
 	if err != nil {
 		return Request{}, err
 	}
-	req.Status = req.StatusAt(u.d.Now())
+	// A claimed request reads submitted: a save holds it for a moment.
+	if req.Status = req.StatusAt(u.d.Now()); req.Status == model.SecretClaimed {
+		req.Status = model.SecretSubmitted
+	}
 	req.Ciphertexts = nil
 	return req, nil
 }
@@ -348,11 +331,60 @@ func (u *UseCase) Submit(ctx context.Context, userID, raw string, ciphertexts ma
 	return nil
 }
 
-// Consume hands a save the ciphertexts of the caller's org's submitted
-// request id, for serverID and (when the request named one) appID. commit
-// records the save's fate: dispatched marks the request used and deletes
-// its ciphertexts; not dispatched leaves it submitted for a retry.
-func (u *UseCase) Consume(ctx context.Context, userID, serverID, appID, id string) (map[string]string, func(dispatched bool) error, error) {
+// errInUse refuses a request another save holds.
+var errInUse = model.Rejected("secrets_from: this secret request is already being used by another save; " +
+	"wait for that save, then check get_secret_request")
+
+// Claim is a save's hold on a submitted request: no other save may use
+// it until Commit (or ClaimTTL).
+type Claim struct {
+	u    *UseCase
+	ctx  context.Context
+	id   string
+	cid  string
+	once sync.Once
+	err  error
+}
+
+// Hold renews the claim right before dispatching; an error (the claim
+// lapsed and another save took the request) means do not dispatch.
+func (c *Claim) Hold(ctx context.Context) error {
+	ok, err := c.u.d.Repo.Hold(ctx, c.id, c.cid, c.u.d.Now().Add(ClaimTTL))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errInUse
+	}
+	return nil
+}
+
+// Commit ends the claim once (later calls answer the first's result):
+// dispatched marks the request used and deletes its ciphertexts, else it
+// returns to submitted for a retry. A dispatched save whose claim was lost
+// is an error: another save may have used the request too.
+func (c *Claim) Commit(dispatched bool) error {
+	c.once.Do(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.ctx), commitTimeout)
+		defer cancel()
+		var ok bool
+		if dispatched {
+			ok, c.err = c.u.d.Repo.MarkUsed(ctx, c.id, c.cid, c.u.d.Now())
+		} else {
+			ok, c.err = c.u.d.Repo.Release(ctx, c.id, c.cid)
+		}
+		if c.err == nil && !ok && dispatched {
+			c.err = errors.New("the secret request's claim was lost before it could be marked used")
+		}
+	})
+	return c.err
+}
+
+// Consume claims the caller's org's submitted request id for a save on
+// serverID (and appID, when the request named one) and hands it the
+// ciphertexts. The save must Commit the claim on every path: dispatched
+// or not.
+func (u *UseCase) Consume(ctx context.Context, userID, serverID, appID, id string) (map[string]string, *Claim, error) {
 	if !validID(id) {
 		return nil, nil, noRequest
 	}
@@ -373,24 +405,27 @@ func (u *UseCase) Consume(ctx context.Context, userID, serverID, appID, id strin
 	case req.AppID != "" && req.AppID != appID:
 		return nil, nil, rejected("secrets_from: the request is for another app (%s)", req.AppID)
 	}
-	switch req.StatusAt(u.d.Now()) {
+	now := u.d.Now()
+	switch req.StatusAt(now) {
 	case model.SecretPending:
 		return nil, nil, rejected("secrets_from: the user has not submitted the values yet; check with get_secret_request")
 	case model.SecretUsed:
 		return nil, nil, rejected("secrets_from: the request was used already; ask again with request_secrets")
 	case model.SecretExpired:
 		return nil, nil, rejected("secrets_from: the request expired; ask again with request_secrets")
+	case model.SecretClaimed:
+		return nil, nil, errInUse
 	}
-	commit := func(dispatched bool) error {
-		if !dispatched {
-			return nil
-		}
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), commitTimeout)
-		defer cancel()
-		_, err := u.d.Repo.MarkUsed(cctx, req.ID, u.d.Now())
-		return err
+	c := &Claim{u: u, ctx: ctx, id: req.ID, cid: util.GenerateID()}
+	ok, err := u.d.Repo.Claim(ctx, req.ID, c.cid, now, now.Add(ClaimTTL))
+	if err != nil {
+		return nil, nil, err
 	}
-	return req.Ciphertexts, commit, nil
+	if !ok {
+		// Another save claimed it (or it ended) since the read.
+		return nil, nil, errInUse
+	}
+	return req.Ciphertexts, c, nil
 }
 
 // Sweep expires the requests past their deadline (deleting their

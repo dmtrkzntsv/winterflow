@@ -66,3 +66,23 @@ func TestAllowFailsOpenAtCapacity(t *testing.T) {
 		t.Fatalf("map grew past cap: %d", len(l.visitors))
 	}
 }
+
+func TestMiddlewareWithUsesDenyAndRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		rps  float64
+		want string
+	}{{5, "1"}, {0.2, "5"}, {0.05, "20"}, {0, "60"}} {
+		l := New(tc.rps, 1)
+		mw := l.MiddlewareWith(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTeapot)
+		})(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		_ = serve(t, mw, "203.0.113.7:1")
+		w := serve(t, mw, "203.0.113.7:1")
+		if w.Code != http.StatusTeapot {
+			t.Fatalf("rps %v: status %d, want the deny handler's", tc.rps, w.Code)
+		}
+		if got := w.Header().Get("Retry-After"); got != tc.want {
+			t.Errorf("rps %v: Retry-After %q, want %q", tc.rps, got, tc.want)
+		}
+	}
+}

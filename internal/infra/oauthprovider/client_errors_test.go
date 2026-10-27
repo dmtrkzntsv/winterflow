@@ -212,3 +212,61 @@ func TestDiscover_AllowsLoopbackHTTP(t *testing.T) {
 		t.Fatalf("loopback http must stay allowed for development: %v", err)
 	}
 }
+
+func TestDiscover_RefusesAPlaintextIssuerBeforeAnyRequest(t *testing.T) {
+	var hits int
+	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hits++
+		return nil, http.ErrHandlerTimeout
+	})}
+	for _, iss := range []string{"http://id.example.com", "http://10.0.0.5/realms/x", "ftp://id.example.com", "https://u:p@id.example.com", "https://id.example.com?x=1"} {
+		_, err := oauthprovider.NewClient(issuerFor(iss), hc).Discover(context.Background())
+		if err == nil {
+			t.Errorf("issuer %q: discovery must be refused", iss)
+		}
+	}
+	if hits != 0 {
+		t.Fatalf("a refused issuer must not be fetched, got %d requests", hits)
+	}
+}
+
+func TestValidateIssuerURL(t *testing.T) {
+	for _, ok := range []string{"https://id.example.com", "https://id.example.com/realms/home", "http://localhost:9000", "http://[::1]:9000/x"} {
+		if err := oauthprovider.ValidateIssuerURL(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "id.example.com", "http://id.example.com", "http://localhost.evil.com", "https://id.example.com#f"} {
+		if err := oauthprovider.ValidateIssuerURL(bad); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}
+
+func TestDiscover_RefusesARedirectToPlainHTTP(t *testing.T) {
+	// The issuer itself is loopback http (allowed); it redirects off loopback
+	// over plain http, which must not be followed.
+	var followed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://id.example.com/.well-known/openid-configuration", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	base := http.DefaultTransport
+	hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "id.example.com" {
+			followed = true
+			return nil, http.ErrHandlerTimeout
+		}
+		return base.RoundTrip(r)
+	})}
+	if _, err := oauthprovider.NewClient(issuerFor(srv.URL), hc).Discover(context.Background()); err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
+		t.Fatalf("want a refused redirect, got %v", err)
+	}
+	if followed {
+		t.Fatal("the plaintext redirect was followed")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

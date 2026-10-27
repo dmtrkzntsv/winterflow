@@ -86,10 +86,15 @@ func signInProvidersFromConfig(cfg *config.ServerConfig, log *logger.Logger) (st
 	}
 	if cfg.IsAuthSupported(model.ProviderOIDC) {
 		o := cfg.GetOIDCAuth()
-		out = append(out, oauthlogin.Provider{ID: model.ProviderOIDC, Name: o.Name, Client: oauthprovider.NewClient(oauthprovider.Issuer{
-			ID: model.ProviderOIDC, IssuerURL: o.Issuer, ClientID: o.ClientID, ClientSecret: oauthprovider.StaticSecret(o.ClientSecret),
-			Scopes: []string{"openid", "email", "profile"}, UsePKCE: true, TrustEmail: false,
-		}, hc)})
+		if err := oauthprovider.ValidateIssuerURL(o.Issuer); err != nil {
+			log.Error("OpenID Connect sign-in disabled: AUTH_OIDC_ISSUER must be an https URL (or http on localhost)",
+				"issuer", o.Issuer, "error", err)
+		} else {
+			out = append(out, oauthlogin.Provider{ID: model.ProviderOIDC, Name: o.Name, Client: oauthprovider.NewClient(oauthprovider.Issuer{
+				ID: model.ProviderOIDC, IssuerURL: o.Issuer, ClientID: o.ClientID, ClientSecret: oauthprovider.StaticSecret(o.ClientSecret),
+				Scopes: []string{"openid", "email", "profile"}, UsePKCE: true, TrustEmail: false,
+			}, hc)})
+		}
 	}
 	return origin, out
 }

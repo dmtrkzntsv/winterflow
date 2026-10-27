@@ -59,8 +59,13 @@ func (s *Server) registerRoutes() {
 	// secret link page's routes share it (per user, too).
 	mcpUserLimiter := userlimit.New(10, 30)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
-		EnrollStartLimit: enrollStartLimiter.Middleware, OAuthRegisterLimit: oauthRegisterLimiter.Middleware,
-		UserLimit: mcpUserLimiter.Middleware}
+		EnrollStartLimit: enrollStartLimiter.Middleware,
+		// The OAuth endpoints' clients read JSON errors cross-origin, so
+		// their limiters answer in that format (the token endpoint shares
+		// the auth bucket).
+		OAuthRegisterLimit: oauthRegisterLimiter.MiddlewareWith(hauthserver.TooManyRegistrations),
+		OAuthTokenLimit:    authLimiter.MiddlewareWith(hauthserver.TooManyTokenRequests),
+		UserLimit:          mcpUserLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to

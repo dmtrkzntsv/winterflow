@@ -12,6 +12,8 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -63,14 +65,32 @@ func (k jwk) publicKey() (crypto.PublicKey, error) {
 // genuine rotation always goes through immediately.
 const minJWKSRefresh = time.Minute
 
-// keyFor resolves the signing key for kid, re-fetching the JWKS once on a miss.
+// The fetched key set is trusted for the response's Cache-Control max-age,
+// clamped to [minJWKSLifetime, maxJWKSLifetime] (defaultJWKSLifetime without
+// one), then fetched again, so a key the issuer removed (a rotated-out or
+// compromised one) stops verifying within that lifetime.
+const (
+	minJWKSLifetime     = 5 * time.Minute
+	defaultJWKSLifetime = time.Hour
+	maxJWKSLifetime     = 24 * time.Hour
+)
+
+// keyFor resolves the signing key for kid from a key set no older than its
+// lifetime, re-fetching it once it expired and (throttled) on a miss. A
+// failed refetch of an expired set fails the verification: an issuer
+// unreachable past the lifetime must not keep its old keys trusted.
 func (c *Client) keyFor(ctx context.Context, kid string) (crypto.PublicKey, error) {
 	c.mu.Lock()
-	if k, ok := c.keys[kid]; ok {
-		c.mu.Unlock()
-		return k, nil
+	now := c.now()
+	fresh := c.keys != nil && now.Before(c.keysUntil)
+	if fresh {
+		if k, ok := c.keys[kid]; ok {
+			c.mu.Unlock()
+			return k, nil
+		}
 	}
-	throttled := time.Since(c.lastMissAt) < minJWKSRefresh
+	// A miss in a fresh set is throttled; an expired set is always refetched.
+	throttled := fresh && now.Sub(c.lastMissAt) < minJWKSRefresh
 	c.mu.Unlock()
 	if throttled {
 		return nil, fmt.Errorf("%w: unknown kid %q", ErrInvalidToken, kid)
@@ -83,8 +103,33 @@ func (c *Client) keyFor(ctx context.Context, kid string) (crypto.PublicKey, erro
 	if k, ok := c.keys[kid]; ok {
 		return k, nil
 	}
-	c.lastMissAt = time.Now()
+	c.lastMissAt = c.now()
 	return nil, fmt.Errorf("%w: unknown kid %q", ErrInvalidToken, kid)
+}
+
+// jwksLifetime reads max-age from a Cache-Control header, clamped; no-store,
+// no-cache or max-age=0 take the minimum, an absent or unreadable one the
+// default.
+func jwksLifetime(cacheControl string) time.Duration {
+	life := defaultJWKSLifetime
+	for _, d := range strings.Split(cacheControl, ",") {
+		d = strings.ToLower(strings.TrimSpace(d))
+		switch {
+		case d == "no-store" || d == "no-cache":
+			return minJWKSLifetime
+		case strings.HasPrefix(d, "max-age="):
+			n, err := strconv.ParseInt(strings.Trim(strings.TrimPrefix(d, "max-age="), `"`), 10, 64)
+			if err != nil || n < 0 {
+				continue
+			}
+			if n > int64(maxJWKSLifetime/time.Second) {
+				life = maxJWKSLifetime
+			} else {
+				life = time.Duration(n) * time.Second
+			}
+		}
+	}
+	return min(max(life, minJWKSLifetime), maxJWKSLifetime)
 }
 
 func (c *Client) fetchJWKS(ctx context.Context) error {
@@ -121,8 +166,10 @@ func (c *Client) fetchJWKS(ctx context.Context) error {
 		}
 		keys[k.Kid] = pub
 	}
+	life := jwksLifetime(resp.Header.Get("Cache-Control"))
 	c.mu.Lock()
 	c.keys = keys
+	c.keysUntil = c.now().Add(life)
 	c.mu.Unlock()
 	return nil
 }

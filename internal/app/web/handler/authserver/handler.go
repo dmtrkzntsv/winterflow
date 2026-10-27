@@ -240,6 +240,24 @@ func (h *Handler) writeOAuthError(w http.ResponseWriter, err error) {
 	writeJSON(w, oe.Status, errorBody{Error: oe.Code, Description: oe.Description})
 }
 
+// TooManyTokenRequests is the token endpoint's rate-limit answer: RFC 6749's
+// JSON error (temporarily_unavailable, the code section 4.1.2.1 gives an
+// overloaded server), not cacheable, readable from any origin like every
+// other answer of the endpoint. The limiter has set Retry-After.
+func TooManyTokenRequests(w http.ResponseWriter, _ *http.Request) {
+	noStore(w)
+	writeJSON(w, http.StatusTooManyRequests, errorBody{Error: "temporarily_unavailable",
+		Description: "too many requests; retry after the Retry-After delay"})
+}
+
+// TooManyRegistrations is dynamic client registration's rate-limit answer,
+// in RFC 7591's error shape (error, error_description).
+func TooManyRegistrations(w http.ResponseWriter, _ *http.Request) {
+	noStore(w)
+	writeJSON(w, http.StatusTooManyRequests, errorBody{Error: "temporarily_unavailable",
+		Description: "too many client registrations; retry after the Retry-After delay"})
+}
+
 // AllowAnyOrigin marks a public endpoint's answer readable from any origin:
 // it carries no cookie-borne data, so credentials are never allowed.
 func AllowAnyOrigin(w http.ResponseWriter) {

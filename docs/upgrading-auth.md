@@ -9,8 +9,8 @@ plain email and password accounts beyond signing in again.
 
 Old JWT sessions are not read any more. After the upgrade every browser is
 sent to the login page once; the new session is a `wf_session` cookie kept in
-the database (30 days from last use, 90 at most), so "Sign out everywhere"
-and a password change now actually end other sessions.
+the database (30 days from last use, 90 at most), so signing out and "Sign
+out everywhere" now end sessions on the server, not only in the browser.
 
 Existing passwords keep working. A bcrypt hash is replaced by an argon2id
 one on its owner's next sign-in.

@@ -49,8 +49,9 @@ type env struct {
 var testLog = logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "contract"})
 
 // newEnv builds the stack the way BootstrapStandalone does (WireCore over an
-// in-memory bus + InProcessBridge), minus Docker, certs and ingress.
-func newEnv(t *testing.T) *env {
+// in-memory bus + InProcessBridge), minus Docker, certs and ingress. opts
+// adjust WireCore (a fake sign-in provider, say).
+func newEnv(t *testing.T, opts ...bootstrap.CoreOption) *env {
 	t.Helper()
 	cfg := config.NewServerConfig("standalone")
 	conn, err := db.Open(testLog, freshDB(t))
@@ -67,9 +68,9 @@ func newEnv(t *testing.T) *env {
 	b := membus.NewBus(testLog)
 	// The fake agent reports every 50 ms, so a rollout step's two healthy
 	// reports need not be 20 s apart, nor polled every 5 s.
-	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, bootstrap.WithRolloutTiming(rollouts.Timing{
+	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, append([]bootstrap.CoreOption{bootstrap.WithRolloutTiming(rollouts.Timing{
 		HealthSettle: 100 * time.Millisecond, HealthPoll: 50 * time.Millisecond,
-	}))
+	})}, opts...)...)
 	// Enrollment is distributed-only in production (BootstrapAPI); the
 	// suite wires it here so its routes are exercised.
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, deps.HubCertRepository, nil)

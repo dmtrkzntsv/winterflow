@@ -44,6 +44,13 @@ type Deps struct {
 	// registration, before the answer (standalone: auto-claim the embedded
 	// server into the user's org).
 	AfterSignIn func(ctx context.Context, userID string)
+	// Providers lists the configured sign-in providers; nil means none.
+	Providers ProviderLister
+}
+
+// ProviderLister is the slice of the provider sign-in usecase State needs.
+type ProviderLister interface {
+	Providers() []model.SignInProvider
 }
 
 type Handler struct {
@@ -52,32 +59,44 @@ type Handler struct {
 	users       UserStore
 	sessions    SessionStore
 	afterSignIn func(ctx context.Context, userID string)
+	providers   ProviderLister
 }
 
 func NewHandler(d *Deps) *Handler {
-	return &Handler{log: d.Logger, cfg: d.Cfg, users: d.Users, sessions: d.Sessions, afterSignIn: d.AfterSignIn}
+	return &Handler{log: d.Logger, cfg: d.Cfg, users: d.Users, sessions: d.Sessions, afterSignIn: d.AfterSignIn,
+		providers: d.Providers}
 }
 
 // maxUserAgent bounds the User-Agent stored with a session.
 const maxUserAgent = 256
 
-// signIn starts a session for userID: the cookie is set on w. The bool
-// reports success; on failure w already carries the error.
-func (h *Handler) signIn(w http.ResponseWriter, r *http.Request, userID string) bool {
+// SignIn starts a session for userID and sets its cookie on w, after
+// AfterSignIn (standalone: auto-claim the embedded server). Every sign-in
+// path (password, registration, a provider's callback) goes through it.
+func (h *Handler) SignIn(w http.ResponseWriter, r *http.Request, userID string) error {
 	ua := r.UserAgent()
 	if len(ua) > maxUserAgent {
 		ua = ua[:maxUserAgent]
 	}
 	raw, err := h.sessions.IssueSession(r.Context(), userID, ua)
 	if err != nil {
-		h.log.Error("issue session", "error", err, "user_id", userID)
-		webutil.ErrorStatus(w, http.StatusInternalServerError, "failed to start a session")
-		return false
+		return err
 	}
 	if h.afterSignIn != nil {
 		h.afterSignIn(r.Context(), userID)
 	}
 	authn.SetSessionCookie(w, raw, h.cfg.GetSecureCookies())
+	return nil
+}
+
+// signIn is SignIn answering its failure: the bool reports success; on
+// failure w already carries the error.
+func (h *Handler) signIn(w http.ResponseWriter, r *http.Request, userID string) bool {
+	if err := h.SignIn(w, r, userID); err != nil {
+		h.log.Error("issue session", "error", err, "user_id", userID)
+		webutil.ErrorStatus(w, http.StatusInternalServerError, "failed to start a session")
+		return false
+	}
 	return true
 }
 
@@ -263,32 +282,32 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "signed out", nil)
 }
 
-// Provider is a sign-in provider the login page offers a button for.
-type Provider struct {
-	ID   string `json:"id" enum:"google,apple,oidc"`
-	Name string `json:"name"`
-}
-
 // StateResponse is the data of GET /api/v1/auth/state: bootstrap is true on
 // a fresh (unclaimed) instance; providers lists the configured sign-in
-// providers; oauth_server reports whether MCP clients can connect by OAuth.
+// providers (a button each, linking to /auth/oauth/<id>/start);
+// oauth_server reports whether MCP clients can connect by OAuth.
 type StateResponse struct {
-	Bootstrap           bool       `json:"bootstrap"`
-	RegistrationEnabled bool       `json:"registration_enabled"`
-	Providers           []Provider `json:"providers"`
-	OAuthServer         bool       `json:"oauth_server"`
+	Bootstrap           bool                   `json:"bootstrap"`
+	RegistrationEnabled bool                   `json:"registration_enabled"`
+	Providers           []model.SignInProvider `json:"providers"`
+	OAuthServer         bool                   `json:"oauth_server"`
 }
 
 // State reports what the login/register pages need: whether this is a
-// fresh (unclaimed) instance and whether a registration would be accepted.
+// fresh (unclaimed) instance, whether a registration would be accepted and
+// which sign-in providers are configured.
 func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
 	open, fresh, err := h.registrationOpen(r.Context())
 	if err != nil {
 		webutil.Error(w, "failed to read auth state", nil)
 		return
 	}
-	// Sign-in providers and the authorization server are not wired yet.
+	providers := []model.SignInProvider{}
+	if h.providers != nil {
+		providers = append(providers, h.providers.Providers()...)
+	}
+	// The authorization server is not wired yet.
 	webutil.Success(w, "auth state", StateResponse{
-		Bootstrap: fresh, RegistrationEnabled: open, Providers: []Provider{},
+		Bootstrap: fresh, RegistrationEnabled: open, Providers: providers,
 	})
 }

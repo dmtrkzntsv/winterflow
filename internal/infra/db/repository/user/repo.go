@@ -27,6 +27,7 @@ type (
 	insertUserParams  = sqlitegen.InsertUserParams
 	accountParams     = sqlitegen.InsertConnectedAccountParams
 	accountKeyParams  = sqlitegen.GetConnectedAccountUserIDParams
+	identityParams    = sqlitegen.InsertIdentityParams
 	credentialsParams = sqlitegen.InsertCredentialsParams
 	passwordParams    = sqlitegen.UpdatePasswordParams
 	insertOrgParams   = sqlitegen.InsertOrganizationParams
@@ -44,6 +45,7 @@ type querier interface {
 	DeleteUser(ctx context.Context, db backend.DBTX, userID string) error
 	GetConnectedAccountUserID(ctx context.Context, db backend.DBTX, p accountKeyParams) (string, error)
 	InsertConnectedAccount(ctx context.Context, db backend.DBTX, p accountParams) error
+	InsertIdentity(ctx context.Context, db backend.DBTX, p identityParams) error
 	GetFirstConnectedAccountProvider(ctx context.Context, db backend.DBTX, userID string) (string, error)
 	InsertCredentials(ctx context.Context, db backend.DBTX, p credentialsParams) error
 	GetCredentialsByEmail(ctx context.Context, db backend.DBTX, email string) (credentialsRow, error)
@@ -449,6 +451,47 @@ func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, pw string) (m
 			return err
 		}
 		return r.localAccount(ctx, orgID, model.RoleOwner.Value(), user, email, hash, false)
+	})
+	if err != nil {
+		return model.User{}, err
+	}
+	return created(user), nil
+}
+
+// CreateProviderUser is a sign-in provider's registration: a passwordless
+// user named name, their own organization (owner) and the linked identity
+// id (its UserID is filled in), in one transaction. firstOnly makes it the
+// instance's claim step instead: refused with model.ErrNotBootstrap unless
+// there are no users yet, re-checked inside the transaction so two racing
+// first sign-ins have one winner.
+func (r *Repo) CreateProviderUser(ctx context.Context, name string, id model.Identity, firstOnly bool) (model.User, error) {
+	orgID := util.GenerateID()
+	user := newUser(name)
+	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
+		db := r.tx.Querier(ctx)
+		if firstOnly {
+			n, err := r.q.CountUsers(ctx, db)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				return model.ErrNotBootstrap
+			}
+		}
+		now := types.NewDateTime()
+		if err := r.q.InsertOrganization(ctx, db, insertOrgParams{OrganizationID: orgID, Name: name + "'s org", CreatedAt: now}); err != nil {
+			return err
+		}
+		if err := r.q.InsertUser(ctx, db, user); err != nil {
+			return err
+		}
+		if err := r.q.InsertOrganizationUser(ctx, db, membershipParams{OrganizationID: orgID, UserID: user.UserID, Role: model.RoleOwner.Value(), CreatedAt: now}); err != nil {
+			return err
+		}
+		return r.q.InsertIdentity(ctx, db, identityParams{
+			Provider: id.Provider, ExternalID: id.Subject, UserID: user.UserID,
+			Email: util.RefString(id.Email), CreatedAt: types.DateTime(id.CreatedAt),
+		})
 	})
 	if err != nil {
 		return model.User{}, err

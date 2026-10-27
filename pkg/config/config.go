@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -91,14 +92,20 @@ func (c *ServerConfig) GetAllowedOrigins() string {
 	return v
 }
 
-// IsAuthSupported reports whether an OPTIONAL sign-in provider is
-// configured, in either topology. The local email+password provider is
-// always on and never consulted here.
+// IsAuthSupported reports whether an OPTIONAL sign-in provider ("google",
+// "apple", "oidc") has every variable it needs, in either topology. The
+// local email+password provider is always on and never consulted here.
 func (c *ServerConfig) IsAuthSupported(a string) bool {
 	switch a {
 	case "google":
 		gcid, gcs := c.GetGoogleAuth()
 		return gcid != "" && gcs != ""
+	case "apple":
+		a := c.GetAppleAuth()
+		return a.ClientID != "" && a.TeamID != "" && a.KeyID != "" && a.PrivateKeyPath != ""
+	case "oidc":
+		o := c.GetOIDCAuth()
+		return o.Issuer != "" && o.ClientID != "" && o.ClientSecret != ""
 	}
 	return false
 }
@@ -117,6 +124,69 @@ func (c *ServerConfig) IsRegistrationEnabled() bool {
 
 func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
+}
+
+// AppleAuth is Sign in with Apple's configuration: the Services ID
+// (ClientID), the team and key ids, and the path of the .p8 key that signs
+// the client secret.
+type AppleAuth struct {
+	ClientID, TeamID, KeyID, PrivateKeyPath string
+}
+
+// GetAppleAuth reads AUTH_APPLE_CLIENT_ID, AUTH_APPLE_TEAM_ID,
+// AUTH_APPLE_KEY_ID and AUTH_APPLE_PRIVATE_KEY_PATH.
+func (c *ServerConfig) GetAppleAuth() AppleAuth {
+	return AppleAuth{
+		ClientID:       strings.TrimSpace(os.Getenv("AUTH_APPLE_CLIENT_ID")),
+		TeamID:         strings.TrimSpace(os.Getenv("AUTH_APPLE_TEAM_ID")),
+		KeyID:          strings.TrimSpace(os.Getenv("AUTH_APPLE_KEY_ID")),
+		PrivateKeyPath: strings.TrimSpace(os.Getenv("AUTH_APPLE_PRIVATE_KEY_PATH")),
+	}
+}
+
+// OIDCAuth is a generic OpenID Connect provider's configuration; Name is
+// its button label.
+type OIDCAuth struct {
+	Issuer, ClientID, ClientSecret, Name string
+}
+
+// GetOIDCAuth reads AUTH_OIDC_ISSUER, AUTH_OIDC_CLIENT_ID,
+// AUTH_OIDC_CLIENT_SECRET and AUTH_OIDC_NAME (default "SSO").
+func (c *ServerConfig) GetOIDCAuth() OIDCAuth {
+	name := strings.TrimSpace(os.Getenv("AUTH_OIDC_NAME"))
+	if name == "" {
+		name = "SSO"
+	}
+	return OIDCAuth{
+		Issuer:       strings.TrimSpace(os.Getenv("AUTH_OIDC_ISSUER")),
+		ClientID:     strings.TrimSpace(os.Getenv("AUTH_OIDC_CLIENT_ID")),
+		ClientSecret: os.Getenv("AUTH_OIDC_CLIENT_SECRET"),
+		Name:         name,
+	}
+}
+
+// GetPublicOrigin is WEB_URL as the instance's public origin
+// ("scheme://host[:port]"), for redirect URIs registered with a provider.
+// ok is false unless WEB_URL is an https origin with no path, query or
+// fragment (a trailing "/" is allowed), or the same over plain http on a
+// loopback host (local development).
+func (c *ServerConfig) GetPublicOrigin() (origin string, ok bool) {
+	u, err := url.Parse(strings.TrimSpace(os.Getenv("WEB_URL")))
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" ||
+		(u.Path != "" && u.Path != "/") {
+		return "", false
+	}
+	switch u.Scheme {
+	case "https":
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return "", false
+		}
+	default:
+		return "", false
+	}
+	return u.Scheme + "://" + u.Host, true
 }
 
 // GetJwtSecret is JWT_SECRET. Despite the name it no longer signs anything

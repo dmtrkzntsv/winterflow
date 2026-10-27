@@ -21,6 +21,7 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
+	oauthloginrepo "winterflow/internal/infra/db/repository/oauthlogin"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
@@ -120,6 +121,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		Cfg:                      cfg,
 		UserService:              r.user,
 		Authn:                    tokens,
+		SignIns:                  newSignIns(r.signIn, r.user, o, cfg, log),
 		ServerRepository:         r.server,
 		AppRepository:            r.app,
 		AppDomainRepository:      r.appDomain,
@@ -150,6 +152,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 type repos struct {
 	user          *userrepo.Repo
 	accessToken   *accesstokenrepo.Repo
+	signIn        *oauthloginrepo.Repo
 	server        *serverrepo.Repo
 	app           *apprepo.Repo
 	appDomain     *appdomainrepo.Repo
@@ -174,6 +177,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		return r, err
 	}
 	if r.accessToken, err = accesstokenrepo.New(conn.Tx, conn.Driver); err != nil {
+		return r, err
+	}
+	if r.signIn, err = oauthloginrepo.New(conn.Tx, conn.Driver); err != nil {
 		return r, err
 	}
 	if r.server, err = serverrepo.New(conn.Tx, conn.Driver, log); err != nil {

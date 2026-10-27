@@ -100,18 +100,50 @@ SELECT provider, external_id, user_id, email, created_at
 FROM user_connected_accounts
 WHERE user_id = ? AND provider = ?;
 
+-- The 'local' rows are the email+password accounts' own marker, not a
+-- linked provider: the identity lists and counts leave them out.
+
 -- name: ListIdentitiesByUser :many
 SELECT provider, external_id, user_id, email, created_at
 FROM user_connected_accounts
-WHERE user_id = ?
+WHERE user_id = ? AND provider <> 'local'
 ORDER BY created_at, provider;
 
 -- name: CountIdentitiesByUser :one
-SELECT COUNT(*) FROM user_connected_accounts WHERE user_id = ?;
+SELECT COUNT(*) FROM user_connected_accounts WHERE user_id = ? AND provider <> 'local';
 
 -- name: InsertIdentity :exec
 INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
 VALUES (?, ?, ?, ?, ?);
+
+-- name: InsertIdentityIfAbsent :execrows
+-- 0 rows: the provider account is already linked (to anyone).
+INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (provider, external_id) DO NOTHING;
+
+-- name: RekeyIdentity :execrows
+-- Moves a legacy row (Google accounts linked by the previous auth library
+-- were keyed by the SHA-1 of the subject) to the subject itself.
+UPDATE user_connected_accounts SET external_id = sqlc.arg(subject) WHERE provider = sqlc.arg(provider) AND external_id = sqlc.arg(legacy_id);
+
+-- LockUserIdentities re-reads the user inside an identity write's
+-- transaction. SQLite has no row locks (its writers are serialized), so
+-- this is a plain SELECT; Postgres adds FOR UPDATE.
+-- name: LockUserIdentities :one
+SELECT user_id FROM users WHERE user_id = ?;
+
+-- name: UserHasPassword :one
+SELECT EXISTS (SELECT 1 FROM user_credentials WHERE user_id = ?);
+
+-- name: SignInEmailInUse :one
+-- Whether an account already answers to this address: a password
+-- account's email, or the email a linked provider vouched for.
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE c.email = sqlc.arg(address)
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND a.email = sqlc.arg(address)
+);
 
 -- name: UpdateIdentityEmail :execrows
 UPDATE user_connected_accounts SET email = ? WHERE provider = ? AND external_id = ?;
@@ -125,6 +157,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetOAuthLoginState :one
 SELECT * FROM oauth_login_states WHERE state_hash = ?;
+
+-- name: ConsumeOAuthLoginState :one
+-- Single use: the DELETE is the read, so two callbacks presenting one state
+-- cannot both get the row.
+DELETE FROM oauth_login_states WHERE state_hash = ?
+RETURNING state_hash, provider, nonce, code_verifier, flow_hash, intent, return_to, link_user_id, created_at, expires_at;
 
 -- name: DeleteOAuthLoginState :execrows
 DELETE FROM oauth_login_states WHERE state_hash = ?;

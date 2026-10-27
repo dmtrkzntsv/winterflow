@@ -34,8 +34,33 @@ func (q *Queries) ConsumeOAuthCode(ctx context.Context, codeHash string) (OauthC
 	return i, err
 }
 
+const consumeOAuthLoginState = `-- name: ConsumeOAuthLoginState :one
+DELETE FROM oauth_login_states WHERE state_hash = ?
+RETURNING state_hash, provider, nonce, code_verifier, flow_hash, intent, return_to, link_user_id, created_at, expires_at
+`
+
+// Single use: the DELETE is the read, so two callbacks presenting one state
+// cannot both get the row.
+func (q *Queries) ConsumeOAuthLoginState(ctx context.Context, stateHash string) (OauthLoginState, error) {
+	row := q.db.QueryRowContext(ctx, consumeOAuthLoginState, stateHash)
+	var i OauthLoginState
+	err := row.Scan(
+		&i.StateHash,
+		&i.Provider,
+		&i.Nonce,
+		&i.CodeVerifier,
+		&i.FlowHash,
+		&i.Intent,
+		&i.ReturnTo,
+		&i.LinkUserID,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const countIdentitiesByUser = `-- name: CountIdentitiesByUser :one
-SELECT COUNT(*) FROM user_connected_accounts WHERE user_id = ?
+SELECT COUNT(*) FROM user_connected_accounts WHERE user_id = ? AND provider <> 'local'
 `
 
 func (q *Queries) CountIdentitiesByUser(ctx context.Context, userID string) (int64, error) {
@@ -396,6 +421,35 @@ func (q *Queries) InsertIdentity(ctx context.Context, arg InsertIdentityParams) 
 	return err
 }
 
+const insertIdentityIfAbsent = `-- name: InsertIdentityIfAbsent :execrows
+INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (provider, external_id) DO NOTHING
+`
+
+type InsertIdentityIfAbsentParams struct {
+	Provider   string
+	ExternalID string
+	UserID     string
+	Email      *string
+	CreatedAt  types.DateTime
+}
+
+// 0 rows: the provider account is already linked (to anyone).
+func (q *Queries) InsertIdentityIfAbsent(ctx context.Context, arg InsertIdentityIfAbsentParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertIdentityIfAbsent,
+		arg.Provider,
+		arg.ExternalID,
+		arg.UserID,
+		arg.Email,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const insertOAuthClient = `-- name: InsertOAuthClient :exec
 
 INSERT INTO oauth_clients (id, name, redirect_uris, secret_hash, created_at, last_used_at)
@@ -571,12 +625,15 @@ func (q *Queries) InsertOAuthSpentRefreshHash(ctx context.Context, arg InsertOAu
 }
 
 const listIdentitiesByUser = `-- name: ListIdentitiesByUser :many
+
 SELECT provider, external_id, user_id, email, created_at
 FROM user_connected_accounts
-WHERE user_id = ?
+WHERE user_id = ? AND provider <> 'local'
 ORDER BY created_at, provider
 `
 
+// The 'local' rows are the email+password accounts' own marker, not a
+// linked provider: the identity lists and counts leave them out.
 func (q *Queries) ListIdentitiesByUser(ctx context.Context, userID string) ([]UserConnectedAccount, error) {
 	rows, err := q.db.QueryContext(ctx, listIdentitiesByUser, userID)
 	if err != nil {
@@ -666,6 +723,20 @@ func (q *Queries) ListUnrevokedOAuthGrants(ctx context.Context, userID string) (
 	return items, nil
 }
 
+const lockUserIdentities = `-- name: LockUserIdentities :one
+SELECT user_id FROM users WHERE user_id = ?
+`
+
+// LockUserIdentities re-reads the user inside an identity write's
+// transaction. SQLite has no row locks (its writers are serialized), so
+// this is a plain SELECT; Postgres adds FOR UPDATE.
+func (q *Queries) LockUserIdentities(ctx context.Context, userID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, lockUserIdentities, userID)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const markOAuthClientUsed = `-- name: MarkOAuthClientUsed :exec
 UPDATE oauth_clients SET last_used_at = ? WHERE id = ?
 `
@@ -695,6 +766,26 @@ DELETE FROM oauth_clients WHERE last_used_at IS NULL AND created_at < ?
 
 func (q *Queries) PurgeUnusedOAuthClients(ctx context.Context, createdAt types.DateTime) (int64, error) {
 	result, err := q.db.ExecContext(ctx, purgeUnusedOAuthClients, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const rekeyIdentity = `-- name: RekeyIdentity :execrows
+UPDATE user_connected_accounts SET external_id = ?1 WHERE provider = ?2 AND external_id = ?3
+`
+
+type RekeyIdentityParams struct {
+	Subject  string
+	Provider string
+	LegacyID string
+}
+
+// Moves a legacy row (Google accounts linked by the previous auth library
+// were keyed by the SHA-1 of the subject) to the subject itself.
+func (q *Queries) RekeyIdentity(ctx context.Context, arg RekeyIdentityParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rekeyIdentity, arg.Subject, arg.Provider, arg.LegacyID)
 	if err != nil {
 		return 0, err
 	}
@@ -811,6 +902,23 @@ func (q *Queries) RotateOAuthGrant(ctx context.Context, arg RotateOAuthGrantPara
 	return result.RowsAffected()
 }
 
+const signInEmailInUse = `-- name: SignInEmailInUse :one
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE c.email = ?1
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND a.email = ?1
+)
+`
+
+// Whether an account already answers to this address: a password
+// account's email, or the email a linked provider vouched for.
+func (q *Queries) SignInEmailInUse(ctx context.Context, address string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, signInEmailInUse, address)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const updateIdentityEmail = `-- name: UpdateIdentityEmail :execrows
 UPDATE user_connected_accounts SET email = ? WHERE provider = ? AND external_id = ?
 `
@@ -827,4 +935,15 @@ func (q *Queries) UpdateIdentityEmail(ctx context.Context, arg UpdateIdentityEma
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const userHasPassword = `-- name: UserHasPassword :one
+SELECT EXISTS (SELECT 1 FROM user_credentials WHERE user_id = ?)
+`
+
+func (q *Queries) UserHasPassword(ctx context.Context, userID string) (bool, error) {
+	row := q.db.QueryRowContext(ctx, userHasPassword, userID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

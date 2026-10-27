@@ -541,3 +541,43 @@ func TestVerifyLocalCredentialsRehashes(t *testing.T) {
 		t.Fatalf("login after rehash: %v", err)
 	}
 }
+
+func TestCreateProviderUser(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	id := model.Identity{Provider: "oidc", Subject: "sub-1", Email: "ida@example.test", CreatedAt: at}
+
+	u, err := r.CreateProviderUser(ctx, "Ida", id, true)
+	if err != nil {
+		t.Fatalf("first user, firstOnly: %v", err)
+	}
+	if u.Name != "Ida" {
+		t.Fatalf("name = %q", u.Name)
+	}
+	org := mustPrimaryOrg(t, r, u.ID)
+	if m := mustMembers(t, r, org); len(m) != 1 || m[0].ID != u.ID || m[0].Provider != "oidc" {
+		t.Fatalf("members = %+v", m)
+	}
+	if got, err := r.GetByConnectedAccount(ctx, "oidc", "sub-1"); err != nil || got.ID != u.ID {
+		t.Fatalf("identity owner = %+v, %v", got, err)
+	}
+	if _, err := r.GetCredentials(ctx, u.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Fatalf("a provider account has no password, got %v", err)
+	}
+
+	id2 := model.Identity{Provider: "oidc", Subject: "sub-2", CreatedAt: at}
+	if _, err := r.CreateProviderUser(ctx, "Late", id2, true); !errors.Is(err, model.ErrNotBootstrap) {
+		t.Fatalf("firstOnly with a user = %v, want ErrNotBootstrap", err)
+	}
+	u2, err := r.CreateProviderUser(ctx, "Second", id2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mustPrimaryOrg(t, r, u2.ID) == org {
+		t.Fatal("a provider sign-up shares the first user's org")
+	}
+	if _, err := r.CreateProviderUser(ctx, "Dup", id2, false); err == nil {
+		t.Fatal("a second user for one provider account must fail")
+	}
+}

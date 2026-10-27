@@ -80,6 +80,9 @@ type Route struct {
 	// Binary answers its 200 with image bytes, while errors retain the
 	// ordinary API error envelope. ContentType documents the image media type.
 	Binary bool
+	// Redirect is the 3xx status a browser route answers on success, with a
+	// Location header and no body; such a route has no 200.
+	Redirect int
 	// ContentType is a Raw or Binary route's response media type (default JSON).
 	ContentType string
 	// Form is an application/x-www-form-urlencoded alternative to Request.

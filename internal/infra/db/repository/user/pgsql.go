@@ -32,6 +32,10 @@ func (pgsqlQuerier) GetConnectedAccountUserID(ctx context.Context, db backend.DB
 	return pgsqlgen.New(db).GetConnectedAccountUserID(ctx, pgsqlgen.GetConnectedAccountUserIDParams(p))
 }
 
+func (pgsqlQuerier) InsertIdentity(ctx context.Context, db backend.DBTX, p identityParams) error {
+	return pgsqlgen.New(db).InsertIdentity(ctx, pgsqlgen.InsertIdentityParams(p))
+}
+
 func (pgsqlQuerier) InsertConnectedAccount(ctx context.Context, db backend.DBTX, p accountParams) error {
 	return pgsqlgen.New(db).InsertConnectedAccount(ctx, pgsqlgen.InsertConnectedAccountParams(p))
 }

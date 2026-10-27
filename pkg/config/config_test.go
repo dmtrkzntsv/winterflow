@@ -243,6 +243,35 @@ func TestIsAuthSupported(t *testing.T) {
 			want:     false,
 		},
 		{
+			name:     "apple needs all four variables",
+			mode:     "standalone",
+			provider: "apple",
+			env:      map[string]string{"AUTH_APPLE_CLIENT_ID": "id", "AUTH_APPLE_TEAM_ID": "t", "AUTH_APPLE_KEY_ID": "k"},
+			want:     false,
+		},
+		{
+			name:     "apple enabled",
+			mode:     "standalone",
+			provider: "apple",
+			env: map[string]string{"AUTH_APPLE_CLIENT_ID": "id", "AUTH_APPLE_TEAM_ID": "t", "AUTH_APPLE_KEY_ID": "k",
+				"AUTH_APPLE_PRIVATE_KEY_PATH": "/k.p8"},
+			want: true,
+		},
+		{
+			name:     "oidc needs a secret",
+			mode:     "distributed",
+			provider: "oidc",
+			env:      map[string]string{"AUTH_OIDC_ISSUER": "https://idp", "AUTH_OIDC_CLIENT_ID": "id"},
+			want:     false,
+		},
+		{
+			name:     "oidc enabled",
+			mode:     "distributed",
+			provider: "oidc",
+			env:      map[string]string{"AUTH_OIDC_ISSUER": "https://idp", "AUTH_OIDC_CLIENT_ID": "id", "AUTH_OIDC_CLIENT_SECRET": "s"},
+			want:     true,
+		},
+		{
 			name:     "env provider no longer exists",
 			mode:     "standalone",
 			provider: "env",
@@ -256,7 +285,9 @@ func TestIsAuthSupported(t *testing.T) {
 			want:     false,
 		},
 	}
-	authVars := []string{"AUTH_GOOGLE_CLIENT_ID", "AUTH_GOOGLE_CLIENT_SECRET", "AUTH_ENV_USERNAME", "AUTH_ENV_PASSWORD"}
+	authVars := []string{"AUTH_GOOGLE_CLIENT_ID", "AUTH_GOOGLE_CLIENT_SECRET", "AUTH_ENV_USERNAME", "AUTH_ENV_PASSWORD",
+		"AUTH_APPLE_CLIENT_ID", "AUTH_APPLE_TEAM_ID", "AUTH_APPLE_KEY_ID", "AUTH_APPLE_PRIVATE_KEY_PATH",
+		"AUTH_OIDC_ISSUER", "AUTH_OIDC_CLIENT_ID", "AUTH_OIDC_CLIENT_SECRET"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, k := range authVars {
@@ -279,6 +310,46 @@ func TestGetAuthCredentialPairs(t *testing.T) {
 	t.Setenv("AUTH_GOOGLE_CLIENT_SECRET", "gsec")
 	if id, sec := c.GetGoogleAuth(); id != "gid" || sec != "gsec" {
 		t.Fatalf("GetGoogleAuth() = (%q, %q), want (gid, gsec)", id, sec)
+	}
+}
+
+func TestGetOIDCAuthNameDefault(t *testing.T) {
+	c := NewServerConfig("standalone")
+	unsetenv(t, "AUTH_OIDC_NAME")
+	if got := c.GetOIDCAuth().Name; got != "SSO" {
+		t.Fatalf("default AUTH_OIDC_NAME = %q, want SSO", got)
+	}
+	t.Setenv("AUTH_OIDC_NAME", " Keycloak ")
+	if got := c.GetOIDCAuth().Name; got != "Keycloak" {
+		t.Fatalf("AUTH_OIDC_NAME = %q, want Keycloak", got)
+	}
+}
+
+func TestGetPublicOrigin(t *testing.T) {
+	c := NewServerConfig("standalone")
+	cases := []struct {
+		web, origin string
+		ok          bool
+	}{
+		{"https://wf.example.com", "https://wf.example.com", true},
+		{"https://wf.example.com/", "https://wf.example.com", true},
+		{"https://wf.example.com:8443", "https://wf.example.com:8443", true},
+		{"http://localhost:8080", "http://localhost:8080", true},
+		{"http://127.0.0.1:8080/", "http://127.0.0.1:8080", true},
+		{"http://[::1]:8080", "http://[::1]:8080", true},
+		{"http://wf.example.com", "", false},
+		{"https://wf.example.com/app", "", false},
+		{"https://wf.example.com/?x=1", "", false},
+		{"https://user@wf.example.com", "", false},
+		{"ftp://wf.example.com", "", false},
+		{"", "", false},
+	}
+	for _, tc := range cases {
+		t.Setenv("WEB_URL", tc.web)
+		origin, ok := c.GetPublicOrigin()
+		if origin != tc.origin || ok != tc.ok {
+			t.Errorf("WEB_URL=%q: GetPublicOrigin() = (%q, %v), want (%q, %v)", tc.web, origin, ok, tc.origin, tc.ok)
+		}
 	}
 }
 

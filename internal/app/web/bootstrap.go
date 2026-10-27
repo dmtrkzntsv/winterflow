@@ -87,18 +87,18 @@ func autoClaimStandaloneServer(ctx context.Context, d *bootstrap.Deps, userID st
 // registrationOpen mirrors the register endpoint's policy, for sign-ins that
 // may create an account (sign-in providers): a fresh instance (zero users)
 // is always claimable; afterwards standalone is closed and distributed
-// follows REGISTRATION_ENABLED.
-func registrationOpen(ctx context.Context, d *bootstrap.Deps) bool {
+// follows REGISTRATION_ENABLED. firstOnly marks an opening that exists only
+// because the instance is fresh (the claim step), so the account creation
+// re-checks that no user exists by then.
+func registrationOpen(ctx context.Context, d *bootstrap.Deps) (open, firstOnly bool) {
 	n, err := d.UserService.CountUsers(ctx)
 	if err != nil {
 		d.Log.Error("registrationOpen: count users", "error", err)
-		return false
+		return false, false
 	}
+	selfSignup := !d.Cfg.IsStandalone() && d.Cfg.IsRegistrationEnabled()
 	if n == 0 {
-		return true
+		return true, !selfSignup
 	}
-	if d.Cfg.IsStandalone() {
-		return false
-	}
-	return d.Cfg.IsRegistrationEnabled()
+	return selfSignup, false
 }

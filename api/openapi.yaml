@@ -5747,6 +5747,49 @@ paths:
       summary: Revoke a personal access token
       tags:
       - user
+  /api/v1/user/get-identities:
+    get:
+      operationId: userGetIdentities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/IdentityItem'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the caller's linked sign-in provider accounts
+      tags:
+      - auth
   /api/v1/user/get-profile:
     get:
       operationId: userGetProfile
@@ -5876,6 +5919,70 @@ paths:
         the cookie'
       tags:
       - user
+  /api/v1/user/unlink-identity:
+    post:
+      description: 409 when it is the only way into the account (no password and no
+        other linked provider).
+      operationId: userUnlinkIdentity
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnlinkIdentityRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Unlink a sign-in provider account
+      tags:
+      - auth
   /api/v1/volume/create:
     post:
       operationId: volumeCreate
@@ -6051,6 +6158,178 @@ paths:
       - docker
       x-operation-result:
         $ref: '#/components/schemas/ListVolumesResponse'
+  /auth/oauth/{provider}/callback:
+    get:
+      description: 'Redirects to the start''s `return_to`, or on failure to `/login?error=<code>`
+        (a link: to `return_to` with `?error=<code>`).'
+      operationId: authOauthCallback
+      parameters:
+      - in: query
+        name: code
+        schema:
+          type: string
+      - in: query
+        name: state
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: error
+        schema:
+          type: string
+      - in: query
+        name: user
+        schema:
+          type: string
+      - in: path
+        name: provider
+        required: true
+        schema:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
+      responses:
+        "302":
+          description: Found
+          headers:
+            Location:
+              description: Where the browser goes next
+              required: true
+              schema:
+                description: Where the browser goes next
+                type: string
+              style: simple
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: 'The provider''s answer: signs in (sets wf_session) or links, then
+        redirects'
+      tags:
+      - auth
+    post:
+      operationId: authOauthCallbackPost
+      parameters:
+      - in: path
+        name: provider
+        required: true
+        schema:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FormDataCallbackForm'
+      responses:
+        "303":
+          description: See Other
+          headers:
+            Location:
+              description: Where the browser goes next
+              required: true
+              schema:
+                description: Where the browser goes next
+                type: string
+              style: simple
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: 'A form_post answer (Apple): re-sent to the GET callback'
+      tags:
+      - auth
+  /auth/oauth/{provider}/start:
+    get:
+      description: Sets the `wf_oauth_flow` cookie the callback checks. `mode=link`
+        needs the session cookie.
+      operationId: authOauthStart
+      parameters:
+      - in: query
+        name: mode
+        schema:
+          enum:
+          - login
+          - link
+          type: string
+      - in: query
+        name: return_to
+        schema:
+          type: string
+      - in: path
+        name: provider
+        required: true
+        schema:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
+      responses:
+        "302":
+          description: Found
+          headers:
+            Location:
+              description: Where the browser goes next
+              required: true
+              schema:
+                description: Where the browser goes next
+                type: string
+              style: simple
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: 'Start a sign-in (or a link) with a provider: redirects to it'
+      tags:
+      - auth
 components:
   schemas:
     AcceptedData:
@@ -7438,6 +7717,19 @@ components:
       - bind
       - pinned
       type: object
+    FormDataCallbackForm:
+      properties:
+        code:
+          type: string
+        error:
+          type: string
+        state:
+          type: string
+        user:
+          type: string
+      required:
+      - state
+      type: object
     GetAppResponse:
       properties:
         app:
@@ -7581,6 +7873,24 @@ components:
       properties:
         id:
           type: string
+      type: object
+    IdentityItem:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        email:
+          type: string
+        provider:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
+      required:
+      - provider
+      - email
+      - created_at
       type: object
     ImageTagsResponse:
       properties:
@@ -8519,20 +8829,6 @@ components:
       - email
       - must_change_password
       type: object
-    Provider:
-      properties:
-        id:
-          enum:
-          - google
-          - apple
-          - oidc
-          type: string
-        name:
-          type: string
-      required:
-      - id
-      - name
-      type: object
     PublicKeyResponse:
       properties:
         public_key:
@@ -9422,6 +9718,20 @@ components:
       - email
       - avatar_url
       type: object
+    SignInProvider:
+      properties:
+        id:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
+        name:
+          type: string
+      required:
+      - id
+      - name
+      type: object
     SourcePayload:
       properties:
         auto_update:
@@ -9472,7 +9782,7 @@ components:
           type: boolean
         providers:
           items:
-            $ref: '#/components/schemas/Provider'
+            $ref: '#/components/schemas/SignInProvider'
           type:
           - array
           - "null"
@@ -9799,6 +10109,15 @@ components:
           type: boolean
       required:
       - ok
+      type: object
+    UnlinkIdentityRequest:
+      properties:
+        provider:
+          enum:
+          - google
+          - apple
+          - oidc
+          type: string
       type: object
     UpdateAgentRequest:
       properties:

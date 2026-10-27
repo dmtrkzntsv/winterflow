@@ -68,6 +68,12 @@ type Error struct {
 	Data    Null   `json:"data" required:"true"`
 }
 
+// RedirectResponse documents a Redirect route's answer: the Location
+// header, no body.
+type RedirectResponse struct {
+	Location string `header:"Location" required:"true" description:"Where the browser goes next"`
+}
+
 // LibraryError is the error body of Raw (library) routes.
 type LibraryError struct {
 	Error string `json:"error" required:"true"`
@@ -144,7 +150,10 @@ type builder struct {
 	// responseTypes holds every named type reachable from a response, so
 	// its request-side component can take the Input suffix.
 	responseTypes map[reflect.Type]bool
-	err           error
+	// shared counts the methods each path is served with: a path served
+	// with several gets the method in its non-GET operation ids.
+	shared map[string]int
+	err    error
 }
 
 // Build renders routes into an OpenAPI 3.1 document.
@@ -153,6 +162,10 @@ func Build(routes []api.Route) (*openapi31.Spec, error) {
 		r:             openapi31.NewReflector(),
 		names:         map[string]reflect.Type{},
 		responseTypes: responseTypes(routes),
+		shared:        map[string]int{},
+	}
+	for _, rt := range routes {
+		b.shared[rt.Path]++
 	}
 	b.r.DefaultOptions = append(b.r.DefaultOptions,
 		func(rc *jsonschema.ReflectContext) {
@@ -303,7 +316,11 @@ func (b *builder) addRoute(rt api.Route) error {
 	if err != nil {
 		return err
 	}
-	oc.SetID(operationID(rt.Path))
+	id := operationID(rt.Path)
+	if b.shared[rt.Path] > 1 && rt.Method != http.MethodGet {
+		id += strings.ToUpper(rt.Method[:1]) + strings.ToLower(rt.Method[1:])
+	}
+	oc.SetID(id)
 	oc.SetSummary(rt.Summary)
 	if rt.Description != "" {
 		oc.SetDescription(rt.Description)
@@ -332,6 +349,8 @@ func (b *builder) addRoute(rt api.Route) error {
 	switch {
 	case rt.Events != nil:
 		oc.AddRespStructure(rt.Events, oapi.WithContentType("text/event-stream"), oapi.WithHTTPStatus(http.StatusOK))
+	case rt.Redirect != 0:
+		oc.AddRespStructure(RedirectResponse{}, oapi.WithHTTPStatus(rt.Redirect))
 	case rt.Raw || rt.Binary:
 		oc.AddRespStructure(rt.Response, oapi.WithContentType(rt.ContentType), oapi.WithHTTPStatus(http.StatusOK))
 	case rt.Accepted:

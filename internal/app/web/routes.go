@@ -18,6 +18,7 @@ import (
 	hhubjoin "winterflow/internal/app/web/handler/hubjoin"
 	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
+	hoauthlogin "winterflow/internal/app/web/handler/oauthlogin"
 	horg "winterflow/internal/app/web/handler/org"
 	hrollouts "winterflow/internal/app/web/handler/rollouts"
 	"winterflow/internal/app/web/handler/server"
@@ -93,8 +94,27 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		// server "just appears".
 		afterSignIn = func(ctx context.Context, userID string) { autoClaimStandaloneServer(ctx, d, userID) }
 	}
+	// Typed nils must not become non-nil interfaces: the spec-only route
+	// table has no sign-in usecase.
+	var (
+		signIns   hoauthlogin.SignIns
+		providers hauth.ProviderLister
+	)
+	if d.SignIns != nil {
+		signIns, providers = d.SignIns, d.SignIns
+	}
 	authAPI := hauth.NewHandler(&hauth.Deps{
 		Logger: d.Log, Cfg: d.Cfg, Users: d.UserService, Sessions: d.Authn, AfterSignIn: afterSignIn,
+		Providers: providers,
+	})
+	var sessionAuth authn.Authenticator
+	if d.Authn != nil {
+		sessionAuth = d.Authn
+	}
+	oauthLoginAPI := hoauthlogin.NewHandler(&hoauthlogin.Deps{
+		Logger: d.Log, SignIns: signIns, Sessions: authAPI, Auth: sessionAuth,
+		Registration:  func(ctx context.Context) (bool, bool) { return registrationOpen(ctx, d) },
+		SecureCookies: d.Cfg != nil && d.Cfg.GetSecureCookies(),
 	})
 	notificationAPI := notification.NewHandler(&notification.Deps{
 		Logger:              d.Log,
@@ -230,6 +250,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		hubJoinAPI.Routes(g),
 		agentHubAPI.Routes(g),
 		authAPI.Routes(g),
+		oauthLoginAPI.Routes(g),
 		notificationAPI.Routes(g),
 		appsAPI.Routes(g),
 		dockerAPI.Routes(g),

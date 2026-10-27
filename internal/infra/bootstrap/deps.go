@@ -10,6 +10,7 @@ import (
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
+	"winterflow/internal/domain/usecase/oauthlogin"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
@@ -31,7 +32,10 @@ type Deps struct {
 	UserService port.UserService
 	// Authn issues, authenticates and revokes access tokens (sessions,
 	// PATs, OAuth access tokens).
-	Authn               *authn.UseCase
+	Authn *authn.UseCase
+	// SignIns runs sign-in with Google, Apple or an OIDC provider and the
+	// linked identities.
+	SignIns             *oauthlogin.Service
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	AppDomainRepository port.AppDomainRepository

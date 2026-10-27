@@ -31,6 +31,10 @@ func (sqliteQuerier) GetConnectedAccountUserID(ctx context.Context, db backend.D
 	return sqlitegen.New(db).GetConnectedAccountUserID(ctx, p)
 }
 
+func (sqliteQuerier) InsertIdentity(ctx context.Context, db backend.DBTX, p identityParams) error {
+	return sqlitegen.New(db).InsertIdentity(ctx, p)
+}
+
 func (sqliteQuerier) InsertConnectedAccount(ctx context.Context, db backend.DBTX, p accountParams) error {
 	return sqlitegen.New(db).InsertConnectedAccount(ctx, p)
 }

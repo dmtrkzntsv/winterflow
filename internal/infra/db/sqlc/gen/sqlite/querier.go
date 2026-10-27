@@ -30,6 +30,9 @@ type Querier interface {
 	// Single use: the DELETE is the read, so two concurrent exchanges of one code
 	// cannot both get a row.
 	ConsumeOAuthCode(ctx context.Context, codeHash string) (OauthCode, error)
+	// Single use: the DELETE is the read, so two callbacks presenting one state
+	// cannot both get the row.
+	ConsumeOAuthLoginState(ctx context.Context, stateHash string) (OauthLoginState, error)
 	CountActiveHubCertificatesByHub(ctx context.Context, hubID string) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountHubCertificatesByHub(ctx context.Context, hubID string) (int64, error)
@@ -176,6 +179,8 @@ type Querier interface {
 	// One-time hub join tokens (hashed at rest).
 	InsertHubJoinToken(ctx context.Context, arg InsertHubJoinTokenParams) error
 	InsertIdentity(ctx context.Context, arg InsertIdentityParams) error
+	// 0 rows: the provider account is already linked (to anyone).
+	InsertIdentityIfAbsent(ctx context.Context, arg InsertIdentityIfAbsentParams) (int64, error)
 	// metric_samples: monitoring time series (see migration 0010).
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	InsertNotificationChannel(ctx context.Context, arg InsertNotificationChannelParams) error
@@ -238,6 +243,8 @@ type Querier interface {
 	ListClaimableRollouts(ctx context.Context, leaseUntil *types.DateTime) ([]string, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
+	// The 'local' rows are the email+password accounts' own marker, not a
+	// linked provider: the identity lists and counts leave them out.
 	ListIdentitiesByUser(ctx context.Context, userID string) ([]UserConnectedAccount, error)
 	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
@@ -294,6 +301,10 @@ type Querier interface {
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// LockUserIdentities re-reads the user inside an identity write's
+	// transaction. SQLite has no row locks (its writers are serialized), so
+	// this is a plain SELECT; Postgres adds FOR UPDATE.
+	LockUserIdentities(ctx context.Context, userID string) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
 	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
 	MarkOAuthClientUsed(ctx context.Context, arg MarkOAuthClientUsedParams) error
@@ -310,6 +321,9 @@ type Querier interface {
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
+	// Moves a legacy row (Google accounts linked by the previous auth library
+	// were keyed by the SHA-1 of the subject) to the subject itself.
+	RekeyIdentity(ctx context.Context, arg RekeyIdentityParams) (int64, error)
 	// Gives the lease back: lease_until NULL (a graceful shutdown) is claimable
 	// at once; a time parks a rollout that waits on a server until the next poll
 	// is due, so the claimable list (LIMIT) does not fill with waiting ones.
@@ -352,6 +366,9 @@ type Querier interface {
 	SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
+	// Whether an account already answers to this address: a password
+	// account's email, or the email a linked provider vouched for.
+	SignInEmailInUse(ctx context.Context, address string) (bool, error)
 	// The feed every catalog template now reflects: a later sync of an older
 	// feed is refused as a whole.
 	StampCatalogTemplates(ctx context.Context, feedAt *types.DateTime) error
@@ -380,6 +397,7 @@ type Querier interface {
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
+	UserHasPassword(ctx context.Context, userID string) (bool, error)
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 	// A catalog template the feed no longer lists: 0 rows when it is withdrawn
 	// already or a newer feed wrote it.

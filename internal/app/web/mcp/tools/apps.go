@@ -13,7 +13,9 @@ import (
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	appuc "winterflow/internal/domain/usecase/app"
+	"winterflow/internal/domain/usecase/cmdresult"
 )
 
 // Messages the save checks answer with.
@@ -141,8 +143,8 @@ func (t *tools) apps(s *sdk.Server) {
 		readOnly, t.getApp)
 	add(s, "save_app", "Create or change an app and deploy it (or only save it, with draft), waiting for the outcome. "+
 		"Send the app's full state: files, variables and ingress left out are removed (call get_app first when editing). "+
-		"A secret variable or file is sent only as <encrypted>, which keeps the stored value; new secret values come "+
-		"from the user through request_secrets. Answers the agent's result and the app's latest container status.",
+		"A secret variable or file is sent only as <encrypted>, which keeps the value the app already stores under that "+
+		"name (a new app or a renamed secret has none); new secret values come from the user through request_secrets. Answers the agent's result and the app's latest container status.",
 		nil, t.saveApp)
 	add(s, "control_app", "Start, stop, restart or update (pull and redeploy) an app, waiting for the outcome.", nil, t.controlApp)
 	add(s, "rename_app", "Change an app's display name.", nil, t.renameApp)
@@ -209,7 +211,12 @@ func (t *tools) listApps(ctx context.Context, in serverInput) *sdk.CallToolResul
 	for _, a := range listed.Apps {
 		out = append(out, listedApp{App: a, Status: t.appStatus(in.ServerID, a.ID)})
 	}
-	return webmcp.JSONResult(map[string]any{"apps": out})
+	answer := map[string]any{"apps": out}
+	if isTruncated(rec.Result) {
+		answer["truncated"] = true
+		answer["note"] = "the list was too large to keep whole: some apps are missing; see the Winterflow UI"
+	}
+	return webmcp.JSONResult(answer)
 }
 
 // item is a file or variable as get_app shows it.
@@ -256,11 +263,35 @@ func (t *tools) getApp(ctx context.Context, in appInput) *sdk.CallToolResult {
 	if fail != nil {
 		return fail
 	}
-	var got command.GetAppResponse
-	if err := json.Unmarshal(rec.Result, &got); err != nil {
-		return result(rec)
+	return answerApp(rec)
+}
+
+// tooLargeMessage refuses an app whose app.get answer was cut to fit: an
+// empty or partial view would read as the app's whole state, and a save
+// built from it would remove what is missing.
+const tooLargeMessage = "this app is too large to show over MCP; edit it in the Winterflow UI"
+
+// answerApp is get_app's answer for a succeeded app.get record: never a
+// view of a result that was cut to fit.
+func answerApp(rec cmdresult.Record) *sdk.CallToolResult {
+	got, fail := decodeApp(rec.Result)
+	if fail != nil {
+		return fail
 	}
 	return webmcp.JSONResult(viewApp(got))
+}
+
+// decodeApp reads an app.get result, refusing one that was cut to fit or
+// that does not decode as an app.
+func decodeApp(raw []byte) (command.GetAppResponse, *sdk.CallToolResult) {
+	var got command.GetAppResponse
+	if isTruncated(raw) {
+		return got, webmcp.ErrorText(tooLargeMessage)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil || got.App.AppID == "" {
+		return got, webmcp.ErrorText("the agent's answer did not describe the app; try again, or open it in the Winterflow UI")
+	}
+	return got, nil
 }
 
 // viewApp decodes app.get's byte fields; a secret's content always reads
@@ -317,8 +348,15 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	if fail != nil {
 		return fail
 	}
+	start := time.Now()
+	if fail := t.checkKeeps(ctx, userID, in); fail != nil {
+		return fail
+	}
 	secrets := secretNames(in)
-	rec, fail := t.dispatch(ctx, userID, in.ServerID, command.TypeAppSave, "save app",
+	// The whole call stays within one wait: the stored-secrets read above
+	// came out of it.
+	bound := max(t.Wait-time.Since(start), time.Second)
+	rec, fail := t.dispatchWithin(ctx, userID, in.ServerID, command.TypeAppSave, "save app", bound,
 		func(ctx context.Context, o appuc.Observer) (string, error) {
 			return t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
 		})
@@ -401,6 +439,93 @@ func buildSave(in saveAppInput) (model.App, command.AppPayload, *sdk.CallToolRes
 	}
 	payload.Config = raw
 	return model.App{ID: in.AppID, Name: name, Icon: in.Icon, Color: in.Color}, payload, nil
+}
+
+// checkKeeps refuses a "<encrypted>" that keeps nothing, as the app
+// editor does (placeholderMisuse, renamedStoredSecret): the agent would drop
+// it without a word and the save would succeed with the secret unset. A
+// plain value may not start with the placeholder; a secret's may be only
+// the placeholder (buildSave), and only for a name the agent stores a
+// secret under: never on a new app, and on an edit only for the app's
+// current secret variables and files (read with app.get).
+func (t *tools) checkKeeps(ctx context.Context, userID string, in saveAppInput) *sdk.CallToolResult {
+	var keepVars, keepFiles []string
+	for _, v := range in.Variables {
+		name := strings.TrimSpace(v.Name)
+		switch {
+		case !v.Encrypted && strings.HasPrefix(v.Value, command.EncryptedPlaceholder):
+			return webmcp.ErrorText(name + ": a plain value can't start with " + command.EncryptedPlaceholder)
+		case v.Encrypted:
+			keepVars = append(keepVars, name)
+		}
+	}
+	for _, f := range in.Files {
+		name := strings.TrimSpace(f.Name)
+		switch {
+		case !f.Encrypted && strings.HasPrefix(f.Content, command.EncryptedPlaceholder):
+			return webmcp.ErrorText(name + ": a plain file can't start with " + command.EncryptedPlaceholder)
+		case f.Encrypted:
+			keepFiles = append(keepFiles, name)
+		}
+	}
+	if len(keepVars)+len(keepFiles) == 0 {
+		return nil
+	}
+	if in.AppID == "" {
+		return webmcp.ErrorText(append(keepVars, keepFiles...)[0] + ": " + noStoredSecret)
+	}
+	vars, files, fail := t.storedSecrets(ctx, userID, in.ServerID, in.AppID)
+	if fail != nil {
+		return fail
+	}
+	for _, name := range keepVars {
+		if !vars[name] {
+			return webmcp.ErrorText(name + ": " + noStoredSecret)
+		}
+	}
+	for _, name := range keepFiles {
+		if !files[name] {
+			return webmcp.ErrorText(name + ": " + noStoredSecret)
+		}
+	}
+	return nil
+}
+
+// noStoredSecret refuses a keep placeholder that stands for nothing.
+const noStoredSecret = "no secret is stored under this name to keep (a new app or a renamed secret has none); " +
+	"use request_secrets to ask the user for it"
+
+// storedSecrets reads which secret variables and files the agent holds for
+// the app, by name. The read is not recorded and takes at most a third of
+// the wait, leaving the rest to the save.
+func (t *tools) storedSecrets(ctx context.Context, userID, serverID, appID string) (vars, files map[string]bool, fail *sdk.CallToolResult) {
+	results, deliver := port.NewResultChan()
+	if _, err := t.Apps.GetAppObserved(ctx, userID, serverID, appID, deliver); err != nil {
+		return nil, nil, t.fail(err, "read the app's stored secrets")
+	}
+	res, ok := port.AwaitResult(ctx, results, t.Wait/3)
+	switch {
+	case !ok:
+		return nil, nil, webmcp.ErrorText("could not read the app's stored secrets in time; try again")
+	case !res.Success:
+		return nil, nil, webmcp.ErrorText("could not read the app's stored secrets: " + res.Err().Error())
+	}
+	got, fail := decodeApp(res.Payload)
+	if fail != nil {
+		return nil, nil, fail
+	}
+	vars, files = map[string]bool{}, map[string]bool{}
+	for _, v := range got.App.Variables {
+		if v.Encrypted {
+			vars[v.ItemName()] = true
+		}
+	}
+	for _, f := range got.App.Files {
+		if f.Encrypted {
+			files[f.ItemName()] = true
+		}
+	}
+	return vars, files, nil
 }
 
 // secretNames are the variables a save treats as secrets: those it marks
@@ -581,13 +706,16 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 	if in.Service == "" {
 		return result(rec)
 	}
-	var logs command.GetLogsResponse
+	var logs struct {
+		command.GetLogsResponse
+		Truncated bool `json:"truncated,omitempty"`
+	}
 	if err := json.Unmarshal(rec.Result, &logs); err != nil {
 		return result(rec)
 	}
 	kept := logs.Logs[:0]
 	for _, e := range logs.Logs {
-		if fromService(e.Container, in.Service) {
+		if fromService(e.Container, in.AppID, in.Service) {
 			kept = append(kept, e)
 		}
 	}
@@ -603,11 +731,11 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 // containerIndexRe is the replica suffix compose gives container names.
 var containerIndexRe = regexp.MustCompile(`-[0-9]+$`)
 
-// fromService reports whether a compose container name (<project>-<service>-<n>)
-// is one of service's.
-func fromService(container, service string) bool {
-	base := containerIndexRe.ReplaceAllString(container, "")
-	return base == service || strings.HasSuffix(base, "-"+service)
+// fromService reports whether a compose container name
+// (<project>-<service>-<n>) is one of service's in appID's project, which
+// the agent names "wf-<app id>" (docker_compose.projectName).
+func fromService(container, appID, service string) bool {
+	return containerIndexRe.ReplaceAllString(container, "") == strings.ToLower("wf-"+appID)+"-"+service
 }
 
 func (t *tools) getAppRevisions(ctx context.Context, in appInput) *sdk.CallToolResult {

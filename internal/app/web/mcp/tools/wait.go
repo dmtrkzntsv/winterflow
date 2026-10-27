@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -10,6 +11,7 @@ import (
 	webmcp "winterflow/internal/app/web/mcp"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/domain/usecase/cmdresult"
 )
@@ -51,16 +53,35 @@ type deployed struct {
 // running or unknown. what names the command in errors ("save app").
 func (t *tools) dispatch(ctx context.Context, userID, serverID string, kind command.Type, what string,
 	send dispatchFunc) (cmdresult.Record, *sdk.CallToolResult) {
+	return t.dispatchWithin(ctx, userID, serverID, kind, what, t.Wait, send)
+}
+
+// dispatchWithin is dispatch waiting at most bound. A succeeded record's
+// Result is the agent's whole answer when it came to this process (the
+// stored copy is cut to cmdresult.MaxResultBytes); else the stored copy,
+// which then may carry "truncated": true.
+func (t *tools) dispatchWithin(ctx context.Context, userID, serverID string, kind command.Type, what string,
+	bound time.Duration, send dispatchFunc) (cmdresult.Record, *sdk.CallToolResult) {
 	// Begin and Await use this context: bound it, so a stuck write or a
 	// dropped client cannot hold the call past the wait.
-	ctx, cancel := context.WithTimeout(ctx, t.Wait+beginMargin)
+	ctx, cancel := context.WithTimeout(ctx, bound+beginMargin)
 	defer cancel()
 	orgID, err := t.Users.PrimaryOrganizationID(ctx, userID)
 	if err != nil {
 		return cmdresult.Record{}, t.fail(err, "resolve your organization")
 	}
 	tr := t.Results.Track(orgID, serverID, string(kind))
-	requestID, err := send(ctx, tr.Observer())
+	record := tr.Observer()
+	var (
+		mu   sync.Mutex
+		full []byte
+	)
+	requestID, err := send(ctx, func(res port.CommandResult) {
+		mu.Lock()
+		full = res.Payload
+		mu.Unlock()
+		record(res)
+	})
 	if err != nil {
 		return cmdresult.Record{}, t.fail(err, what)
 	}
@@ -69,13 +90,30 @@ func (t *tools) dispatch(ctx context.Context, userID, serverID string, kind comm
 		return cmdresult.Record{}, webmcp.ErrorText("the command was sent (request_id " + requestID +
 			") but its result cannot be followed here; check the app with get_app_status")
 	}
-	rec, err := tr.Await(ctx, t.Wait)
+	rec, err := tr.Await(ctx, bound)
 	if err != nil {
 		// The context ended first (the client went away): the command
 		// goes on, its outcome is still recorded.
 		return cmdresult.Record{}, running(requestID)
 	}
+	if rec.Status == cmdresult.Succeeded {
+		mu.Lock()
+		if full != nil {
+			rec.Result = full
+		}
+		mu.Unlock()
+	}
 	return t.settle(rec)
+}
+
+// isTruncated reports a stored result cut to fit (cmdresult's
+// "truncated": true): its arrays lost their oldest items, or, for a result
+// whose bulk is not in a top-level array (app.get), everything.
+func isTruncated(raw []byte) bool {
+	var probe struct {
+		Truncated bool `json:"truncated"`
+	}
+	return json.Unmarshal(raw, &probe) == nil && probe.Truncated
 }
 
 // settle maps a record to its answer: the record itself when it

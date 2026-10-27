@@ -70,6 +70,12 @@ func TestOtherOrgServerForbidden(t *testing.T) {
 		{"list_networks", map[string]any{}},
 		{"get_image_tags", map[string]any{"image": "nginx"}},
 		{"list_shared_variables", map[string]any{}},
+		{"rename_app", map[string]any{"app_id": "app-1", "name": "web"}},
+		{"rollback_app", map[string]any{"app_id": "app-1", "revision": "abc"}},
+		{"get_app_revisions", map[string]any{"app_id": "app-1"}},
+		{"create_domain", map[string]any{"name": "example.com", "tls": "auto"}},
+		{"delete_domain", map[string]any{"name": "example.com"}},
+		{"list_volumes", map[string]any{}},
 	} {
 		c.args["server_id"] = bob.serverID
 		text, isErr := call(t, s, c.tool, c.args)
@@ -100,7 +106,7 @@ func TestSaveAppWaitsForResult(t *testing.T) {
 	ok(t, e.session(t, alice), "save_app", map[string]any{
 		"server_id": alice.serverID, "name": "web",
 		"files":     []map[string]any{{"name": "compose.yml", "content": compose}},
-		"variables": []map[string]any{{"name": "PORT", "value": "8080"}, {"name": "TOKEN", "value": "<encrypted>", "encrypted": true}},
+		"variables": []map[string]any{{"name": "PORT", "value": "8080"}},
 	}, &out)
 	if out.Status != "succeeded" || out.RequestID == "" || out.Result.AppID == "" || out.Result.Revision != "rev-1" {
 		t.Fatalf("save_app = %+v", out)
@@ -263,8 +269,9 @@ func TestGetAppLogsFiltersService(t *testing.T) {
 	alice := e.newUser(t, "alice@example.test")
 	e.agent.on(command.TypeAppLogs, func(json.RawMessage) reply {
 		return reply{Payload: command.GetLogsResponse{AppID: "app-1", Logs: []command.LogEntry{
-			{Message: "from web", Container: "app-1-web-1"},
-			{Message: "from db", Container: "app-1-db-1"},
+			{Message: "from web", Container: "wf-app-1-web-1"},
+			{Message: "from db", Container: "wf-app-1-db-1"},
+			{Message: "from app-db", Container: "wf-app-1-app-db-1"},
 		}}}
 	})
 	var out struct {
@@ -275,5 +282,119 @@ func TestGetAppLogsFiltersService(t *testing.T) {
 	ok(t, e.session(t, alice), "get_app_logs", map[string]any{"server_id": alice.serverID, "app_id": "app-1", "service": "db"}, &out)
 	if len(out.Result.Logs) != 1 || out.Result.Logs[0].Message != "from db" {
 		t.Fatalf("get_app_logs = %+v", out.Result.Logs)
+	}
+}
+
+// storedToken makes app.get report app-1 with the secret variable TOKEN
+// and the secret file certs/key.pem stored.
+func storedToken(e *env) {
+	e.agent.on(command.TypeAppGet, func(json.RawMessage) reply {
+		return reply{Payload: command.GetAppResponse{App: command.AppPayload{
+			AppID: "app-1", Config: []byte(`{}`),
+			Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(compose)},
+				{Name: "certs/key.pem", Content: []byte("<encrypted>"), Encrypted: true}},
+			Variables: []command.ContentItem{{Name: "TOKEN", Content: []byte("<encrypted>"), Encrypted: true}},
+		}}}
+	})
+}
+
+func TestSaveAppKeepPlaceholderRules(t *testing.T) {
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	storedToken(e)
+	s := e.session(t, alice)
+	save := func(appID string, vars, files []map[string]any) (string, bool) {
+		args := map[string]any{"server_id": alice.serverID, "name": "web",
+			"files": append([]map[string]any{{"name": "compose.yml", "content": compose}}, files...), "variables": vars}
+		if appID != "" {
+			args["app_id"] = appID
+		}
+		return call(t, s, "save_app", args)
+	}
+	keep := func(name string) []map[string]any {
+		return []map[string]any{{"name": name, "value": "<encrypted>", "encrypted": true}}
+	}
+	for _, c := range []struct {
+		what        string
+		appID       string
+		vars, files []map[string]any
+		wantInError string
+	}{
+		{"a create keeps nothing", "", keep("TOKEN"), nil, "TOKEN: no secret is stored"},
+		{"a renamed secret keeps nothing", "app-1", keep("API_TOKEN"), nil, "API_TOKEN: no secret is stored"},
+		{"a renamed secret file keeps nothing", "app-1", nil,
+			[]map[string]any{{"name": "certs/new.pem", "content": "<encrypted>", "encrypted": true}}, "certs/new.pem: no secret is stored"},
+		{"a plain value can't pose as the placeholder", "app-1",
+			[]map[string]any{{"name": "PORT", "value": "<encrypted>"}}, nil, "PORT: a plain value can't start with <encrypted>"},
+	} {
+		text, isErr := save(c.appID, c.vars, c.files)
+		if !isErr || !strings.Contains(text, c.wantInError) {
+			t.Errorf("%s: %q (isError %v), want %q", c.what, text, isErr, c.wantInError)
+		}
+		if isErr && strings.Contains(c.wantInError, "no secret is stored") && !strings.Contains(text, "use request_secrets to ask the user for it") {
+			t.Errorf("%s: %q does not point at request_secrets", c.what, text)
+		}
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 0 {
+		t.Fatalf("the agent received %d saves", n)
+	}
+	// Keeping the stored secret and the stored file goes through.
+	text, isErr := save("app-1", keep("TOKEN"), []map[string]any{{"name": "certs/key.pem", "content": "<encrypted>", "encrypted": true}})
+	if isErr {
+		t.Fatalf("keeping stored secrets: %s", text)
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 1 {
+		t.Fatalf("the agent received %d saves, want 1", n)
+	}
+}
+
+// bigApp makes app.get answer an app whose compose file alone is past the
+// stored result's cap.
+func bigApp(e *env) string {
+	big := compose + "# " + strings.Repeat("x", 2<<20) + "\n"
+	e.agent.on(command.TypeAppGet, func(json.RawMessage) reply {
+		return reply{Payload: command.GetAppResponse{App: command.AppPayload{
+			AppID: "app-1", Config: []byte(`{}`), Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(big)}},
+		}}}
+	})
+	return big
+}
+
+// TestGetAppLargeApp: get_app shows a large app whole when it waited for
+// the answer itself, and refuses the stored copy, cut to fit, instead of
+// showing an empty app.
+func TestGetAppLargeApp(t *testing.T) {
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	big := bigApp(e)
+	s := e.session(t, alice)
+	var out struct {
+		Files []struct{ Name, Content string } `json:"files"`
+	}
+	ok(t, s, "get_app", map[string]any{"server_id": alice.serverID, "app_id": "app-1"}, &out)
+	if len(out.Files) != 1 || out.Files[0].Content != big {
+		t.Fatalf("get_app of a large app: %d files", len(out.Files))
+	}
+
+	e.agent.delay(command.TypeAppGet, wait+700*time.Millisecond)
+	var running struct {
+		Status    string `json:"status"`
+		RequestID string `json:"request_id"`
+	}
+	ok(t, s, "get_app", map[string]any{"server_id": alice.serverID, "app_id": "app-1"}, &running)
+	if running.Status != "running" {
+		t.Fatalf("slow get_app = %+v", running)
+	}
+	// A 2 MiB answer takes a while under -race: ask again while it runs.
+	var text string
+	var isErr bool
+	for i := 0; i < 5; i++ {
+		text, isErr = call(t, s, "get_command_result", map[string]any{"request_id": running.RequestID})
+		if isErr || !strings.Contains(text, `"status":"running"`) {
+			break
+		}
+	}
+	if !isErr || !strings.Contains(text, "too large to show over MCP") {
+		t.Fatalf("get_command_result of a large app.get = %.200q (isError %v)", text, isErr)
 	}
 }

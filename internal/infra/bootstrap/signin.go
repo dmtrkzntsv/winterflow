@@ -72,6 +72,9 @@ func signInProvidersFromConfig(cfg *config.ServerConfig, log *logger.Logger) (st
 			TrustEmail:      false,
 			ExtraAuthParams: map[string]string{"prompt": "select_account"},
 			IssuerAliases:   []string{"accounts.google.com"},
+			// Google takes both; client_secret_post is the form its
+			// documentation shows.
+			TokenAuthMethod: oauthprovider.AuthClientSecretPost,
 		}, hc)})
 	}
 	if cfg.IsAuthSupported(model.ProviderApple) {
@@ -112,5 +115,7 @@ func appleProvider(a config.AppleAuth, hc *http.Client) (oauthlogin.Provider, er
 		// undocumented there: the confidential client secret and the nonce
 		// bind the exchange. Apple vouches for the addresses it relays.
 		Scopes: []string{"name", "email"}, UsePKCE: false, ResponseMode: "form_post", TrustEmail: true,
+		// Apple's token endpoint takes the signed client secret in the body.
+		TokenAuthMethod: oauthprovider.AuthClientSecretPost,
 	}, hc)}, nil
 }

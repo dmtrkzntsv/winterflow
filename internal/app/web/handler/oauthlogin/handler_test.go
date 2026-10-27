@@ -245,6 +245,25 @@ func TestOIDCLoginExistingIdentity(t *testing.T) {
 	}
 }
 
+// TestOIDCLoginBasicAuthOnlyIssuer: an issuer whose token endpoint accepts
+// only client_secret_basic signs people in.
+func TestOIDCLoginBasicAuthOnlyIssuer(t *testing.T) {
+	h := newHarness(t, model.ProviderOIDC)
+	h.fake.TokenAuthMethods = []string{"client_secret_basic"}
+	u := h.providerUser(h.fake.Subject, "old@example.test")
+
+	loc, resp := h.flow(h.client(), nil)
+	if loc != "/" {
+		t.Fatalf("redirect = %q, want /", loc)
+	}
+	if got := h.sessionUser(resp); got != u.ID {
+		t.Fatalf("session user = %q, want %q", got, u.ID)
+	}
+	if got := h.fake.TokenAuthUsed(); got != "client_secret_basic" {
+		t.Fatalf("token request authenticated with %q", got)
+	}
+}
+
 // TestOIDCIdentityOfAnotherIssuerRefused: a subject is unique only per
 // issuer. After AUTH_OIDC_ISSUER is repointed at another IdP, that IdP's user
 // with the same sub must not sign in to the account the old IdP's user

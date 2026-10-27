@@ -71,3 +71,56 @@ func TestDiscover_RejectsIssuerMismatch(t *testing.T) {
 		t.Fatalf("a discovery document claiming another issuer must be rejected, got %v", err)
 	}
 }
+
+// TestClient_ExchangeTokenAuthMethod: the exchange authenticates the way the
+// issuer advertises (client_secret_basic when listed or when nothing is
+// listed, else client_secret_post) unless the issuer config pins a method.
+func TestClient_ExchangeTokenAuthMethod(t *testing.T) {
+	cases := []struct {
+		name       string
+		advertised []string
+		pinned     string
+		want       string
+	}{
+		{"nothing advertised", nil, "", oauthprovider.AuthClientSecretBasic},
+		{"basic only", []string{"client_secret_basic"}, "", oauthprovider.AuthClientSecretBasic},
+		{"both", []string{"client_secret_post", "client_secret_basic"}, "", oauthprovider.AuthClientSecretBasic},
+		{"post only", []string{"private_key_jwt", "client_secret_post"}, "", oauthprovider.AuthClientSecretPost},
+		{"pinned post", []string{"client_secret_post", "client_secret_basic"}, oauthprovider.AuthClientSecretPost, oauthprovider.AuthClientSecretPost},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := oauthprovidertest.New(t)
+			f.TokenAuthMethods = tc.advertised
+			// A secret with characters RFC 6749's form-encoding of the
+			// Basic credentials changes.
+			f.Secret = "s3cr:et +/%"
+			iss := f.Issuer("oidc", false)
+			iss.TokenAuthMethod = tc.pinned
+			c := oauthprovider.NewClient(iss, nil)
+			verifier, _ := oauthprovider.RandomToken()
+			code := f.IssueCode("n", oauthprovider.PKCEChallenge(verifier))
+			toks, err := c.Exchange(context.Background(), code, verifier, "https://app.example.test/cb", time.Now())
+			if err != nil || toks.IDToken == "" {
+				t.Fatalf("exchange %+v %v", toks, err)
+			}
+			if got := f.TokenAuthUsed(); got != tc.want {
+				t.Fatalf("authenticated with %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClient_ExchangeRefusesIssuerWithoutSecretMethod(t *testing.T) {
+	f := oauthprovidertest.New(t)
+	f.TokenAuthMethods = []string{"private_key_jwt"}
+	c := oauthprovider.NewClient(f.Issuer("oidc", false), nil)
+	code := f.IssueCode("n", "")
+	_, err := c.Exchange(context.Background(), code, "v", "https://app.example.test/cb", time.Now())
+	if err == nil || !strings.Contains(err.Error(), "neither") {
+		t.Fatalf("err = %v, want a refusal naming the methods", err)
+	}
+	if got := f.TokenAuthUsed(); got != "" {
+		t.Fatalf("a token request was sent (%q)", got)
+	}
+}

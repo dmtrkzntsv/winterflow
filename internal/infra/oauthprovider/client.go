@@ -31,7 +31,18 @@ type Issuer struct {
 	// IssuerAliases are extra literal iss values accepted for this issuer
 	// (Google documents both "https://accounts.google.com" and "accounts.google.com").
 	IssuerAliases []string
+	// TokenAuthMethod pins how the code exchange authenticates the client
+	// (AuthClientSecretBasic or AuthClientSecretPost); empty picks from the
+	// discovery document's token_endpoint_auth_methods_supported.
+	TokenAuthMethod string
 }
+
+// Client authentication methods at the token endpoint (OpenID Connect Core
+// section 9).
+const (
+	AuthClientSecretBasic = "client_secret_basic"
+	AuthClientSecretPost  = "client_secret_post"
+)
 
 // StaticSecret adapts a plain client secret to the ClientSecret seam.
 func StaticSecret(secret string) func(time.Time) (string, error) {
@@ -44,6 +55,9 @@ type Discovery struct {
 	TokenEndpoint         string `json:"token_endpoint"`
 	JWKSURI               string `json:"jwks_uri"`
 	UserinfoEndpoint      string `json:"userinfo_endpoint"`
+	// TokenEndpointAuthMethods is token_endpoint_auth_methods_supported;
+	// absent means client_secret_basic only (OpenID Connect Discovery).
+	TokenEndpointAuthMethods []string `json:"token_endpoint_auth_methods_supported"`
 }
 
 // Claims and Tokens are the domain's shapes: the sign-in usecase consumes
@@ -201,9 +215,32 @@ func (c *Client) AuthURL(ctx context.Context, state, nonce, codeChallenge, redir
 	return d.AuthorizationEndpoint + sep + q.Encode(), nil
 }
 
-// Exchange redeems the code with client_secret_post authentication.
+// tokenAuthMethod is the issuer's pinned method, else client_secret_basic
+// when the discovery document lists it or lists nothing (the specification's
+// default), else client_secret_post when listed. An issuer offering neither
+// cannot take a client secret.
+func (c *Client) tokenAuthMethod(d Discovery) (string, error) {
+	if c.issuer.TokenAuthMethod != "" {
+		return c.issuer.TokenAuthMethod, nil
+	}
+	switch {
+	case len(d.TokenEndpointAuthMethods) == 0, slices.Contains(d.TokenEndpointAuthMethods, AuthClientSecretBasic):
+		return AuthClientSecretBasic, nil
+	case slices.Contains(d.TokenEndpointAuthMethods, AuthClientSecretPost):
+		return AuthClientSecretPost, nil
+	}
+	return "", fmt.Errorf("oidc: token endpoint supports neither %s nor %s (it lists %q)",
+		AuthClientSecretBasic, AuthClientSecretPost, d.TokenEndpointAuthMethods)
+}
+
+// Exchange redeems the code, authenticating with client_secret_basic or
+// client_secret_post (tokenAuthMethod).
 func (c *Client) Exchange(ctx context.Context, code, codeVerifier, redirectURI string, now time.Time) (Tokens, error) {
 	d, err := c.Discover(ctx)
+	if err != nil {
+		return Tokens{}, err
+	}
+	method, err := c.tokenAuthMethod(d)
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -215,14 +252,20 @@ func (c *Client) Exchange(ctx context.Context, code, codeVerifier, redirectURI s
 	form.Set("grant_type", "authorization_code")
 	form.Set("code", code)
 	form.Set("redirect_uri", redirectURI)
-	form.Set("client_id", c.issuer.ClientID)
-	form.Set("client_secret", secret)
+	if method == AuthClientSecretPost {
+		form.Set("client_id", c.issuer.ClientID)
+		form.Set("client_secret", secret)
+	}
 	if c.issuer.UsePKCE {
 		form.Set("code_verifier", codeVerifier)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, d.TokenEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return Tokens{}, err
+	}
+	if method == AuthClientSecretBasic {
+		// RFC 6749 section 2.3.1: both halves form-urlencoded first.
+		req.SetBasicAuth(url.QueryEscape(c.issuer.ClientID), url.QueryEscape(secret))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")

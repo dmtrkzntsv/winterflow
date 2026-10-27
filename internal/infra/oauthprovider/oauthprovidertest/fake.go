@@ -12,6 +12,8 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -55,6 +57,11 @@ type Fake struct {
 	TokenEndpointOverride         string
 	JWKSOverride                  string
 	UserInfoOverride              string
+	// TokenAuthMethods, when non-nil, is advertised as
+	// token_endpoint_auth_methods_supported and the token endpoint accepts
+	// only those client authentication methods; nil advertises nothing and
+	// accepts client_secret_basic and client_secret_post.
+	TokenAuthMethods []string
 
 	mu       sync.Mutex
 	key      *rsa.PrivateKey
@@ -62,6 +69,7 @@ type Fake struct {
 	codes    map[string]pending
 	tokens   map[string]bool // issued access tokens
 	requests []string
+	authUsed string
 }
 
 func New(t testing.TB) *Fake {
@@ -137,6 +145,14 @@ func (f *Fake) Requests() []string {
 
 // Claims exposes the claim set a real token/userinfo response would carry,
 // for tests that need to hand-craft and re-sign a token (e.g. issuer aliasing).
+// TokenAuthUsed is the client authentication method of the last token
+// request.
+func (f *Fake) TokenAuthUsed() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.authUsed
+}
+
 func (f *Fake) Claims(nonce string) map[string]any { return f.claims(nonce) }
 
 func (f *Fake) claims(nonce string) map[string]any {
@@ -189,7 +205,7 @@ func (f *Fake) discovery(w http.ResponseWriter, r *http.Request) {
 	if f.DiscoveryIssuer != "" {
 		issuer = f.DiscoveryIssuer
 	}
-	d := map[string]string{
+	d := map[string]any{
 		"issuer": issuer, "authorization_endpoint": base + "/authorize",
 		"token_endpoint": base + "/token", "jwks_uri": base + "/jwks",
 	}
@@ -207,6 +223,9 @@ func (f *Fake) discovery(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.UserInfoOverride != "" {
 		d["userinfo_endpoint"] = f.UserInfoOverride
+	}
+	if f.TokenAuthMethods != nil {
+		d["token_endpoint_auth_methods_supported"] = f.TokenAuthMethods
 	}
 	_ = json.NewEncoder(w).Encode(d)
 }
@@ -231,7 +250,20 @@ func (f *Fake) token(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": code})
 	}
-	if r.PostForm.Get("client_id") != f.ClientID || r.PostForm.Get("client_secret") != f.Secret {
+	method, id, secret := "client_secret_post", r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
+	if bu, bp, ok := r.BasicAuth(); ok {
+		method = "client_secret_basic"
+		id, _ = url.QueryUnescape(bu)
+		secret, _ = url.QueryUnescape(bp)
+		if r.PostForm.Has("client_secret") {
+			fail("invalid_request") // two methods at once (RFC 6749 section 2.3)
+			return
+		}
+	}
+	f.mu.Lock()
+	f.authUsed = method
+	f.mu.Unlock()
+	if (f.TokenAuthMethods != nil && !slices.Contains(f.TokenAuthMethods, method)) || id != f.ClientID || secret != f.Secret {
 		fail("invalid_client")
 		return
 	}

@@ -8,6 +8,9 @@ import (
 )
 
 const (
+	// tokenPruneFirst is when the first prune runs after start: soon, so a
+	// process restarted more often than tokenPruneInterval still prunes.
+	tokenPruneFirst = time.Minute
 	// tokenPruneInterval is how often dead access tokens are deleted.
 	tokenPruneInterval = time.Hour
 	// tokenPruneTimeout bounds one prune.
@@ -29,19 +32,22 @@ func tokenPruneTick(ctx context.Context, tokens tokenPruner, log *logger.Logger)
 	}
 }
 
-// startTokenMaintenance prunes dead access tokens every hour on its own
-// goroutine until ctx is done.
+// startTokenMaintenance prunes dead access tokens a minute after start, then
+// every hour, on its own goroutine until ctx is done.
 func startTokenMaintenance(ctx context.Context, tokens tokenPruner, log *logger.Logger) {
-	go func() {
-		ticker := time.NewTicker(tokenPruneInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				tokenPruneTick(ctx, tokens, log)
-			}
+	go runTokenMaintenance(ctx, tokens, log, tokenPruneFirst, tokenPruneInterval)
+}
+
+func runTokenMaintenance(ctx context.Context, tokens tokenPruner, log *logger.Logger, first, every time.Duration) {
+	timer := time.NewTimer(first)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			tokenPruneTick(ctx, tokens, log)
+			timer.Reset(every)
 		}
-	}()
+	}
 }

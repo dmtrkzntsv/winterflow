@@ -1950,9 +1950,9 @@ paths:
         $ref: '#/components/schemas/UpdateBackupsResponse'
   /api/v1/auth/login:
     post:
-      description: 'The same 401 answers an unknown email and a wrong password. Requests
-        authenticated by the cookie that change state must send `X-Winterflow-Request:
-        1`.'
+      description: 'The same 401 answers an unknown email and a wrong password. Must
+        send `X-Winterflow-Request: 1` (403 without), as must every cookie-authenticated
+        request that changes state.'
       operationId: authLogin
       requestBody:
         content:
@@ -1989,6 +1989,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "429":
           content:
             text/plain:
@@ -2051,6 +2057,7 @@ paths:
       - auth
   /api/v1/auth/register:
     post:
+      description: 'Must send `X-Winterflow-Request: 1` (403 without).'
       operationId: authRegister
       requestBody:
         content:
@@ -2081,6 +2088,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "429":
           content:
             text/plain:
@@ -7537,12 +7550,18 @@ components:
           type: string
         grant_id:
           type: string
+        is_loopback:
+          type: boolean
         last_used_at:
           format: date-time
+          type: string
+        redirect_host:
           type: string
       required:
       - grant_id
       - client_name
+      - redirect_host
+      - is_loopback
       - created_at
       - last_used_at
       type: object

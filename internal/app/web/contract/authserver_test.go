@@ -98,8 +98,10 @@ func connectMCP(t *testing.T, c *client) (string, tokenAnswer) {
 }
 
 type connectedApp struct {
-	GrantID    string `json:"grant_id"`
-	ClientName string `json:"client_name"`
+	GrantID      string `json:"grant_id"`
+	ClientName   string `json:"client_name"`
+	RedirectHost string `json:"redirect_host"`
+	IsLoopback   bool   `json:"is_loopback"`
 }
 
 func (c *client) connectedApps(t *testing.T) []connectedApp {
@@ -210,7 +212,7 @@ func TestOAuthConnectFlow(t *testing.T) {
 		t.Fatalf("refresh = %+v", next)
 	}
 	apps := owner.connectedApps(t)
-	if len(apps) != 1 || apps[0].ClientName != "Claude" {
+	if len(apps) != 1 || apps[0].ClientName != "Claude" || apps[0].RedirectHost != "claude.ai" || apps[0].IsLoopback {
 		t.Fatalf("connected apps = %+v", apps)
 	}
 

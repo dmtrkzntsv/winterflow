@@ -57,12 +57,16 @@ type AuthorizationDecision struct {
 	RedirectURL string `json:"redirect_url"`
 }
 
-// ConnectedApp is one connected app (a live grant).
+// ConnectedApp is one connected app (a live grant). RedirectHost is where
+// the client's first registered redirect points (empty when it has none);
+// IsLoopback marks a client on the user's own machine.
 type ConnectedApp struct {
-	GrantID    string    `json:"grant_id"`
-	ClientName string    `json:"client_name"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at"`
+	GrantID      string    `json:"grant_id"`
+	ClientName   string    `json:"client_name"`
+	RedirectHost string    `json:"redirect_host"`
+	IsLoopback   bool      `json:"is_loopback"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastUsedAt   time.Time `json:"last_used_at"`
 }
 
 // RevokeConnectedAppRequest is the body of revoke-connected-app.
@@ -157,6 +161,7 @@ func (h *Handler) GetConnectedApps(w http.ResponseWriter, r *http.Request) {
 	out := make([]ConnectedApp, 0, len(apps))
 	for _, a := range apps {
 		out = append(out, ConnectedApp{GrantID: a.GrantID, ClientName: a.ClientName,
+			RedirectHost: a.RedirectHost, IsLoopback: a.IsLoopback,
 			CreatedAt: a.CreatedAt.UTC(), LastUsedAt: a.LastUsedAt.UTC()})
 	}
 	webutil.Success(w, "connected apps", out)

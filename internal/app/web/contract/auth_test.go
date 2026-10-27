@@ -164,3 +164,28 @@ func TestCookieWritesNeedCSRFHeader(t *testing.T) {
 	bearer.do(t, call{Method: http.MethodPost, Path: "/api/v1/user/create-token",
 		Body: map[string]any{"name": "y"}, Header: noCSRF}).expect(t, http.StatusOK)
 }
+
+// TestSignInNeedsCSRFHeader: login and register set the session cookie, so
+// a cross-site form (no X-Winterflow-Request) is refused before either runs
+// (login CSRF), and a refused register claims nothing.
+func TestSignInNeedsCSRFHeader(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	anon := e.anon()
+	noCSRF := http.Header{authn.CSRFHeader: nil}
+	anon.do(t, call{Method: http.MethodPost, Path: "/api/v1/auth/register", Header: noCSRF,
+		Body: map[string]string{"name": "Owner", "email": "owner@example.test", "password": ownerPassword}}).
+		expect(t, http.StatusForbidden)
+	var st struct {
+		Bootstrap bool `json:"bootstrap"`
+	}
+	anon.get(t, "/api/v1/auth/state", nil).expect(t, http.StatusOK).data(t, &st)
+	if !st.Bootstrap {
+		t.Fatal("a refused register claimed the instance")
+	}
+	owner := e.claim(t)
+	anon.do(t, call{Method: http.MethodPost, Path: "/api/v1/auth/login", Header: noCSRF,
+		Body: map[string]string{"email": owner.email, "password": ownerPassword}}).
+		expect(t, http.StatusForbidden)
+	anon.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusUnauthorized)
+}

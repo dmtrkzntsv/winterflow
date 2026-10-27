@@ -114,3 +114,17 @@ func credential(r *http.Request) (raw string, byCookie bool) {
 func safeMethod(m string) bool {
 	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }
+
+// RequireAppRequest answers 403 unless the request carries
+// "X-Winterflow-Request: 1". It guards the unauthenticated writes that set
+// the session cookie (login, register): without it a cross-site form could
+// sign the browser into the attacker's account (login CSRF).
+func RequireAppRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(CSRFHeader) != "1" {
+			webutil.Forbidden(w)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

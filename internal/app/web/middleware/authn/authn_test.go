@@ -159,3 +159,23 @@ func TestUnauthorizedChallenge(t *testing.T) {
 		t.Fatalf("WWW-Authenticate = %q, want none", got)
 	}
 }
+
+func TestRequireAppRequest(t *testing.T) {
+	h := authn.RequireAppRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, tc := range []struct {
+		header string
+		want   int
+	}{{"", http.StatusForbidden}, {"0", http.StatusForbidden}, {"1", http.StatusNoContent}} {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+		if tc.header != "" {
+			r.Header.Set(authn.CSRFHeader, tc.header)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != tc.want {
+			t.Errorf("header %q: status = %d, want %d", tc.header, rec.Code, tc.want)
+		}
+	}
+}

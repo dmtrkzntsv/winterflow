@@ -323,11 +323,23 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 
 // GetLogsObserved is GetLogs with an observer on the result.
 func (uc *UseCase) GetLogsObserved(ctx context.Context, userID, serverID, appID string, since int64, tail int32, observe Observer) (string, error) {
+	return uc.GetServiceLogsObserved(ctx, userID, serverID, appID, "", since, tail, observe)
+}
+
+// GetServiceLogsObserved is GetLogsObserved for one compose service
+// (service "" is every service). An agent that read only the service's
+// lines echoes it in the result's service; an older one answers every
+// service's lines without it.
+func (uc *UseCase) GetServiceLogsObserved(ctx context.Context, userID, serverID, appID, service string, since int64, tail int32, observe Observer) (string, error) {
+	req := command.GetLogsRequest{AppID: appID, Since: since, Tail: tail, Service: service}
+	if err := req.Validate(); err != nil {
+		return "", model.Rejected(err.Error())
+	}
 	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppLogs,
-		Payload: command.GetLogsRequest{AppID: appID, Since: since, Tail: tail},
+		Payload: req,
 	}
 	Observe(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)

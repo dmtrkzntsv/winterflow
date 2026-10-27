@@ -1,6 +1,9 @@
 package command
 
 import (
+	"fmt"
+	"regexp"
+
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
@@ -352,11 +355,30 @@ type GetLogsRequest struct {
 	AppID string `json:"app_id"`
 	Since int64  `json:"since,omitempty"` // unix seconds; 0 = no lower bound
 	Tail  int32  `json:"tail,omitempty"`  // 0 = all
+	// Service, when set, is the one compose service whose logs are read
+	// (`docker compose logs <service>`). An agent older than the field
+	// ignores it and answers every service's lines without echoing it.
+	Service string `json:"service,omitempty"`
 }
 
-func (r GetLogsRequest) Validate() error { return validateAppID(r.AppID) }
+// serviceNameRE is a compose service name (compose's own [a-zA-Z0-9._-]+),
+// starting with a letter or digit so it can never read as a flag.
+var serviceNameRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
+
+// ValidServiceName reports a compose service name's shape.
+func ValidServiceName(name string) bool { return serviceNameRE.MatchString(name) }
+
+func (r GetLogsRequest) Validate() error {
+	if r.Service != "" && !ValidServiceName(r.Service) {
+		return fmt.Errorf("invalid service name %q", r.Service)
+	}
+	return validateAppID(r.AppID)
+}
 
 type GetLogsResponse struct {
 	AppID string     `json:"app_id"`
 	Logs  []LogEntry `json:"logs"`
+	// Service echoes the request's service when the agent read only that
+	// service's logs ("" from an agent that predates the filter).
+	Service string `json:"service,omitempty"`
 }

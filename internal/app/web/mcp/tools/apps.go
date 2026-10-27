@@ -129,7 +129,7 @@ type appStatusInput struct {
 type logsInput struct {
 	ServerID string `json:"server_id" jsonschema:"the server, from list_servers"`
 	AppID    string `json:"app_id" jsonschema:"the app, from list_apps"`
-	Service  string `json:"service,omitempty" jsonschema:"only this compose service's lines"`
+	Service  string `json:"service,omitempty" jsonschema:"only this compose service's lines (its name in the compose file)"`
 	Tail     int    `json:"tail,omitempty" jsonschema:"how many of the newest lines per container (default 200, at most 5000)"`
 }
 
@@ -829,23 +829,32 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 		tail = defaultLogTail
 	}
 	tail = min(tail, maxLogTail)
+	service := strings.TrimSpace(in.Service)
+	if service != "" && !command.ValidServiceName(service) {
+		return webmcp.ErrorText("invalid service name: use the compose file's service name")
+	}
 	rec, fail := t.dispatch(ctx, userID, in.ServerID, command.TypeAppLogs, "get logs",
 		func(ctx context.Context, o appuc.Observer) (string, error) {
-			return t.Apps.GetLogsObserved(ctx, userID, in.ServerID, in.AppID, 0, int32(tail), o)
+			return t.Apps.GetServiceLogsObserved(ctx, userID, in.ServerID, in.AppID, service, 0, int32(tail), o)
 		})
 	if fail != nil {
 		return fail
 	}
-	if in.Service == "" {
+	if service == "" {
 		return result(rec)
 	}
 	var logs struct {
 		command.GetLogsResponse
 		Truncated bool `json:"truncated,omitempty"`
 	}
-	if err := json.Unmarshal(rec.Result, &logs); err != nil {
+	if err := json.Unmarshal(rec.Result, &logs); err != nil || logs.Service == service {
+		// The agent read only the service's logs (compose's own filter,
+		// which also covers a container_name).
 		return result(rec)
 	}
+	// An agent older than the service filter answered every service's
+	// lines: keep those whose compose prefix names the service (a service
+	// with a container_name is not recognized this way).
 	kept := logs.Logs[:0]
 	for _, e := range logs.Logs {
 		if fromService(e.Container, in.AppID, in.Service) {
@@ -853,6 +862,7 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 		}
 	}
 	logs.Logs = kept
+	logs.Service = service
 	raw, err := json.Marshal(logs)
 	if err != nil {
 		return result(rec)
@@ -865,7 +875,8 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 var containerIndexRe = regexp.MustCompile(`-[0-9]+$`)
 
 // fromService reports whether a log entry's container is one of service's
-// replicas in appID's project. The entry carries the prefix `docker compose
+// replicas in appID's project (the fallback for an agent that ignores the
+// request's service). The entry carries the prefix `docker compose
 // logs` prints (parseComposeLogLine): current compose prints the container
 // name without the project, <service>-<n>; older releases print the whole
 // name, <project>-<service>-<n>, with the project the agent names

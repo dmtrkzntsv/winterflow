@@ -330,6 +330,40 @@ func TestGetAppDecodesFiles(t *testing.T) {
 	}
 }
 
+// TestGetAppLogsAgentFiltersService: the service rides app.logs; an agent
+// that filtered by it (echoing it) is trusted, so a service with a
+// container_name keeps its lines.
+func TestGetAppLogsAgentFiltersService(t *testing.T) {
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	var asked command.GetLogsRequest
+	e.agent.on(command.TypeAppLogs, func(raw json.RawMessage) reply {
+		_ = codec.DecodePayload(raw, &asked)
+		return reply{Payload: command.GetLogsResponse{AppID: "app-1", Service: asked.Service, Logs: []command.LogEntry{
+			{Message: "from db", Container: "my-postgres"},
+		}}}
+	})
+	var out struct {
+		Result struct {
+			Logs []command.LogEntry `json:"logs"`
+		} `json:"result"`
+	}
+	ok(t, e.session(t, alice), "get_app_logs", map[string]any{"server_id": alice.serverID, "app_id": "app-1", "service": "db"}, &out)
+	if asked.Service != "db" {
+		t.Fatalf("app.logs asked for service %q, want db", asked.Service)
+	}
+	if len(out.Result.Logs) != 1 || out.Result.Logs[0].Message != "from db" {
+		t.Fatalf("get_app_logs = %+v", out.Result.Logs)
+	}
+	if text, isErr := call(t, e.session(t, alice), "get_app_logs", map[string]any{"server_id": alice.serverID, "app_id": "app-1",
+		"service": "--follow"}); !isErr || !strings.Contains(text, "invalid service name") {
+		t.Fatalf("a flag as the service = %q (isError %v)", text, isErr)
+	}
+}
+
+// TestGetAppLogsFiltersService: an agent older than the service filter
+// answers every service's lines (no service echoed): the tool keeps those
+// whose compose prefix names the service.
 func TestGetAppLogsFiltersService(t *testing.T) {
 	e := newEnv(t, nil)
 	alice := e.newUser(t, "alice@example.test")

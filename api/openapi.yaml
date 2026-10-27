@@ -8736,6 +8736,8 @@ components:
           type:
           - array
           - "null"
+        service:
+          type: string
       required:
       - app_id
       - logs

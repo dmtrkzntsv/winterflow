@@ -48,7 +48,10 @@ const (
 type Users interface {
 	// CreateProviderUser creates a passwordless user with their own
 	// organization and the linked identity id; firstOnly refuses
-	// (model.ErrNotBootstrap) unless the instance has no users yet.
+	// (model.ErrNotBootstrap) unless the instance has no users yet. An
+	// identity email an account already answers to is model.ErrEmailTaken
+	// (checked in the creating transaction, closing the race the callback's
+	// earlier EmailInUse read leaves open).
 	CreateProviderUser(ctx context.Context, name string, id model.Identity, firstOnly bool) (model.User, error)
 }
 

@@ -612,3 +612,127 @@ func TestCreateProviderUser(t *testing.T) {
 		t.Fatal("a second user for one provider account must fail")
 	}
 }
+
+// An email a provider account answers to is in use for every way an account
+// is created: password registration and member creation are refused, and a
+// provider account is refused an email a password account (or another
+// provider account) holds, case-insensitively.
+func TestEmailInUseAcrossPasswordAndProviderAccounts(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	prov, err := r.CreateProviderUser(ctx, "Ida", model.Identity{Provider: "oidc", Subject: "sub-1", Email: "ida@example.test", CreatedAt: at}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := mustPrimaryOrg(t, r, prov.ID)
+
+	if _, err := r.RegisterLocalUser(ctx, "Ida", "IDA@Example.test", "password-123"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("password registration with a provider account's email = %v, want ErrEmailTaken", err)
+	}
+	if _, err := r.CreateMemberUser(ctx, org, "Ida", " ida@example.TEST ", "temp-password1"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("member creation with a provider account's email = %v, want ErrEmailTaken", err)
+	}
+	if _, err := r.CreateProviderUser(ctx, "Ida2", model.Identity{Provider: "github", Subject: "gh-1", Email: "ida@example.test", CreatedAt: at}, false); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("second provider account with the same email = %v, want ErrEmailTaken", err)
+	}
+
+	pat := mustRegister(t, r, "Pat", "pat@example.test", "password-123")
+	if _, err := r.CreateProviderUser(ctx, "Pat", model.Identity{Provider: "oidc", Subject: "sub-2", Email: "pat@example.test", CreatedAt: at}, false); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("provider account with a password account's email = %v, want ErrEmailTaken", err)
+	}
+	// An identity email stored with another case (written before the
+	// callback lower-cased it) still counts.
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `UPDATE user_connected_accounts SET email = ? WHERE provider = ? AND external_id = ?`), "Mixed@Example.test", "oidc", "sub-1")
+	if _, err := r.RegisterLocalUser(ctx, "M", "mixed@example.test", "password-123"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("registration against a mixed-case identity email = %v, want ErrEmailTaken", err)
+	}
+	// The "local" connected account (external id = the email) is the
+	// password account itself, not a second claim on the address: the
+	// refusals above leave exactly the two accounts.
+	if n, err := r.CountUsers(ctx); err != nil || n != 2 {
+		t.Fatalf("users = %d, %v; want 2 (%s, %s)", n, err, prov.ID, pat.ID)
+	}
+}
+
+// Concurrent first accounts have one owner: of racing first provider
+// sign-ins (firstOnly) and a racing password bootstrap, exactly one
+// succeeds and the rest are refused with ErrNotBootstrap. On Postgres this
+// holds only because each creating transaction takes the user-creation
+// lock before it counts (READ COMMITTED would let every one see zero).
+func TestConcurrentFirstUsersHaveOneOwner(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	const providers = 6
+	var wg sync.WaitGroup
+	errs := make([]error, providers+1)
+	start := make(chan struct{})
+	for i := range providers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			id := model.Identity{Provider: "oidc", Subject: "race-" + string(rune('a'+i)), Email: string(rune('a'+i)) + "@race.test", CreatedAt: at}
+			_, errs[i] = r.CreateProviderUser(ctx, "Racer", id, true)
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, errs[providers] = r.BootstrapLocalAdmin(ctx, "Boot", "boot@race.test", "bootpass-123")
+	}()
+	close(start)
+	wg.Wait()
+	ok := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, model.ErrNotBootstrap):
+			t.Errorf("creator %d: %v, want nil or ErrNotBootstrap", i, err)
+		}
+	}
+	if n, err := r.CountUsers(ctx); err != nil || ok != 1 || n != 1 {
+		t.Fatalf("successes = %d, users = %d (%v); want exactly one first user (%v)", ok, n, err, errs)
+	}
+}
+
+// Concurrent registrations of one address (any case, password or provider)
+// create one account.
+func TestConcurrentSameEmailCreatesOneAccount(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	var wg sync.WaitGroup
+	errs := make([]error, 6)
+	start := make(chan struct{})
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			if i%2 == 0 {
+				_, errs[i] = r.RegisterLocalUser(ctx, "Pat", []string{"same@race.test", "SAME@race.test", "Same@Race.Test"}[i/2], "password-123")
+				return
+			}
+			id := model.Identity{Provider: "oidc", Subject: "same-" + string(rune('a'+i)), Email: "same@race.test", CreatedAt: at}
+			_, errs[i] = r.CreateProviderUser(ctx, "Pat", id, false)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	ok := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, model.ErrEmailTaken):
+			t.Errorf("creator %d: %v, want nil or ErrEmailTaken", i, err)
+		}
+	}
+	if n, err := r.CountUsers(ctx); err != nil || ok != 1 || n != 1 {
+		t.Fatalf("successes = %d, users = %d (%v); want exactly one account (%v)", ok, n, err, errs)
+	}
+}

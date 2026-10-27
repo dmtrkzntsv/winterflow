@@ -98,3 +98,7 @@ func (sqliteQuerier) IsOrganizationMember(ctx context.Context, db backend.DBTX, 
 func (sqliteQuerier) ListOrganizationMembers(ctx context.Context, db backend.DBTX, organizationID string) ([]userRow, error) {
 	return sqlitegen.New(db).ListOrganizationMembers(ctx, organizationID)
 }
+
+func (sqliteQuerier) LockUserCreation(ctx context.Context, db backend.DBTX) error {
+	return sqlitegen.New(db).LockUserCreation(ctx)
+}

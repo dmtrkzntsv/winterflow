@@ -49,6 +49,9 @@ type harness struct {
 	srv    *httptest.Server
 	// open and firstOnly are the registration policy the callback sees.
 	open, firstOnly bool
+	// beforeCreate, when set, runs as the callback reads the registration
+	// policy: after its email-in-use read, before the account is created.
+	beforeCreate func()
 }
 
 func newHarness(t *testing.T, slot string) *harness {
@@ -72,7 +75,12 @@ func newHarness(t *testing.T, slot string) *harness {
 	authAPI := hauth.NewHandler(&hauth.Deps{Logger: testLog, Cfg: config.NewServerConfig("standalone"), Users: h.users, Sessions: h.tokens})
 	handler := hoauthlogin.NewHandler(&hoauthlogin.Deps{
 		Logger: testLog, SignIns: svc, Sessions: authAPI, Auth: h.tokens,
-		Registration: func(context.Context) (bool, bool) { return h.open, h.firstOnly },
+		Registration: func(context.Context) (bool, bool) {
+			if h.beforeCreate != nil {
+				h.beforeCreate()
+			}
+			return h.open, h.firstOnly
+		},
 	})
 	pass := func(next http.Handler) http.Handler { return next }
 	r := chi.NewRouter()
@@ -371,6 +379,24 @@ func TestProviderLoginEmailOfExistingAccount(t *testing.T) {
 	h := newHarness(t, model.ProviderOIDC)
 	owner := h.passwordUser(h.fake.Email)
 	h.open = true
+	loc, resp := h.flow(h.client(), nil)
+	if loc != "/login?error=account_exists" {
+		t.Fatalf("redirect = %q", loc)
+	}
+	if h.sessionUser(resp) != "" || h.countUsers() != 1 || len(h.identities(owner.ID)) != 0 {
+		t.Fatal("the provider account was attached or given an account")
+	}
+}
+
+// TestProviderLoginEmailTakenDuringCallback: a password account that takes
+// the address after the callback's email-in-use read (a racing
+// registration) still wins: the creating transaction re-checks the email
+// and the sign-in answers account_exists without creating an account.
+func TestProviderLoginEmailTakenDuringCallback(t *testing.T) {
+	h := newHarness(t, model.ProviderOIDC)
+	h.open = true
+	var owner model.User
+	h.beforeCreate = func() { owner = h.passwordUser(strings.ToUpper(h.fake.Email)) }
 	loc, resp := h.flow(h.client(), nil)
 	if loc != "/login?error=account_exists" {
 		t.Fatalf("redirect = %q", loc)

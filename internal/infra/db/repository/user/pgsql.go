@@ -110,3 +110,7 @@ func (pgsqlQuerier) ListOrganizationMembers(ctx context.Context, db backend.DBTX
 	}
 	return out, nil
 }
+
+func (pgsqlQuerier) LockUserCreation(ctx context.Context, db backend.DBTX) error {
+	return pgsqlgen.New(db).LockUserCreation(ctx)
+}

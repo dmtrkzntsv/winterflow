@@ -90,6 +90,9 @@ type Querier interface {
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteUser(ctx context.Context, userID string) error
 	DispatchSecretRequest(ctx context.Context, arg DispatchSecretRequestParams) (int64, error)
+	// Whether an account already answers to this (normalized, lower-case)
+	// address: a password account's email, or the email a linked sign-in
+	// provider vouched for. Compared case-insensitively.
 	EmailTaken(ctx context.Context, email string) (bool, error)
 	EndDispatchedSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
 	ExpireSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
@@ -306,6 +309,14 @@ type Querier interface {
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// LockUserCreation serializes account creation on Postgres: a
+	// transaction-scoped advisory lock on one fixed key, taken first by every
+	// transaction that creates a user, so the first-user (owner) decision and
+	// the email-in-use check each see every account committed before the
+	// insert (under READ COMMITTED two creators would otherwise miss each
+	// other's uncommitted rows). The two-int4 form keeps the key out of the
+	// single-key space the other advisory locks use.
+	LockUserCreation(ctx context.Context) error
 	// LockUserIdentities row-locks the user inside an identity write's
 	// transaction, so a link and an unlink (or two unlinks) of one user run
 	// one after the other.
@@ -386,7 +397,8 @@ type Querier interface {
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
 	// Whether an account already answers to this address: a password
-	// account's email, or the email a linked provider vouched for.
+	// account's email, or the email a linked provider vouched for; the same
+	// rule as users.sql's EmailTaken (the address arrives lower-cased).
 	SignInEmailInUse(ctx context.Context, address string) (bool, error)
 	// The feed every catalog template now reflects: a later sync of an older
 	// feed is refused as a whole.

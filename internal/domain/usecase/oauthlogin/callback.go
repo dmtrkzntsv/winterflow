@@ -238,6 +238,9 @@ func (s *Service) login(ctx context.Context, st model.LoginState, in CallbackInp
 	if errors.Is(err, model.ErrNotBootstrap) {
 		return fail(ErrCodeRegistrationClosed)
 	}
+	if errors.Is(err, model.ErrEmailTaken) {
+		return fail(ErrCodeAccountExists)
+	}
 	if err != nil {
 		s.warn("create user", err, id.Provider)
 		return fail(ErrCodeProvider)

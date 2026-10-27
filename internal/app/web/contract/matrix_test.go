@@ -224,6 +224,8 @@ var probes = map[string]probe{
 	"POST /api/v1/template/upgrade-instances": {malformed: bad("POST", "/api/v1/template/upgrade-instances")},
 	"GET /api/v1/rollout/get-rollouts":        {malformed: bad("GET", "/api/v1/rollout/get-rollouts")},
 	"POST /api/v1/rollout/stop-rollout":       {malformed: bad("POST", "/api/v1/rollout/stop-rollout")},
+	"GET /api/v1/secret-request/view":         {malformed: bad("GET", "/api/v1/secret-request/view")},
+	"POST /api/v1/secret-request/submit":      {malformed: bad("POST", "/api/v1/secret-request/submit")},
 
 	// The template and key do not exist, so the own-server control answers
 	// 404, not 403.

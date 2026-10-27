@@ -89,6 +89,7 @@ type Querier interface {
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
+	ExpireSecretRequests(ctx context.Context, arg ExpireSecretRequestsParams) (int64, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
 	// rollout ended or a stop was requested (it would end stopped, losing the
 	// extension).
@@ -144,6 +145,8 @@ type Querier interface {
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
 	GetRollout(ctx context.Context, id string) (Rollout, error)
+	GetSecretRequest(ctx context.Context, arg GetSecretRequestParams) (SecretRequest, error)
+	GetSecretRequestByTokenHash(ctx context.Context, tokenHash string) (SecretRequest, error)
 	// The hub the server was assigned to (NULL: none; no row: no server).
 	GetServerHub(ctx context.Context, serverID string) (*string, error)
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
@@ -195,6 +198,8 @@ type Querier interface {
 	// that lost its lease changes nothing.
 	// An active rollout of the same (kind, scope_key) inserts nothing (0 rows).
 	InsertRollout(ctx context.Context, arg InsertRolloutParams) (int64, error)
+	// Secret links (secret_requests).
+	InsertSecretRequest(ctx context.Context, arg InsertSecretRequestParams) error
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
 	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
@@ -316,6 +321,7 @@ type Querier interface {
 	PruneHubJoinTokens(ctx context.Context, arg PruneHubJoinTokensParams) error
 	// Keeps the newest ended rollouts of a scope.
 	PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error
+	PruneSecretRequests(ctx context.Context, endedAt *types.DateTime) (int64, error)
 	PurgeExpiredOAuthCodes(ctx context.Context, expiresAt types.DateTime) error
 	PurgeUnusedOAuthClients(ctx context.Context, createdAt types.DateTime) (int64, error)
 	// Lifts vars_revision past an agent-reported revision the API never issued
@@ -382,6 +388,7 @@ type Querier interface {
 	// expired) as stopped. 0 rows: someone holds a live lease (stop_requested
 	// takes over) or it is not the org's / not active.
 	StopUnleasedRollout(ctx context.Context, arg StopUnleasedRolloutParams) (int64, error)
+	SubmitSecretRequest(ctx context.Context, arg SubmitSecretRequestParams) (int64, error)
 	// The sliding-expiry touch never writes revoked_at and never touches a revoked
 	// row, so a request that read the row before a revoke cannot undo it.
 	TouchAccessToken(ctx context.Context, arg TouchAccessTokenParams) (int64, error)
@@ -402,6 +409,7 @@ type Querier interface {
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
+	UseSecretRequest(ctx context.Context, arg UseSecretRequestParams) (int64, error)
 	UserHasPassword(ctx context.Context, userID string) (bool, error)
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 	// A catalog template the feed no longer lists: 0 rows when it is withdrawn

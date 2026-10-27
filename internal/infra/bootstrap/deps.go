@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/oauthlogin"
 	"winterflow/internal/domain/usecase/rollouts"
+	"winterflow/internal/domain/usecase/secretreq"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -65,10 +66,16 @@ type Deps struct {
 	Rollouts *rollouts.UseCase
 	// CommandResults records the commands MCP tools dispatch and their
 	// outcomes (swept hourly by WireCore's maintenance loop).
-	CommandResults      *cmdresult.Store
-	CommandDispatcher   port.CommandDispatcher
-	NotificationManager port.NotificationManager
-	StatusCache         *status.Cache
+	CommandResults *cmdresult.Store
+	// SecretRequestRepository stores secret links; SecretRequests is the
+	// usecase over it the link page's routes use (swept hourly by
+	// WireCore's maintenance loop). The MCP tools build their own over the
+	// repository, with an agent read of the app's secret variables.
+	SecretRequestRepository port.SecretRequestRepository
+	SecretRequests          *secretreq.UseCase
+	CommandDispatcher       port.CommandDispatcher
+	NotificationManager     port.NotificationManager
+	StatusCache             *status.Cache
 	// MetricRepository serves the monitoring charts; LatestMetrics holds
 	// each server's newest host sample for the dashboard.
 	MetricRepository port.MetricRepository

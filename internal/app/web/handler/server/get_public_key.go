@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"winterflow/internal/app/web/util"
-	"winterflow/pkg/crypto"
 )
 
 // GetPublicKey returns the server/agent EC public key (base64 of the
@@ -28,23 +27,16 @@ func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var caps util.CapabilityReader
 	if h.servers != nil {
-		if value, ok, err := h.servers.GetCapability(r.Context(), serverID, "public_key"); err == nil && ok && value != "" {
-			util.Success(w, "ok", PublicKeyResponse{PublicKey: value})
-			return
-		}
+		caps = h.servers
 	}
-
-	// Standalone fallback: read the embedded agent's certificate from disk.
-	if h.cfg != nil {
-		if point, err := crypto.PublicKeyPointFromCertPath(h.cfg.GetAgentCertPath()); err == nil {
-			util.Success(w, "ok", PublicKeyResponse{PublicKey: point})
-			return
-		} else {
-			h.log.Debug("public key from cert failed", "error", err)
-		}
+	point, err := util.ServerPublicKey(r.Context(), caps, h.cfg, serverID)
+	if err == nil {
+		util.Success(w, "ok", PublicKeyResponse{PublicKey: point})
+		return
 	}
-
+	h.log.Debug("public key from cert failed", "error", err)
 	util.Error(w, "public key unavailable for this server", nil)
 }
 

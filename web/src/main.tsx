@@ -16,11 +16,10 @@ import { NotificationsProvider } from "@/context/notifications-context"
 import { AppsProvider } from "@/context/apps-context"
 import { AppLayout } from "@/layouts/app-layout"
 import LoginPage from "@/pages/login"
-import OAuthAuthorizePage from "@/pages/oauth-authorize"
 import RegisterPage from "@/pages/register"
 import { startTheme } from "@/lib/theme"
 import { startCreateSync } from "@/lib/held-creates"
-import { appRoutes } from "@/routes"
+import { appRoutes, fullPageRoutes } from "@/routes"
 import "./index.css"
 
 // Light, dark or the system's (the user menu and ⌘K switch it); applied
@@ -57,15 +56,9 @@ const router = createBrowserRouter([
         path: "/register",
         element: <RegisterPage />,
       },
-      {
-        // An MCP client's consent screen: full-page, outside the shell.
-        path: "/oauth/authorize",
-        element: (
-          <RequireAuth>
-            <OAuthAuthorizePage />
-          </RequireAuth>
-        ),
-      },
+      // An MCP client's consent screen and secret links: full-page,
+      // outside the shell, signed in.
+      ...fullPageRoutes,
     ],
   },
 ])

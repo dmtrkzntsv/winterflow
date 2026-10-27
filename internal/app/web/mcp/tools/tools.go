@@ -20,6 +20,7 @@ import (
 	"winterflow/internal/domain/service/status"
 	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/domain/usecase/cmdresult"
+	"winterflow/internal/domain/usecase/secretreq"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/pkg/logger"
 )
@@ -46,6 +47,13 @@ type Deps struct {
 	SharedVars port.SharedVariableRepository
 	// Results records the dispatched commands and their outcomes.
 	Results *cmdresult.Store
+	// SecretRequests stores secret links; AppCatalog is the API's app list
+	// (which apps exist, for a secret request's name check).
+	SecretRequests port.SecretRequestRepository
+	AppCatalog     port.AppRepository
+	// WebURL is where the user opens Winterflow (WEB_URL): secret links
+	// are built on it.
+	WebURL string
 	// Wait bounds a tool's wait for a command (0: DefaultWait).
 	Wait time.Duration
 }
@@ -70,7 +78,19 @@ func FromDeps(d *bootstrap.Deps) Deps {
 		Status:     d.StatusCache,
 		SharedVars: d.SharedVariableRepository,
 		Results:    d.CommandResults,
+
+		SecretRequests: d.SecretRequestRepository,
+		AppCatalog:     d.AppRepository,
+		WebURL:         webURL(d),
 	}
+}
+
+// webURL is d's WEB_URL ("" without a config).
+func webURL(d *bootstrap.Deps) string {
+	if d.Cfg == nil {
+		return ""
+	}
+	return d.Cfg.GetWebURL()
 }
 
 // instanceLinks is d's template repository, or a nil interface (never a
@@ -85,6 +105,9 @@ func instanceLinks(d *bootstrap.Deps) port.InstanceLinks {
 // tools is the registered tools' receiver.
 type tools struct {
 	Deps
+	// secrets is the secret links usecase, checking a request's names
+	// against the app's secret variables through the tools' agent read.
+	secrets *secretreq.UseCase
 }
 
 // New registers every tool.
@@ -93,7 +116,12 @@ func New(d Deps) webmcp.Register {
 		d.Wait = DefaultWait
 	}
 	t := &tools{Deps: d}
-	return webmcp.Compose(t.servers, t.apps, t.domains, t.docker, t.sharedVars, t.results)
+	var apps secretreq.Apps
+	if d.AppCatalog != nil {
+		apps = d.AppCatalog
+	}
+	t.secrets = secretreq.New(secretreq.Deps{Repo: d.SecretRequests, Orgs: d.Users, Servers: d.Servers, Apps: apps, AppSecrets: t})
+	return webmcp.Compose(t.servers, t.apps, t.domains, t.docker, t.sharedVars, t.results, t.secretTools)
 }
 
 // handler is a tool's body: its result, never a transport error.

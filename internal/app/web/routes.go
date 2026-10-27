@@ -22,6 +22,7 @@ import (
 	hoauthlogin "winterflow/internal/app/web/handler/oauthlogin"
 	horg "winterflow/internal/app/web/handler/org"
 	hrollouts "winterflow/internal/app/web/handler/rollouts"
+	hsecretreq "winterflow/internal/app/web/handler/secretreq"
 	"winterflow/internal/app/web/handler/server"
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
@@ -54,7 +55,8 @@ func (s *Server) registerRoutes() {
 	// per IP, burst 10.
 	oauthRegisterLimiter := ratelimit.New(0.2, 10)
 	// /mcp is limited per user, not per IP: MCP clients run by an AI
-	// provider share its egress IPs. 10 calls a second, burst 30.
+	// provider share its egress IPs. 10 calls a second, burst 30. The
+	// secret link page's routes share it (per user, too).
 	mcpUserLimiter := userlimit.New(10, 30)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
 		EnrollStartLimit: enrollStartLimiter.Middleware, OAuthRegisterLimit: oauthRegisterLimiter.Middleware,
@@ -253,6 +255,19 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Instances:               d.Instances,
 	})
 	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: rollouts})
+	// Typed nils must not become non-nil interfaces: the spec-only route
+	// table has no secret links usecase or server repository.
+	var (
+		secretRequests hsecretreq.Requests
+		keys           util.CapabilityReader
+	)
+	if d.SecretRequests != nil {
+		secretRequests = d.SecretRequests
+	}
+	if d.ServerRepository != nil {
+		keys = d.ServerRepository
+	}
+	secretsAPI := hsecretreq.NewHandler(&hsecretreq.Deps{Logger: d.Log, Requests: secretRequests, Keys: keys, Cfg: d.Cfg})
 	mcpRoutes := webmcp.Routes(webmcp.Edge{
 		Auth: sessionAuth, AllowOAuth: d.AuthServer.Enabled(), Challenge: d.AuthServer.Challenge(),
 		Register: mcptools.New(mcptools.FromDeps(d)),
@@ -280,6 +295,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
 		rolloutsAPI.Routes(g),
+		secretsAPI.Routes(g),
 		mcpRoutes,
 	} {
 		routes = append(routes, table...)

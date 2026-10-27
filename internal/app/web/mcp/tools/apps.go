@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +23,6 @@ import (
 // Messages the save checks answer with.
 const (
 	plainSecretMessage  = "secret values cannot be sent over MCP; use request_secrets"
-	secretsFromMessage  = "secrets_from is not supported yet: set the secret in the Winterflow UI"
 	requestSecretsHint  = " Use request_secrets to ask the user for it."
 	invalidAppIDMessage = "invalid app_id (take app ids from list_apps)"
 )
@@ -91,7 +92,7 @@ type saveAppInput struct {
 	Source      *sourceInput    `json:"source,omitempty" jsonschema:"deploy from a git repository instead of files"`
 	Ingress     *ingressInput   `json:"ingress,omitempty" jsonschema:"hostnames routed to the app; omit for none"`
 	Draft       bool            `json:"draft,omitempty" jsonschema:"save the change without deploying it"`
-	SecretsFrom string          `json:"secrets_from,omitempty" jsonschema:"a secret request id (request_secrets) whose submitted values become these secret variables"`
+	SecretsFrom string          `json:"secrets_from,omitempty" jsonschema:"a submitted secret request (request_secrets, get_secret_request) whose values become these secret variables; each must be a secret the save declares (x-winterflow variables with encrypted: true, or a variable sent with encrypted: true); a variable it fills may be left out"`
 }
 
 type controlAppInput struct {
@@ -144,7 +145,8 @@ func (t *tools) apps(s *sdk.Server) {
 	add(s, "save_app", "Create or change an app and deploy it (or only save it, with draft), waiting for the outcome. "+
 		"Send the app's full state: files, variables and ingress left out are removed (call get_app first when editing). "+
 		"A secret variable or file is sent only as <encrypted>, which keeps the value the app already stores under that "+
-		"name (a new app or a renamed secret has none); new secret values come from the user through request_secrets. Answers the agent's result and the app's latest container status.",
+		"name (a new app or a renamed secret has none); new secret values come from the user through request_secrets, then "+
+		"secrets_from: <request_id>. Answers the agent's result and the app's latest container status.",
 		nil, t.saveApp)
 	add(s, "control_app", "Start, stop, restart or update (pull and redeploy) an app, waiting for the outcome.", nil, t.controlApp)
 	add(s, "rename_app", "Change an app's display name.", nil, t.renameApp)
@@ -341,15 +343,26 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	if strings.TrimSpace(in.Name) == "" {
 		return webmcp.ErrorText("name is required")
 	}
+	start := time.Now()
+	var (
+		fill   map[string]string
+		commit = func(bool) error { return nil }
+	)
 	if in.SecretsFrom != "" {
-		return webmcp.ErrorText(secretsFromMessage)
+		var err error
+		fill, commit, err = t.secrets.Consume(ctx, userID, in.ServerID, in.AppID, in.SecretsFrom)
+		if err != nil {
+			return t.fail(err, "read the secret request")
+		}
+		if fail := checkFill(in, fill); fail != nil {
+			return fail
+		}
 	}
-	app, payload, fail := buildSave(in)
+	app, payload, fail := buildSave(in, fill)
 	if fail != nil {
 		return fail
 	}
-	start := time.Now()
-	if fail := t.checkKeeps(ctx, userID, in); fail != nil {
+	if fail := t.checkKeeps(ctx, userID, in, fill); fail != nil {
 		return fail
 	}
 	secrets := secretNames(in)
@@ -358,7 +371,13 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	bound := max(t.Wait-time.Since(start), time.Second)
 	rec, fail := t.dispatchWithin(ctx, userID, in.ServerID, command.TypeAppSave, "save app", bound,
 		func(ctx context.Context, o appuc.Observer) (string, error) {
-			return t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			requestID, err := t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			// Once dispatched, the request is used (its ciphertexts went to
+			// the agent); a save refused before leaves it for a retry.
+			if cerr := commit(err == nil); cerr != nil {
+				t.Log.Error("mcp: mark a secret request used", "error", cerr, "request_id", in.SecretsFrom)
+			}
+			return requestID, err
 		})
 	if fail != nil {
 		return withSecretHint(fail, secrets)
@@ -372,12 +391,34 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	return t.withStatus(rec, in.ServerID, appID)
 }
 
+// checkFill refuses secrets_from values the save does not take as
+// secrets: each must name a secret the save declares (x-winterflow
+// variables with encrypted: true, or a variable sent with encrypted: true),
+// and a variable it fills may not be sent as a plain one.
+func checkFill(in saveAppInput, fill map[string]string) *sdk.CallToolResult {
+	for _, v := range in.Variables {
+		if _, ok := fill[strings.TrimSpace(v.Name)]; ok && !v.Encrypted {
+			return webmcp.ErrorText(strings.TrimSpace(v.Name) + ": secrets_from fills it, so send it with encrypted: true (or leave it out)")
+		}
+	}
+	secrets := secretNames(in)
+	for _, name := range slices.Sorted(maps.Keys(fill)) {
+		if !secrets[name] {
+			return webmcp.ErrorText(name + ": secrets_from fills it, but the save does not declare it a secret: declare it in " +
+				"the compose file's x-winterflow.variables with encrypted: true, or send it as a variable with encrypted: true")
+		}
+	}
+	return nil
+}
+
 // buildSave turns save_app's input into the catalog record and the
 // app.save payload the app editor would send: the config blob carries the
 // files' and variables' metadata, the ingress and the git source (never a
 // token); it has no ports, so the agent keeps the app's host ports and
 // pins. Secret values are refused: only the keep placeholder may be sent.
-func buildSave(in saveAppInput) (model.App, command.AppPayload, *sdk.CallToolResult) {
+// fill (secrets_from) is the ciphertexts that become secret variables'
+// values: a listed one's value is replaced, the others are added.
+func buildSave(in saveAppInput, fill map[string]string) (model.App, command.AppPayload, *sdk.CallToolResult) {
 	type fileMeta struct {
 		Filename    string `json:"filename"`
 		IsEncrypted bool   `json:"is_encrypted"`
@@ -397,12 +438,25 @@ func buildSave(in saveAppInput) (model.App, command.AppPayload, *sdk.CallToolRes
 		files = append(files, fileMeta{Filename: strings.TrimSpace(f.Name), IsEncrypted: f.Encrypted})
 		payload.Files = append(payload.Files, command.ContentItem{Name: strings.TrimSpace(f.Name), Content: []byte(f.Content), Encrypted: f.Encrypted})
 	}
+	listed := map[string]bool{}
 	for _, v := range in.Variables {
 		if v.Encrypted && v.Value != command.EncryptedPlaceholder {
 			return model.App{}, payload, webmcp.ErrorText(plainSecretMessage)
 		}
-		vars = append(vars, varMeta{Name: strings.TrimSpace(v.Name), IsEncrypted: v.Encrypted})
-		payload.Variables = append(payload.Variables, command.ContentItem{Name: strings.TrimSpace(v.Name), Content: []byte(v.Value), Encrypted: v.Encrypted})
+		name, value := strings.TrimSpace(v.Name), v.Value
+		if ct, ok := fill[name]; ok {
+			value = ct
+		}
+		listed[name] = true
+		vars = append(vars, varMeta{Name: name, IsEncrypted: v.Encrypted})
+		payload.Variables = append(payload.Variables, command.ContentItem{Name: name, Content: []byte(value), Encrypted: v.Encrypted})
+	}
+	for _, name := range slices.Sorted(maps.Keys(fill)) {
+		if listed[name] {
+			continue
+		}
+		vars = append(vars, varMeta{Name: name, IsEncrypted: true})
+		payload.Variables = append(payload.Variables, command.ContentItem{Name: name, Content: []byte(fill[name]), Encrypted: true})
 	}
 	cfg["files"], cfg["variables"] = files, vars
 	if in.Ingress != nil {
@@ -447,15 +501,17 @@ func buildSave(in saveAppInput) (model.App, command.AppPayload, *sdk.CallToolRes
 // plain value may not start with the placeholder; a secret's may be only
 // the placeholder (buildSave), and only for a name the agent stores a
 // secret under: never on a new app, and on an edit only for the app's
-// current secret variables and files (read with app.get).
-func (t *tools) checkKeeps(ctx context.Context, userID string, in saveAppInput) *sdk.CallToolResult {
+// current secret variables and files (read with app.get). A variable fill
+// (secrets_from) gives a value has one.
+func (t *tools) checkKeeps(ctx context.Context, userID string, in saveAppInput, fill map[string]string) *sdk.CallToolResult {
 	var keepVars, keepFiles []string
 	for _, v := range in.Variables {
 		name := strings.TrimSpace(v.Name)
+		_, filled := fill[name]
 		switch {
 		case !v.Encrypted && strings.HasPrefix(v.Value, command.EncryptedPlaceholder):
 			return webmcp.ErrorText(name + ": a plain value can't start with " + command.EncryptedPlaceholder)
-		case v.Encrypted:
+		case v.Encrypted && !filled:
 			keepVars = append(keepVars, name)
 		}
 	}
@@ -496,23 +552,11 @@ const noStoredSecret = "no secret is stored under this name to keep (a new app o
 	"use request_secrets to ask the user for it"
 
 // storedSecrets reads which secret variables and files the agent holds for
-// the app, by name. The read is not recorded and takes at most a third of
-// the wait, leaving the rest to the save.
+// the app, by name.
 func (t *tools) storedSecrets(ctx context.Context, userID, serverID, appID string) (vars, files map[string]bool, fail *sdk.CallToolResult) {
-	results, deliver := port.NewResultChan()
-	if _, err := t.Apps.GetAppObserved(ctx, userID, serverID, appID, deliver); err != nil {
+	got, err := t.readApp(ctx, userID, serverID, appID, "the app's stored secrets")
+	if err != nil {
 		return nil, nil, t.fail(err, "read the app's stored secrets")
-	}
-	res, ok := port.AwaitResult(ctx, results, t.Wait/3)
-	switch {
-	case !ok:
-		return nil, nil, webmcp.ErrorText("could not read the app's stored secrets in time; try again")
-	case !res.Success:
-		return nil, nil, webmcp.ErrorText("could not read the app's stored secrets: " + res.Err().Error())
-	}
-	got, fail := decodeApp(res.Payload)
-	if fail != nil {
-		return nil, nil, fail
 	}
 	vars, files = map[string]bool{}, map[string]bool{}
 	for _, v := range got.App.Variables {
@@ -528,13 +572,37 @@ func (t *tools) storedSecrets(ctx context.Context, userID, serverID, appID strin
 	return vars, files, nil
 }
 
+// readApp reads the app with app.get on the side of a tool's own command:
+// the read is not recorded and takes at most a third of the wait, leaving
+// the rest to the tool. what names the read in its errors, which are
+// domain errors (their text is the agent's to read) unless dispatching
+// failed.
+func (t *tools) readApp(ctx context.Context, userID, serverID, appID, what string) (command.GetAppResponse, error) {
+	results, deliver := port.NewResultChan()
+	if _, err := t.Apps.GetAppObserved(ctx, userID, serverID, appID, deliver); err != nil {
+		return command.GetAppResponse{}, err
+	}
+	res, ok := port.AwaitResult(ctx, results, t.Wait/3)
+	switch {
+	case !ok:
+		return command.GetAppResponse{}, model.Rejected("could not read " + what + " in time; try again")
+	case !res.Success:
+		return command.GetAppResponse{}, model.Rejected("could not read " + what + ": " + res.Err().Error())
+	}
+	got, fail := decodeApp(res.Payload)
+	if fail != nil {
+		return command.GetAppResponse{}, model.Rejected(fail.Content[0].(*sdk.TextContent).Text)
+	}
+	return got, nil
+}
+
 // secretNames are the variables a save treats as secrets: those it marks
 // encrypted and those its compose files declare encrypted.
 func secretNames(in saveAppInput) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range in.Variables {
 		if v.Encrypted {
-			out[v.Name] = true
+			out[strings.TrimSpace(v.Name)] = true
 		}
 	}
 	var contents [][]byte

@@ -4537,6 +4537,131 @@ paths:
       summary: Stop a rollout after the app in flight
       tags:
       - rollouts
+  /api/v1/secret-request/submit:
+    post:
+      description: One submission per link. The API stores only the ciphertexts until
+        the agent's save uses them.
+      operationId: secretRequestSubmit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Submit a secret link's values, encrypted in the browser
+      tags:
+      - secrets
+  /api/v1/secret-request/view:
+    get:
+      description: A link that is unknown, of another organization, submitted, used
+        or expired answers 404.
+      operationId: secretRequestView
+      parameters:
+      - description: The link's token (wfx_...), the last part of /secrets/<token>.
+        in: query
+        name: token
+        required: true
+        schema:
+          description: The link's token (wfx_...), the last part of /secrets/<token>.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RequestView'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      security:
+      - bearer: []
+      - cookie: []
+      summary: What a secret link asks for
+      tags:
+      - secrets
   /api/v1/server/delete-server:
     post:
       operationId: serverDeleteServer
@@ -9776,6 +9901,53 @@ components:
       - app_id
       - name
       type: object
+    RequestView:
+      properties:
+        app_id:
+          description: Empty for a new app.
+          type: string
+        app_name:
+          description: Empty for a new app, or an app the API does not list yet.
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        message:
+          description: The agent's message (plain text).
+          type: string
+        names:
+          description: The secret variables asked for, one field each.
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        notes:
+          additionalProperties:
+            type: string
+          description: The agent's note per name (plain text).
+          type:
+          - object
+          - "null"
+        public_key:
+          description: The server's public key the browser encrypts each value to;
+            empty when unavailable.
+          type: string
+        server_id:
+          type: string
+        server_name:
+          type: string
+      required:
+      - server_id
+      - server_name
+      - app_id
+      - app_name
+      - names
+      - notes
+      - message
+      - expires_at
+      - public_key
+      type: object
     ResetMemberPasswordResponse:
       properties:
         temp_password:
@@ -10732,6 +10904,22 @@ components:
       - name
       - storage
       - secret
+      type: object
+    SubmitRequest:
+      properties:
+        token:
+          type: string
+        values:
+          additionalProperties:
+            type: string
+          description: Exactly the requested names, each ECIES-encrypted with the
+            server's public key (base64); a plaintext is refused.
+          type:
+          - object
+          - "null"
+      required:
+      - token
+      - values
       type: object
     Targets:
       properties:

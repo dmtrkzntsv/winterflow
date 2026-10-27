@@ -19,7 +19,8 @@ const (
 
 // hourlyJob is one housekeeping task of the hourly loop: dead access tokens
 // (revoked or expired more than 30 days ago) are deleted, stale command
-// results marked unknown and old ones pruned.
+// results marked unknown and old ones pruned, secret requests past their
+// deadline expired and old ones pruned.
 type hourlyJob struct {
 	name string
 	run  func(ctx context.Context) error

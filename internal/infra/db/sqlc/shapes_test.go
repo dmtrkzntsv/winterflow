@@ -10,6 +10,18 @@ import (
 // values with plain Go conversions. A query whose two versions disagree (a
 // missing override, a different column order) fails to compile here.
 var (
+	_ = sqlitegen.SecretRequest(pgsqlgen.SecretRequest{})
+	_ = pgsqlgen.SecretRequest(sqlitegen.SecretRequest{})
+	_ = sqlitegen.InsertSecretRequestParams(pgsqlgen.InsertSecretRequestParams{})
+	_ = pgsqlgen.InsertSecretRequestParams(sqlitegen.InsertSecretRequestParams{})
+	_ = sqlitegen.GetSecretRequestParams(pgsqlgen.GetSecretRequestParams{})
+	_ = pgsqlgen.GetSecretRequestParams(sqlitegen.GetSecretRequestParams{})
+	_ = sqlitegen.SubmitSecretRequestParams(pgsqlgen.SubmitSecretRequestParams{})
+	_ = pgsqlgen.SubmitSecretRequestParams(sqlitegen.SubmitSecretRequestParams{})
+	_ = sqlitegen.UseSecretRequestParams(pgsqlgen.UseSecretRequestParams{})
+	_ = pgsqlgen.UseSecretRequestParams(sqlitegen.UseSecretRequestParams{})
+	_ = sqlitegen.ExpireSecretRequestsParams(pgsqlgen.ExpireSecretRequestsParams{})
+	_ = pgsqlgen.ExpireSecretRequestsParams(sqlitegen.ExpireSecretRequestsParams{})
 	_ = sqlitegen.CommandResult(pgsqlgen.CommandResult{})
 	_ = pgsqlgen.CommandResult(sqlitegen.CommandResult{})
 	_ = sqlitegen.InsertCommandResultParams(pgsqlgen.InsertCommandResultParams{})

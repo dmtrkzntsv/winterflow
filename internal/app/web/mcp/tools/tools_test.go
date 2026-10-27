@@ -27,9 +27,9 @@ func TestToolsListNames(t *testing.T) {
 	slices.Sort(names)
 	want := []string{
 		"control_app", "create_domain", "delete_app", "delete_domain", "get_app", "get_app_logs",
-		"get_app_revisions", "get_app_status", "get_command_result", "get_image_tags", "list_apps",
-		"list_domains", "list_networks", "list_servers", "list_shared_variables", "list_volumes",
-		"rename_app", "rollback_app", "save_app",
+		"get_app_revisions", "get_app_status", "get_command_result", "get_image_tags", "get_secret_request",
+		"list_apps", "list_domains", "list_networks", "list_servers", "list_shared_variables", "list_volumes",
+		"rename_app", "request_secrets", "rollback_app", "save_app",
 	}
 	if !slices.Equal(names, want) {
 		t.Fatalf("tools = %v\nwant    %v", names, want)
@@ -76,6 +76,7 @@ func TestOtherOrgServerForbidden(t *testing.T) {
 		{"create_domain", map[string]any{"name": "example.com", "tls": "auto"}},
 		{"delete_domain", map[string]any{"name": "example.com"}},
 		{"list_volumes", map[string]any{}},
+		{"request_secrets", map[string]any{"names": []string{"API_KEY"}}},
 	} {
 		c.args["server_id"] = bob.serverID
 		text, isErr := call(t, s, c.tool, c.args)
@@ -220,18 +221,6 @@ func TestInstanceManagedAppError(t *testing.T) {
 	}
 	if n := e.agent.total(); n != 0 {
 		t.Fatalf("the agent received %d commands", n)
-	}
-}
-
-func TestSecretsFromNotYetSupported(t *testing.T) {
-	e := newEnv(t, nil)
-	alice := e.newUser(t, "alice@example.test")
-	text, isErr := call(t, e.session(t, alice), "save_app", map[string]any{
-		"server_id": alice.serverID, "name": "web", "secrets_from": "req-1",
-		"files": []map[string]any{{"name": "compose.yml", "content": compose}},
-	})
-	if !isErr || !strings.Contains(text, "secrets_from") {
-		t.Fatalf("save_app with secrets_from = %q (isError %v)", text, isErr)
 	}
 }
 

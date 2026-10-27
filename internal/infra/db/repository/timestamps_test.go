@@ -24,6 +24,7 @@ import (
 	hubtokenrepo "winterflow/internal/infra/db/repository/hubtoken"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
+	secretreqrepo "winterflow/internal/infra/db/repository/secretreq"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -151,6 +152,20 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 	if ok, err := cmdResults.Finish(ctx, "req-1", model.CommandSucceeded, nil, "", at); err != nil || !ok {
 		t.Fatalf("finish command result: %v, %v", ok, err)
+	}
+
+	secretReqs := must(secretreqrepo.New(d.Tx, d.Driver))
+	for i, hash := range []string{"sr-1", "sr-2"} {
+		if err := secretReqs.Create(ctx, model.SecretRequest{ID: dbtest.ID(801 + i), OrgID: orgID, ServerID: srv.ID,
+			CreatedBy: admin.ID, Names: []string{"A"}, CreatedAt: at, ExpiresAt: expires}, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ok, err := secretReqs.Submit(ctx, dbtest.ID(801), map[string]string{"A": "c"}, at, expires); err != nil || !ok {
+		t.Fatalf("submit secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.MarkUsed(ctx, dbtest.ID(801), at); err != nil || !ok {
+		t.Fatalf("use secret request: %v, %v", ok, err)
 	}
 
 	appID := dbtest.ID(301)

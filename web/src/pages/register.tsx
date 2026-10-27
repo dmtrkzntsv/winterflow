@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Spinner } from "@/components/ui/spinner";
 import { AuthHeading, AuthScreen } from "@/components/auth-screen";
+import { apiFetch, jsonPost } from "@/lib/api";
 import { fetchAuthState, type AuthState } from "@/lib/auth-state";
 
 type Errors = { password?: string; confirm?: string; form?: string };
@@ -21,7 +22,7 @@ type Errors = { password?: string; confirm?: string; form?: string };
 // can't be read the form is offered: the API enforces the policy.
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { signedIn } = useAuth();
   const [state, setState] = useState<AuthState | null>(null);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<Errors>({});
@@ -29,7 +30,7 @@ export default function RegisterPage() {
   useEffect(() => {
     const ctl = new AbortController();
     fetchAuthState(ctl.signal).then(setState, () => {
-      if (!ctl.signal.aborted) setState({ bootstrap: false, registrationEnabled: true });
+      if (!ctl.signal.aborted) setState({ bootstrap: false, registrationEnabled: true, providers: [], oauthServer: false });
     });
     return () => ctl.abort();
   }, []);
@@ -48,25 +49,15 @@ export default function RegisterPage() {
     if (next.password || next.confirm) return;
     setBusy(true);
     try {
-      const res = await fetch(`${apiBase}/api/v1/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
-      });
+      const res = await apiFetch(`${apiBase}/api/v1/auth/register`, jsonPost({ name, email, password }));
       const body = (await res.json().catch(() => null)) as { success?: boolean; message?: string } | null;
       if (!res.ok || !body?.success) {
         throw new Error(body?.message ?? `Request failed: ${res.status}`);
       }
-      // Sign the fresh account in right away; if that somehow fails, fall
-      // back to the login page with the email prefilled.
-      try {
-        await login({ username: email, password });
-        toast.success("Welcome to Winterflow!");
-        navigate("/", { replace: true });
-      } catch {
-        toast.success("Account created — sign in to continue");
-        navigate("/login", { state: { email } });
-      }
+      // The answer set the session cookie: the fresh account is signed in.
+      signedIn();
+      toast.success("Welcome to Winterflow!");
+      navigate("/", { replace: true });
     } catch (e) {
       setErrors({ form: e instanceof Error ? e.message : "Registration failed" });
     } finally {

@@ -8,6 +8,7 @@ const en = {
     },
     auth: {
       logout: "Sign out",
+      logoutAll: "Sign out everywhere",
     },
     login: {
       title: "Welcome back",
@@ -23,13 +24,8 @@ const en = {
       submitting: "Signing in…",
       errorGeneric: "We couldn't sign you in. Try again.",
       errorCredentials: "Wrong email or password. Forgot it? Ask a member to reset your password.",
-      ssoLabel: "Or continue with",
-      providers: {
-        google: "Sign in with Google",
-      },
-      providersLoading: "Checking authentication methods...",
-      providerUnavailable: "Authentication method unavailable right now.",
-      localUnavailable: "Signing in with email and password is unavailable.",
+      ssoLabel: "Or",
+      continueWith: "Continue with {{name}}",
       terms:
         "By using <WinterflowLink>Winterflow.io</WinterflowLink>, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
     },

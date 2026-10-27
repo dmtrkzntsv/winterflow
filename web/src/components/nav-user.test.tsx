@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import "@/lib/i18n";
 import { NavUser } from "@/components/nav-user";
 import { SidebarContext, type SidebarContextProps } from "@/components/ui/use-sidebar";
 import { AuthContext, type AuthContextValue } from "@/context/auth-context-base";
@@ -11,11 +12,14 @@ import { THEME_KEY, setThemePreference } from "@/lib/theme";
 
 function renderNav() {
   const sidebar = { isMobile: false, state: "expanded" } as SidebarContextProps;
-  const logout = vi.fn();
-  const auth = { logout } as unknown as AuthContextValue;
+  const logout = vi.fn(async () => {});
+  const logoutAll = vi.fn(async () => {});
+  const auth = { logout, logoutAll } as unknown as AuthContextValue;
   const user = {
-    user: { id: "u-1", name: "Ann Lee", picture: "", provider: "local" },
+    user: { id: "u-1", name: "Ann Lee", picture: "" },
     loading: false,
+    error: null,
+    refresh: async () => {},
   } as UserContextValue;
   render(
     <MemoryRouter>
@@ -28,7 +32,7 @@ function renderNav() {
       </SidebarContext.Provider>
     </MemoryRouter>,
   );
-  return { logout };
+  return { logout, logoutAll };
 }
 
 describe("NavUser", () => {
@@ -67,8 +71,17 @@ describe("NavUser", () => {
     const user = userEvent.setup();
     const { logout } = renderNav();
     await user.click(screen.getByRole("button", { name: /Ann/ }));
-    await user.click(await screen.findByRole("menuitem", { name: /log ?out/i }));
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
     expect(logout).toHaveBeenCalled();
+  });
+
+  it("signs out everywhere", async () => {
+    const user = userEvent.setup();
+    const { logout, logoutAll } = renderNav();
+    await user.click(screen.getByRole("button", { name: /Ann/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out everywhere" }));
+    expect(logoutAll).toHaveBeenCalled();
+    expect(logout).not.toHaveBeenCalled();
   });
 
   it("no longer carries the organization's pages (they live in Settings)", async () => {

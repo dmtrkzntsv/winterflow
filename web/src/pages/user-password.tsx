@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
 import { apiBaseUrl } from "@/config";
 import { useProfile } from "@/context/use-profile";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 
 type Problem = { field: "next" | "confirm" | "form"; message: string };
 
@@ -40,7 +40,7 @@ export default function UserPasswordPage() {
     setProblem(null);
     setBusy(true);
     try {
-      const res = await fetch(`${apiBaseUrl}/api/v1/user/change-password`, {
+      const res = await apiFetch(`${apiBaseUrl}/api/v1/user/change-password`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

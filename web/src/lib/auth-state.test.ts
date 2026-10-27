@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { AUTH_STATE_TIMEOUT_MS, fetchAuthState } from "@/lib/auth-state";
+import { AUTH_STATE_TIMEOUT_MS, fetchAuthState, loadAuthState, resetAuthStateCache } from "@/lib/auth-state";
 import { fakeAPI } from "@/test/fake-api";
 
 afterEach(() => {
@@ -24,14 +24,34 @@ function hangingFetch() {
 }
 
 describe("fetchAuthState", () => {
-  it("reads whether the instance is fresh and whether sign-up is open", async () => {
-    fakeAPI({ "/api/v1/auth/state": { bootstrap: true, registration_enabled: true } });
-    expect(await fetchAuthState()).toEqual({ bootstrap: true, registrationEnabled: true });
+  it("reads whether the instance is fresh, sign-up is open, its providers and connected apps", async () => {
+    fakeAPI({
+      "/api/v1/auth/state": {
+        bootstrap: true,
+        registration_enabled: true,
+        oauth_server: true,
+        providers: [{ id: "google", name: "Google" }, { id: "oidc", name: "" }, { name: "no id" }, "junk"],
+      },
+    });
+    expect(await fetchAuthState()).toEqual({
+      bootstrap: true,
+      registrationEnabled: true,
+      oauthServer: true,
+      providers: [
+        { id: "google", name: "Google" },
+        { id: "oidc", name: "oidc" },
+      ],
+    });
   });
 
-  it("reads a missing field as false", async () => {
+  it("reads a missing field as false or empty", async () => {
     fakeAPI({ "/api/v1/auth/state": {} });
-    expect(await fetchAuthState()).toEqual({ bootstrap: false, registrationEnabled: false });
+    expect(await fetchAuthState()).toEqual({
+      bootstrap: false,
+      registrationEnabled: false,
+      oauthServer: false,
+      providers: [],
+    });
   });
 
   it("fails when the server refuses", async () => {
@@ -62,5 +82,24 @@ describe("fetchAuthState", () => {
     ctl.abort();
     await expect(fetchAuthState(ctl.signal)).rejects.toThrow("aborted");
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
+  });
+});
+
+describe("loadAuthState", () => {
+  afterEach(() => resetAuthStateCache());
+
+  it("reads the state once", async () => {
+    const api = fakeAPI({ "/api/v1/auth/state": { oauth_server: true } });
+    await loadAuthState();
+    expect((await loadAuthState()).oauthServer).toBe(true);
+    expect(api.calls.filter((c) => c.path === "/api/v1/auth/state")).toHaveLength(1);
+  });
+
+  it("asks again after a failure", async () => {
+    let fail = true;
+    fakeAPI({ "/api/v1/auth/state": () => (fail ? new Error("down") : { oauth_server: true }) });
+    await expect(loadAuthState()).rejects.toThrow();
+    fail = false;
+    expect((await loadAuthState()).oauthServer).toBe(true);
   });
 });

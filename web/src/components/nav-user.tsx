@@ -1,4 +1,4 @@
-import { ChevronsUpDown, LogOut } from "lucide-react";
+import { ChevronsUpDown, LogOut, MonitorX } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,11 +22,12 @@ import { THEME_OPTIONS } from "@/lib/theme-options";
 import type { ThemePreference } from "@/lib/theme";
 
 // NavUser is the account footer of the sidebar: who is signed in, the
-// theme, Sign out. The organization's and the account's pages are in
-// Settings.
+// theme, Sign out, and Sign out everywhere (every browser's session; API
+// tokens and connected apps keep working). The organization's and the
+// account's pages are in Settings.
 export function NavUser() {
   const { isMobile } = useSidebar();
-  const { logout } = useAuth();
+  const { logout, logoutAll } = useAuth();
   const { user, loading } = useUser();
   const [theme, setTheme] = useThemePreference();
   const { t } = useTranslation();
@@ -84,9 +85,13 @@ export function NavUser() {
               ))}
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="min-h-10" onClick={() => logout()}>
+            <DropdownMenuItem className="min-h-10" onClick={() => void logout()}>
               <LogOut />
               {t("auth.logout")}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="min-h-10" onClick={() => void logoutAll()}>
+              <MonitorX />
+              {t("auth.logoutAll")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

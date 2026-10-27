@@ -12,7 +12,7 @@ import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { apiBase as base } from "@/config";
-import { dispatchCommand } from "@/lib/api";
+import { apiFetch, dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
 import { forgetAppDetail } from "@/hooks/use-app-detail";
 import { settleLateCreate } from "@/lib/held-creates";
@@ -146,7 +146,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       setError(null);
     }
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${base}/api/v1/app/get-apps?server_id=${encodeURIComponent(activeServerId)}`,
         { credentials: "include" },
       );
@@ -175,7 +175,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     await loadApps();
     if (!isAuthenticated || !activeServerId) return;
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${base}/api/v1/app/refresh-apps?server_id=${encodeURIComponent(activeServerId)}`,
         { method: "POST", credentials: "include" },
       );
@@ -204,7 +204,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `${base}/api/v1/app/get-apps-status?server_id=${encodeURIComponent(activeServerId)}`,
         { credentials: "include" },
       );
@@ -404,7 +404,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   // getPublicKey fetches the server's ECIES public key (for encrypting secrets).
   const getPublicKey = useCallback(async (): Promise<string> => {
     if (!activeServerId) throw new Error("No active server");
-    const res = await fetch(
+    const res = await apiFetch(
       `${base}/api/v1/server/get-public-key?server_id=${encodeURIComponent(activeServerId)}`,
       { credentials: "include" },
     );
@@ -421,7 +421,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const getApp = useCallback(
     async (appId: string): Promise<AppDetailPayload> => {
       if (!activeServerId) throw new Error("No active server");
-      const res = await fetch(
+      const res = await apiFetch(
         `${base}/api/v1/app/get-app?server_id=${encodeURIComponent(
           activeServerId,
         )}&app_id=${encodeURIComponent(appId)}`,
@@ -444,7 +444,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const getImageTags = useCallback(
     async (image: string): Promise<string[]> => {
       if (!activeServerId) throw new Error("No active server");
-      const res = await fetch(
+      const res = await apiFetch(
         `${base}/api/v1/image/get-tags?server_id=${encodeURIComponent(
           activeServerId,
         )}&image=${encodeURIComponent(image)}`,
@@ -468,7 +468,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const getRevisions = useCallback(
     async (appId: string): Promise<AppRevisions> => {
       if (!activeServerId) throw new Error("No active server");
-      const res = await fetch(
+      const res = await apiFetch(
         `${base}/api/v1/app/get-revisions?server_id=${encodeURIComponent(
           activeServerId,
         )}&app_id=${encodeURIComponent(appId)}`,

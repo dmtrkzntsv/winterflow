@@ -1,3 +1,30 @@
+// APP_REQUEST_HEADER marks a request as the web app's own: the API refuses
+// a cookie-authenticated write (and a sign-in) without it, which a
+// cross-site form or simple cross-origin request cannot set (CSRF).
+export const APP_REQUEST_HEADER = "X-Winterflow-Request";
+
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// apiInit is init as every API request needs it: the session cookie
+// (credentials "include", for a UI on a listed other origin too) and, on a
+// method that changes state, APP_REQUEST_HEADER.
+export function apiInit(init: RequestInit = {}): RequestInit {
+  const out: RequestInit = { credentials: "include", ...init };
+  if (!SAFE_METHODS.has((init.method ?? "GET").toUpperCase())) {
+    const headers = new Headers(init.headers);
+    headers.set(APP_REQUEST_HEADER, "1");
+    out.headers = headers;
+  }
+  return out;
+}
+
+// apiFetch is fetch for the API: every request to it goes through here
+// (or createJsonClient / dispatchCommand, which use it), so none can miss
+// the cookie or the app-request header.
+export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  return fetch(input, apiInit(init));
+}
+
 // readApiError turns a failed API response into an Error carrying the
 // server's explanation (the envelope's `message`), falling back to the
 // status when the body has none or isn't JSON.
@@ -35,7 +62,7 @@ export type JsonClient = {
 export function createJsonClient(base: string, fetchImpl?: typeof fetch): JsonClient {
   const doFetch: typeof fetch = fetchImpl ?? ((input, init) => fetch(input, init));
   async function request(path: string, init?: RequestInit): Promise<Response> {
-    const res = await doFetch(`${base}${path}`, { credentials: "include", ...init });
+    const res = await doFetch(`${base}${path}`, apiInit(init));
     if (!res.ok) throw new ApiError((await readApiError(res)).message, res.status);
     return res;
   }
@@ -64,7 +91,7 @@ export async function dispatchCommand(
     onAccepted?: (ref: string) => void;
   } = {},
 ): Promise<unknown> {
-  const res = await fetch(url, { credentials: "include", ...init });
+  const res = await apiFetch(url, init);
   if (!res.ok) throw await readApiError(res);
   const accepted = (await res.json()) as { data?: { request_id?: string } };
   const ref = accepted.data?.request_id;

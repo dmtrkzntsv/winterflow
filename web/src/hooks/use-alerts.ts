@@ -3,7 +3,7 @@ import { useContext, useEffect, useSyncExternalStore } from "react";
 import { apiBaseUrl } from "@/config";
 import { NotificationsContext } from "@/context/notifications-context-base";
 import { METRICS_FETCH_TIMEOUT_MS, METRICS_REFRESH_MS } from "@/hooks/use-metrics";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 import { ALERT_NOTIFICATION, type ActiveAlert } from "@/lib/alerts";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -12,13 +12,13 @@ const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 // a failed call throws the server's message.
 export async function alertsGet<T>(path: string, params?: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const qs = params ? `?${new URLSearchParams(params).toString()}` : "";
-  const res = await fetch(`${base}/api/v1/alerts/${path}${qs}`, { credentials: "include", signal });
+  const res = await apiFetch(`${base}/api/v1/alerts/${path}${qs}`, { credentials: "include", signal });
   if (!res.ok) throw await readApiError(res);
   return ((await res.json()) as { data: T }).data;
 }
 
 export async function alertsPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${base}/api/v1/alerts/${path}`, {
+  const res = await apiFetch(`${base}/api/v1/alerts/${path}`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

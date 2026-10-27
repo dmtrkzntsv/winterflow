@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 import type {
   MetricsRange,
   Series,
@@ -29,7 +29,7 @@ export type MetricsState<T> = {
 export const METRICS_FETCH_TIMEOUT_MS = 15_000;
 
 async function getData<T>(path: string, signal: AbortSignal): Promise<T> {
-  const res = await fetch(`${base}${path}`, { credentials: "include", signal });
+  const res = await apiFetch(`${base}${path}`, { credentials: "include", signal });
   if (!res.ok) throw await readApiError(res);
   const body = (await res.json()) as { data: T };
   return body.data;

@@ -7,7 +7,14 @@ import "@/lib/i18n";
 import RegisterPage from "@/pages/register";
 import { fakeAPI } from "@/test/fake-api";
 
-const auth = vi.hoisted(() => ({ isAuthenticated: false, checked: true, login: vi.fn(), logout: vi.fn() }));
+const auth = vi.hoisted(() => ({
+  isAuthenticated: false,
+  checked: true,
+  login: vi.fn(),
+  signedIn: vi.fn(),
+  logout: vi.fn(),
+  logoutAll: vi.fn(),
+}));
 vi.mock("@/context/use-auth", () => ({ useAuth: () => auth }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -33,6 +40,7 @@ async function fill(user: ReturnType<typeof userEvent.setup>, password = "hunter
 
 beforeEach(() => {
   auth.login.mockReset();
+  auth.signedIn.mockReset();
   toast.success.mockReset();
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -44,7 +52,6 @@ describe("RegisterPage", () => {
       "/api/v1/auth/state": { bootstrap: true, registration_enabled: true },
       "/api/v1/auth/register": { user_id: "u1" },
     });
-    auth.login.mockResolvedValue(undefined);
     renderRegister();
     expect(await screen.findByRole("heading", { level: 1, name: "Set up Winterflow" })).toBeInTheDocument();
     // Nobody can sign in yet: no account exists.
@@ -53,7 +60,11 @@ describe("RegisterPage", () => {
     await user.click(screen.getByRole("button", { name: "Set up Winterflow" }));
     expect(await screen.findByText("home")).toBeInTheDocument();
     expect(api.posted("/api/v1/auth/register")).toEqual([{ name: "Ann", email: "ann@example.test", password: "hunter22" }]);
-    expect(auth.login).toHaveBeenCalledWith({ username: "ann@example.test", password: "hunter22" });
+    // The register answer set the session: no second sign-in.
+    expect(auth.signedIn).toHaveBeenCalled();
+    expect(auth.login).not.toHaveBeenCalled();
+    const init = (api.fetchMock.mock.calls.find(([u]) => String(u).endsWith("/api/v1/auth/register")) ?? [])[1];
+    expect(new Headers(init?.headers).get("X-Winterflow-Request")).toBe("1");
   });
 
   it("is an ordinary sign-up on a set-up instance with sign-up open", async () => {
@@ -105,6 +116,6 @@ describe("RegisterPage", () => {
     await fill(user);
     await user.click(screen.getByRole("button", { name: "Create account" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("email already registered"));
-    expect(auth.login).not.toHaveBeenCalled();
+    expect(auth.signedIn).not.toHaveBeenCalled();
   });
 });

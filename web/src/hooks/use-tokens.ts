@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 
 export type ApiToken = {
   token_id: string;
@@ -21,7 +21,7 @@ export type CreatedToken = {
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBaseUrl}${path}`, {
+  const res = await apiFetch(`${apiBaseUrl}${path}`, {
     credentials: "include",
     ...init,
   });

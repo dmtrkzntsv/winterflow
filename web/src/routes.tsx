@@ -31,6 +31,8 @@ import {
 import NotificationsSettingsPage from "@/pages/settings-notifications";
 import SharedVariablesSettingsPage from "@/pages/settings-shared-variables";
 import TemplatePage from "@/pages/template-page";
+import UserConnectedAppsPage from "@/pages/user-connected-apps";
+import UserIdentitiesPage from "@/pages/user-identities";
 import UserPasswordPage from "@/pages/user-password";
 import UserTokensPage from "@/pages/user-tokens";
 
@@ -89,6 +91,8 @@ export const appRoutes: RouteObject[] = [
       { path: "notifications", element: <NotificationsSettingsPage /> },
       { path: "password", element: <UserPasswordPage /> },
       { path: "tokens", element: <UserTokensPage /> },
+      { path: "identities", element: <UserIdentitiesPage /> },
+      { path: "connected-apps", element: <UserConnectedAppsPage /> },
     ],
   },
   // Before the rebuild: the organization's and the user's pages.
@@ -108,5 +112,7 @@ export const appRoutes: RouteObject[] = [
   },
   { path: "/user/password", element: <LegacyRedirect to={settingsPath("password")} /> },
   { path: "/user/tokens", element: <LegacyRedirect to={settingsPath("tokens")} /> },
+  { path: "/user/identities", element: <LegacyRedirect to={settingsPath("identities")} /> },
+  { path: "/user/connected-apps", element: <LegacyRedirect to={settingsPath("connected-apps")} /> },
   { path: "*", element: <NotFound /> },
 ];

@@ -5,8 +5,10 @@
 package ratelimit
 
 import (
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -75,16 +77,35 @@ func (l *Limiter) Allow(ip string, now time.Time) bool {
 // shares the proxy's IP, which degrades this into a global cap on the auth
 // surface — for its purpose (bounding bcrypt CPU) that is exactly as good.
 func (l *Limiter) Middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ip = r.RemoteAddr
-		}
-		if !l.Allow(ip, time.Now()) {
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return l.MiddlewareWith(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+	})(next)
+}
+
+// MiddlewareWith is Middleware answering a refused request with deny (which
+// must write the 429 itself) instead of a plain-text body, for endpoints
+// whose clients expect their own error format. Retry-After is already set.
+func (l *Limiter) MiddlewareWith(deny http.HandlerFunc) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				ip = r.RemoteAddr
+			}
+			if !l.Allow(ip, time.Now()) {
+				w.Header().Set("Retry-After", l.retryAfter())
+				deny(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// retryAfter is the whole seconds until the bucket refills one token.
+func (l *Limiter) retryAfter() string {
+	if l.rps <= 0 {
+		return "60"
+	}
+	return strconv.Itoa(max(1, int(math.Ceil(1/l.rps))))
 }

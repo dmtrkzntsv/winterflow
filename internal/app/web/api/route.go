@@ -45,8 +45,12 @@ type Guards struct {
 	// route, the one that stores a row.
 	EnrollStartLimit Middleware
 	// OAuthRegisterLimit is the per-IP limiter of the OAuth server's open
-	// dynamic client registration, which stores a row per call.
+	// dynamic client registration, which stores a row per call; its 429 is
+	// an RFC 7591 JSON error readable from any origin.
 	OAuthRegisterLimit Middleware
+	// OAuthTokenLimit is AuthLimit's bucket for the OAuth token endpoint,
+	// answering its 429 as an RFC 6749 JSON error readable from any origin.
+	OAuthTokenLimit Middleware
 }
 
 // Route describes one endpoint: how to serve it and how to document it.

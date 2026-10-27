@@ -51,7 +51,12 @@ func (s *Server) registerRoutes() {
 	// per IP, burst 10.
 	oauthRegisterLimiter := ratelimit.New(0.2, 10)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
-		EnrollStartLimit: enrollStartLimiter.Middleware, OAuthRegisterLimit: oauthRegisterLimiter.Middleware}
+		EnrollStartLimit: enrollStartLimiter.Middleware,
+		// The OAuth endpoints' clients read JSON errors cross-origin, so
+		// their limiters answer in that format (the token endpoint shares
+		// the auth bucket).
+		OAuthRegisterLimit: oauthRegisterLimiter.MiddlewareWith(hauthserver.TooManyRegistrations),
+		OAuthTokenLimit:    authLimiter.MiddlewareWith(hauthserver.TooManyTokenRequests)}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to

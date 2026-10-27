@@ -10,7 +10,8 @@ import (
 // Routes is the authorization server's slice of the route table. The
 // public endpoints are Raw (RFC JSON, any origin); registration stores a
 // row per call and sits behind g.OAuthRegisterLimit, the token endpoint
-// behind g.AuthLimit.
+// behind g.OAuthTokenLimit (AuthLimit's bucket); both limiters answer a JSON
+// OAuth error readable from any origin.
 func (h *Handler) Routes(g api.Guards) []api.Route {
 	off := []int{http.StatusNotFound}
 	return []api.Route{
@@ -42,7 +43,7 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: TokenPath, Handler: h.Token, Auth: api.Public, Raw: true,
-			Middleware: []api.Middleware{g.AuthLimit},
+			Middleware: []api.Middleware{g.OAuthTokenLimit},
 			Summary:    "OAuth token endpoint: authorization_code (PKCE S256) and refresh_token grants", Tag: "oauth",
 			Description: "Access tokens (wfo_) last an hour and work on /mcp only; refresh tokens (wfr_) rotate on every use. " +
 				"Replaying a rotated refresh token outside a 60-second grace window revokes the whole grant.",

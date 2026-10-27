@@ -1,7 +1,10 @@
 package mcp_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -170,5 +173,60 @@ func TestMCPRateLimitedPerUser(t *testing.T) {
 	}
 	if got := post(t, srv.URL, "wfp_bob").StatusCode; got != http.StatusOK {
 		t.Fatalf("another user = %d, want 200", got)
+	}
+}
+
+// postBody sends body as alice, with a known length or chunked.
+func postBody(t *testing.T, url string, body []byte, chunked bool) (*http.Response, []byte) {
+	t.Helper()
+	var r io.Reader = bytes.NewReader(body)
+	if chunked {
+		r = io.MultiReader(r) // hides the length: sent chunked
+	}
+	req, _ := http.NewRequest(http.MethodPost, url, r)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer wfp_alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	return resp, out
+}
+
+func TestMCPBodyLimit(t *testing.T) {
+	srv := serve(t, true)
+	// A ping padded past the bound (a JSON-RPC message may carry params).
+	pad := strings.Repeat("a", webmcp.MaxBodyBytes)
+	big := []byte(`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"pad":"` + pad + `"}}}`)
+	for _, chunked := range []bool{false, true} {
+		resp, out := postBody(t, srv.URL, big, chunked)
+		if resp.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Fatalf("chunked=%v: status %d, want 413 (%s)", chunked, resp.StatusCode, out)
+		}
+		var rpc struct {
+			JSONRPC string `json:"jsonrpc"`
+			Error   struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+			t.Fatalf("chunked=%v: Content-Type %q", chunked, ct)
+		}
+		if err := json.Unmarshal(out, &rpc); err != nil || rpc.JSONRPC != "2.0" || rpc.Error.Code != -32600 ||
+			!strings.Contains(rpc.Error.Message, "exceeds") {
+			t.Fatalf("chunked=%v: body %s (%v)", chunked, out, err)
+		}
+	}
+	// A body above the SDK's 4 MiB default but within the bound is served.
+	mid := strings.Repeat("a", 5<<20)
+	ok := []byte(`{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_meta":{"pad":"` + mid + `"}}}`)
+	for _, chunked := range []bool{false, true} {
+		if resp, out := postBody(t, srv.URL, ok, chunked); resp.StatusCode != http.StatusOK {
+			t.Fatalf("chunked=%v: 5 MiB body = %d (%s), want 200", chunked, resp.StatusCode, out)
+		}
 	}
 }

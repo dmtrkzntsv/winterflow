@@ -61,9 +61,10 @@ func Routes(e Edge, g api.Guards) []api.Route {
 			"answered with one JSON body. Authenticate with a personal access token (`Authorization: Bearer wfp_...`), " +
 			"the session cookie, or an OAuth access token issued to an MCP client while the authorization server runs; " +
 			"a call without a valid credential answers 401 with `WWW-Authenticate: Bearer resource_metadata=..., " +
-			"scope=\"mcp\"` when it does. Calls are limited per user (about 10 a second, burst 30), refusals per IP. " +
+			"scope=\"mcp\"` when it does. Calls are limited per user (about 10 a second, burst 30), refusals per IP; " +
+			"a body over 8 MiB answers 413 with a JSON-RPC error. " +
 			"See docs/mcp-setup.md.",
 		Request: JSONRPCRequest{}, Response: JSONRPCResponse{},
-		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestEntityTooLarge, http.StatusTooManyRequests},
 	}}
 }

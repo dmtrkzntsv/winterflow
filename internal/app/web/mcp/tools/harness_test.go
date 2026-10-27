@@ -200,22 +200,40 @@ func (e *env) newUser(t *testing.T, email string) user {
 	return user{id: u.ID, orgID: orgID, serverID: srv.ID, token: token}
 }
 
-type bearer struct{ token string }
+// bearer sends the token, and host (when set) as the Host header plus
+// header's fields, on every request.
+type bearer struct {
+	token  string
+	host   string
+	header http.Header
+}
 
 func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
+	if b.host != "" {
+		r.Host = b.host
+	}
+	for k, v := range b.header {
+		r.Header[k] = v
+	}
 	return http.DefaultTransport.RoundTrip(r)
 }
 
 // session is an MCP client session as u.
 func (e *env) session(t *testing.T, u user) *sdk.ClientSession {
 	t.Helper()
+	return e.sessionVia(t, bearer{token: u.token})
+}
+
+// sessionVia is an MCP client session sending what rt says.
+func (e *env) sessionVia(t *testing.T, rt bearer) *sdk.ClientSession {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	defer cancel()
 	c := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil)
 	s, err := c.Connect(ctx, &sdk.StreamableClientTransport{
-		Endpoint: e.url, HTTPClient: &http.Client{Transport: bearer{u.token}}, MaxRetries: -1,
+		Endpoint: e.url, HTTPClient: &http.Client{Transport: rt}, MaxRetries: -1,
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

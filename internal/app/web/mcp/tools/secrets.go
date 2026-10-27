@@ -44,16 +44,26 @@ func (t *tools) requestSecrets(ctx context.Context, in requestSecretsInput) *sdk
 	if err != nil {
 		return t.fail(err, "create the secret request")
 	}
-	answer := map[string]any{"request_id": req.ID, "url": t.secretURL(raw), "expires_at": req.ExpiresAt.UTC().Format(time.RFC3339)}
-	if strings.TrimRight(t.WebURL, "/") == "" {
+	base := t.linkBase(ctx)
+	answer := map[string]any{"request_id": req.ID, "url": base + "/secrets/" + raw, "expires_at": req.ExpiresAt.UTC().Format(time.RFC3339)}
+	if base == "" {
 		answer["note"] = "Winterflow's WEB_URL is not set: the link is a path; put the address the user opens Winterflow at in front of it"
 	}
 	return webmcp.JSONResult(answer)
 }
 
-// secretURL is the link's address on WEB_URL (a bare path without one).
-func (t *tools) secretURL(raw string) string {
-	return strings.TrimRight(t.WebURL, "/") + "/secrets/" + raw
+// linkBase is the origin a secret link is built on: WEB_URL, unless it is
+// empty or on loopback (the installer's default http://localhost:<port>,
+// which opens nothing on the user's laptop); then the origin this MCP call
+// came in on, which the client could reach. "" when neither is known.
+func (t *tools) linkBase(ctx context.Context) string {
+	base := strings.TrimRight(t.WebURL, "/")
+	if base == "" || webmcp.IsLoopbackOrigin(base) {
+		if origin := webmcp.Origin(ctx); origin != "" {
+			return origin
+		}
+	}
+	return base
 }
 
 func (t *tools) getSecretRequest(ctx context.Context, in secretRequestInput) *sdk.CallToolResult {

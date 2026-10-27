@@ -10,6 +10,7 @@
 package realip
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strings"
@@ -21,11 +22,27 @@ func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ip := net.ParseIP(ClientIP(r)); ip != nil && ip.IsLoopback() {
 			if fwd := forwarded(r); fwd != "" {
+				r = r.WithContext(context.WithValue(r.Context(), loopbackPeer{}, true))
 				r.RemoteAddr = fwd
 			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loopbackPeer marks a request whose RemoteAddr Middleware rewrote: its
+// direct peer was loopback.
+type loopbackPeer struct{}
+
+// PeerIsLoopback reports whether r's direct peer, the address the
+// connection came from before Middleware rewrote RemoteAddr, is loopback:
+// the local proxy, whose forwarded headers are trusted.
+func PeerIsLoopback(r *http.Request) bool {
+	if v, _ := r.Context().Value(loopbackPeer{}).(bool); v {
+		return true
+	}
+	ip := net.ParseIP(ClientIP(r))
+	return ip != nil && ip.IsLoopback()
 }
 
 // forwarded returns the last X-Forwarded-For entry (the one the local proxy

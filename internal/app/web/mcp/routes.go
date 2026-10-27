@@ -52,7 +52,7 @@ func Routes(e Edge, g api.Guards) []api.Route {
 		authed := authn.Middleware(e.Auth, authn.Options{
 			AllowOAuth: e.AllowOAuth, Challenge: e.Challenge, DenyLimit: g.AuthLimit, RawErrors: true,
 		})
-		h = authed(g.UserLimit(NewHandler(e.Register))).ServeHTTP
+		h = withOrigin(authed(g.UserLimit(NewHandler(e.Register)))).ServeHTTP
 	}
 	return []api.Route{{
 		Method: http.MethodPost, Path: Path, Handler: h, Auth: api.Public, Raw: true,

@@ -3,6 +3,7 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -99,15 +100,46 @@ func TestRequestSecretsLink(t *testing.T) {
 	if st := secretStatus(t, e2, alice2, asked.RequestID); st != "pending" {
 		t.Fatalf("status = %s", st)
 	}
-	// Without WEB_URL the link is a path, and the answer says so.
-	text, isErr := call(t, e.session(t, alice), "request_secrets", map[string]any{"server_id": alice.serverID, "names": []string{"API_KEY"}})
-	if isErr || !strings.Contains(text, `"url":"/secrets/wfx_`) || !strings.Contains(text, "WEB_URL") {
-		t.Fatalf("without WEB_URL = %s", text)
+	// An https WEB_URL wins over the address the client used.
+	asked = askVia(t, e2, bearer{token: alice2.token, host: "homelab:8080"}, alice2)
+	if !strings.HasPrefix(asked.URL, "https://wf.example.test/secrets/wfx_") {
+		t.Fatalf("https WEB_URL, LAN Host: url = %q", asked.URL)
+	}
+	// Without WEB_URL the link is on the address the client used.
+	asked = askVia(t, e, bearer{token: alice.token, host: "homelab:8080"}, alice)
+	if !strings.HasPrefix(asked.URL, "http://homelab:8080/secrets/wfx_") {
+		t.Fatalf("without WEB_URL: url = %q", asked.URL)
 	}
 	for _, names := range [][]string{{"lower"}, {"WF_X"}, {}} {
 		if text, isErr := call(t, e2.session(t, alice2), "request_secrets", map[string]any{"server_id": alice2.serverID, "names": names}); !isErr {
 			t.Errorf("names %v = %s, want an error", names, text)
 		}
+	}
+}
+
+// askVia calls request_secrets for u's server over a session sending rt.
+func askVia(t *testing.T, e *env, rt bearer, u user) askedSecret {
+	t.Helper()
+	var out askedSecret
+	ok(t, e.sessionVia(t, rt), "request_secrets", map[string]any{"server_id": u.serverID, "names": []string{"API_KEY"}}, &out)
+	return out
+}
+
+// TestRequestSecretsLoopbackWebURL: the installer's default WEB_URL,
+// http://localhost:<port>, opens nothing on the user's laptop, so the link
+// is built on the address the MCP client reached Winterflow at; https only
+// over TLS or when the local proxy (a loopback peer) says so.
+func TestRequestSecretsLoopbackWebURL(t *testing.T) {
+	t.Setenv("WEB_URL", "http://localhost:8080")
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	if got := askVia(t, e, bearer{token: alice.token, host: "homelab:8080"}, alice).URL; !strings.HasPrefix(got, "http://homelab:8080/secrets/wfx_") {
+		t.Fatalf("LAN Host: url = %q", got)
+	}
+	// The test client's peer is loopback, as a local proxy's is.
+	xfp := http.Header{"X-Forwarded-Proto": {"https"}}
+	if got := askVia(t, e, bearer{token: alice.token, host: "wf.example.test", header: xfp}, alice).URL; !strings.HasPrefix(got, "https://wf.example.test/secrets/wfx_") {
+		t.Fatalf("X-Forwarded-Proto from loopback: url = %q", got)
 	}
 }
 

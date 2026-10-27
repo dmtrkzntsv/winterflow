@@ -88,6 +88,16 @@ Secret values never pass through MCP: the agent sends a secret variable only
 as `<encrypted>` (keep the stored value) and asks you for new ones through a
 secret request link, which you open in Winterflow while signed in.
 
+The link is built on `WEB_URL`. When `WEB_URL` is empty or on loopback (the
+standalone installer's default `http://localhost:<port>`, which opens
+nothing on your laptop), it is built on the address the MCP client reached
+Winterflow at instead: the request's `Host` header, with `https` when the
+connection was TLS or when a proxy on the same machine (a loopback peer, the
+same rule as the client address) sends `X-Forwarded-Proto: https`, else
+`http`. So a client connected to `http://homelab:8080/mcp` gets
+`http://homelab:8080/secrets/...`. Behind a proxy, pass the original `Host`
+through (Caddy does by default). Any other `WEB_URL` is used as it is.
+
 ## Revoking
 
 Settings → Connected apps lists every app you approved, with when it was

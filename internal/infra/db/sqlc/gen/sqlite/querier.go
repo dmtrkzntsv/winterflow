@@ -57,9 +57,6 @@ type Querier interface {
 	DeleteAppDomainsByApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByServer(ctx context.Context, serverID string) error
 	DeleteDeadAccessTokens(ctx context.Context, arg DeleteDeadAccessTokensParams) (int64, error)
-	// The OAuth server's housekeeping purge: oauth tokens live an hour, so they
-	// pile up far faster than sessions and are swept set-based, not per user.
-	DeleteDeadOAuthAccessTokens(ctx context.Context, arg DeleteDeadOAuthAccessTokensParams) (int64, error)
 	DeleteDeadOAuthGrants(ctx context.Context, arg DeleteDeadOAuthGrantsParams) (int64, error)
 	DeleteExpiredOAuthHandoffs(ctx context.Context, expiresAt types.DateTime) (int64, error)
 	DeleteExpiredOAuthLoginStates(ctx context.Context, expiresAt types.DateTime) (int64, error)

@@ -79,14 +79,6 @@ DELETE FROM oauth_grants
 WHERE (revoked_at IS NOT NULL AND revoked_at < ?)
    OR expires_at < ?;
 
--- name: DeleteDeadOAuthAccessTokens :execrows
--- The OAuth server's housekeeping purge: oauth tokens live an hour, so they
--- pile up far faster than sessions and are swept set-based, not per user.
-DELETE FROM access_tokens
-WHERE kind = 'oauth'
-  AND ((revoked_at IS NOT NULL AND revoked_at < ?)
-    OR (expires_at IS NOT NULL AND expires_at < ?));
-
 -- Sign-in with a provider: linked identities (user_connected_accounts),
 -- in-flight states, one-shot handoffs.
 

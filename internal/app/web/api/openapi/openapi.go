@@ -74,9 +74,11 @@ type RedirectResponse struct {
 	Location string `header:"Location" required:"true" description:"Where the browser goes next"`
 }
 
-// LibraryError is the error body of Raw (library) routes.
+// LibraryError is the error body of Raw (library) routes; the OAuth
+// server's adds an RFC 6749 error_description.
 type LibraryError struct {
-	Error string `json:"error" required:"true"`
+	Error       string `json:"error" required:"true"`
+	Description string `json:"error_description,omitempty"`
 }
 
 // AcceptedData is the `data` of every 202: the request id that the SSE
@@ -352,7 +354,11 @@ func (b *builder) addRoute(rt api.Route) error {
 	case rt.Redirect != 0:
 		oc.AddRespStructure(RedirectResponse{}, oapi.WithHTTPStatus(rt.Redirect))
 	case rt.Raw || rt.Binary:
-		oc.AddRespStructure(rt.Response, oapi.WithContentType(rt.ContentType), oapi.WithHTTPStatus(http.StatusOK))
+		status := http.StatusOK
+		if rt.Status != 0 {
+			status = rt.Status
+		}
+		oc.AddRespStructure(rt.Response, oapi.WithContentType(rt.ContentType), oapi.WithHTTPStatus(status))
 	case rt.Accepted:
 		oc.AddRespStructure(envelope(AcceptedData{}), oapi.WithHTTPStatus(http.StatusAccepted))
 		if rt.Response != nil {

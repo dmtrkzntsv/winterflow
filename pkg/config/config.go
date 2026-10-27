@@ -166,14 +166,15 @@ func (c *ServerConfig) GetOIDCAuth() OIDCAuth {
 }
 
 // GetPublicOrigin is WEB_URL as the instance's public origin
-// ("scheme://host[:port]"), for redirect URIs registered with a provider.
-// ok is false unless WEB_URL is an https origin with no path, query or
-// fragment (a trailing "/" is allowed), or the same over plain http on a
-// loopback host (local development).
+// ("scheme://host[:port]", host lower-cased), for redirect URIs registered
+// with a provider and as the OAuth authorization server's issuer. ok is
+// false unless WEB_URL is an https origin with no path, query or fragment
+// (a trailing "/" is allowed), or the same over plain http on a loopback
+// host (local development).
 func (c *ServerConfig) GetPublicOrigin() (origin string, ok bool) {
 	u, err := url.Parse(strings.TrimSpace(os.Getenv("WEB_URL")))
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" ||
-		(u.Path != "" && u.Path != "/") {
+	if err != nil || u.Hostname() == "" || strings.HasSuffix(u.Host, ":") || u.User != nil || u.RawQuery != "" ||
+		u.ForceQuery || u.Fragment != "" || u.Opaque != "" || (u.Path != "" && u.Path != "/") {
 		return "", false
 	}
 	switch u.Scheme {
@@ -186,7 +187,7 @@ func (c *ServerConfig) GetPublicOrigin() (origin string, ok bool) {
 	default:
 		return "", false
 	}
-	return u.Scheme + "://" + u.Host, true
+	return u.Scheme + "://" + strings.ToLower(u.Host), true
 }
 
 // GetJwtSecret is JWT_SECRET. Despite the name it no longer signs anything

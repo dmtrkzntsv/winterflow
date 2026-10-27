@@ -32,6 +32,10 @@ type coreOptions struct {
 	signInSet       bool
 	signInOrigin    string
 	signInProviders []oauthlogin.Provider
+	// authServerSet replaces the authorization server's issuer
+	// (WithAuthServerIssuer).
+	authServerSet    bool
+	authServerIssuer string
 }
 
 // WithHubRegistry wires the distributed API's hubs: commands are routed to

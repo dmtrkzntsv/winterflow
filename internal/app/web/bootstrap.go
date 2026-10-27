@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	hauthserver "winterflow/internal/app/web/handler/authserver"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
 	"winterflow/internal/app/web/middleware/realip"
@@ -51,6 +52,9 @@ func (s *Server) registerMiddleware() {
 	s.Router.Use(logmw.WithLogger(s.Logger))
 	s.Router.Use(middleware.RequestID)
 	s.Router.Use(realip.Middleware)
+	// The OAuth server's public endpoints allow any origin; their
+	// preflights must not reach the allowlisting CORS middleware.
+	s.Router.Use(hauthserver.Preflight)
 	s.Router.Use(corsmw.UseCORS(s.Cfg.GetAllowedOrigins()))
 	s.Router.Use(middleware.Recoverer)
 }

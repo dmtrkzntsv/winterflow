@@ -44,6 +44,9 @@ type Guards struct {
 	// EnrollStartLimit is the tighter per-IP limiter of the enrollment start
 	// route, the one that stores a row.
 	EnrollStartLimit Middleware
+	// OAuthRegisterLimit is the per-IP limiter of the OAuth server's open
+	// dynamic client registration, which stores a row per call.
+	OAuthRegisterLimit Middleware
 }
 
 // Route describes one endpoint: how to serve it and how to document it.
@@ -85,6 +88,8 @@ type Route struct {
 	Redirect int
 	// ContentType is a Raw or Binary route's response media type (default JSON).
 	ContentType string
+	// Status is a Raw route's success status (default 200).
+	Status int
 	// Form is an application/x-www-form-urlencoded alternative to Request.
 	Form any
 	// Errors lists documented error statuses besides the automatic 401 on

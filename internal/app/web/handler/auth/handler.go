@@ -46,6 +46,9 @@ type Deps struct {
 	AfterSignIn func(ctx context.Context, userID string)
 	// Providers lists the configured sign-in providers; nil means none.
 	Providers ProviderLister
+	// OAuthServer reports whether the OAuth authorization server for MCP
+	// clients runs.
+	OAuthServer bool
 }
 
 // ProviderLister is the slice of the provider sign-in usecase State needs.
@@ -60,11 +63,12 @@ type Handler struct {
 	sessions    SessionStore
 	afterSignIn func(ctx context.Context, userID string)
 	providers   ProviderLister
+	oauthServer bool
 }
 
 func NewHandler(d *Deps) *Handler {
 	return &Handler{log: d.Logger, cfg: d.Cfg, users: d.Users, sessions: d.Sessions, afterSignIn: d.AfterSignIn,
-		providers: d.Providers}
+		providers: d.Providers, oauthServer: d.OAuthServer}
 }
 
 // maxUserAgent bounds the User-Agent stored with a session.
@@ -306,8 +310,7 @@ func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
 	if h.providers != nil {
 		providers = append(providers, h.providers.Providers()...)
 	}
-	// The authorization server is not wired yet.
 	webutil.Success(w, "auth state", StateResponse{
-		Bootstrap: fresh, RegistrationEnabled: open, Providers: providers,
+		Bootstrap: fresh, RegistrationEnabled: open, Providers: providers, OAuthServer: h.oauthServer,
 	})
 }

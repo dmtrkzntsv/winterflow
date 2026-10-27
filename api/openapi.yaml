@@ -16,6 +16,75 @@ info:
   title: Winterflow API
   version: "1"
 paths:
+  /.well-known/oauth-authorization-server:
+    get:
+      description: The server runs only while WEB_URL is an https origin with no path
+        (or http on loopback); otherwise every OAuth route answers 404.
+      operationId: .wellKnownOauthAuthorizationServer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthServerMetadata'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Not Found
+      summary: OAuth authorization server metadata (RFC 8414)
+      tags:
+      - oauth
+  /.well-known/oauth-protected-resource:
+    get:
+      operationId: .wellKnownOauthProtectedResource
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtectedResourceMetadata'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Not Found
+      summary: OAuth protected resource metadata (RFC 9728) of /mcp
+      tags:
+      - oauth
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      operationId: .wellKnownOauthProtectedResourceMcp
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtectedResourceMetadata'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Not Found
+      summary: OAuth protected resource metadata (RFC 9728) of /mcp, at its path-specific
+        location
+      tags:
+      - oauth
   /_/health:
     get:
       operationId: health
@@ -2058,6 +2127,220 @@ paths:
         providers exist
       tags:
       - auth
+  /api/v1/authserver/approve-authorization:
+    post:
+      description: The client gets full access to the caller's organization over /mcp.
+        Navigate to `redirect_url`.
+      operationId: authserverApproveAuthorization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizationRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuthorizationDecision'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: 'Approve an OAuth authorization: issues a one-time code'
+      tags:
+      - oauth
+  /api/v1/authserver/decline-authorization:
+    post:
+      description: Navigate to `redirect_url`, which sends access_denied back to the
+        client.
+      operationId: authserverDeclineAuthorization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthorizationRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuthorizationDecision'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Decline an OAuth authorization
+      tags:
+      - oauth
+  /api/v1/authserver/get-authorization-request:
+    get:
+      description: 400 when the client or its redirect cannot be trusted (show the
+        message); a bad OAuth parameter with a trusted redirect answers 200 with `error_redirect_url`,
+        where the page sends the browser.
+      operationId: authserverGetAuthorizationRequest
+      parameters:
+      - in: query
+        name: client_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: redirect_uri
+        required: true
+        schema:
+          type: string
+      - description: Must be code.
+        in: query
+        name: response_type
+        required: true
+        schema:
+          description: Must be code.
+          type: string
+      - description: PKCE S256 challenge.
+        in: query
+        name: code_challenge
+        required: true
+        schema:
+          description: PKCE S256 challenge.
+          type: string
+      - description: Must be S256.
+        in: query
+        name: code_challenge_method
+        required: true
+        schema:
+          description: Must be S256.
+          type: string
+      - description: 'Resource indicator: this server''s /mcp, or absent.'
+        in: query
+        name: resource
+        schema:
+          description: 'Resource indicator: this server''s /mcp, or absent.'
+          type: string
+      - description: 'Ignored: every grant is scope mcp.'
+        in: query
+        name: scope
+        schema:
+          description: 'Ignored: every grant is scope mcp.'
+          type: string
+      - description: Opaque client state (at most 1024 bytes), echoed back.
+        in: query
+        name: state
+        schema:
+          description: Opaque client state (at most 1024 bytes), echoed back.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AuthorizationDescription'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Describe an OAuth authorization request for the consent page
+      tags:
+      - oauth
   /api/v1/domain/create:
     post:
       description: In certificate mode `certificate` is the PEM chain and `key` the
@@ -5747,6 +6030,55 @@ paths:
       summary: Revoke a personal access token
       tags:
       - user
+  /api/v1/user/get-connected-apps:
+    get:
+      operationId: userGetConnectedApps
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/ConnectedApp'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the caller's connected apps (OAuth grants of MCP clients)
+      tags:
+      - oauth
   /api/v1/user/get-identities:
     get:
       operationId: userGetIdentities
@@ -5919,6 +6251,62 @@ paths:
         the cookie'
       tags:
       - user
+  /api/v1/user/revoke-connected-app:
+    post:
+      operationId: userRevokeConnectedApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeConnectedAppRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: 'Revoke a connected app: its tokens stop working at once'
+      tags:
+      - oauth
   /api/v1/user/unlink-identity:
     post:
       description: 409 when it is the only way into the account (no password and no
@@ -6330,6 +6718,124 @@ paths:
       summary: 'Start a sign-in (or a link) with a provider: redirects to it'
       tags:
       - auth
+  /oauth/register:
+    post:
+      description: Redirect URIs must be https, or http on a loopback host (whose
+        port may differ at sign-in). A client_secret_* method returns a client_secret,
+        shown once.
+      operationId: oauthRegister
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientRegistrationRequest'
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientRegistrationResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Not Found
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Internal Server Error
+      summary: Register an OAuth client (RFC 7591 dynamic client registration)
+      tags:
+      - oauth
+  /oauth/token:
+    post:
+      description: Access tokens (wfo_) last an hour and work on /mcp only; refresh
+        tokens (wfr_) rotate on every use. Replaying a rotated refresh token outside
+        a 60-second grace window revokes the whole grant.
+      operationId: oauthToken
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FormDataTokenForm'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Not Found
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
+          description: Internal Server Error
+      summary: 'OAuth token endpoint: authorization_code (PKCE S256) and refresh_token
+        grants'
+      tags:
+      - oauth
 components:
   schemas:
     AcceptedData:
@@ -6571,6 +7077,99 @@ components:
       required:
       - server_id
       - apps
+      type: object
+    AuthServerMetadata:
+      properties:
+        authorization_endpoint:
+          type: string
+        code_challenge_methods_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        grant_types_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        issuer:
+          type: string
+        registration_endpoint:
+          type: string
+        response_types_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        scopes_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        token_endpoint:
+          type: string
+        token_endpoint_auth_methods_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - issuer
+      - authorization_endpoint
+      - token_endpoint
+      - registration_endpoint
+      - response_types_supported
+      - grant_types_supported
+      - code_challenge_methods_supported
+      - token_endpoint_auth_methods_supported
+      - scopes_supported
+      type: object
+    AuthorizationDecision:
+      properties:
+        redirect_url:
+          type: string
+      required:
+      - redirect_url
+      type: object
+    AuthorizationDescription:
+      properties:
+        client_name:
+          type: string
+        error_redirect_url:
+          type: string
+        is_loopback:
+          type: boolean
+        redirect_host:
+          type: string
+      required:
+      - client_name
+      - redirect_host
+      - is_loopback
+      - error_redirect_url
+      type: object
+    AuthorizationRequest:
+      properties:
+        client_id:
+          type: string
+        code_challenge:
+          type: string
+        code_challenge_method:
+          type: string
+        redirect_uri:
+          type: string
+        resource:
+          type: string
+        response_type:
+          type: string
+        scope:
+          type: string
+        state:
+          type: string
       type: object
     BackupChoice:
       properties:
@@ -6838,6 +7437,77 @@ components:
       - covered
       - claims
       type: object
+    ClientRegistrationRequest:
+      properties:
+        client_name:
+          type: string
+        grant_types:
+          items:
+            type: string
+          type: array
+        redirect_uris:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        response_types:
+          items:
+            type: string
+          type: array
+        token_endpoint_auth_method:
+          enum:
+          - none
+          - client_secret_post
+          - client_secret_basic
+          type: string
+      required:
+      - redirect_uris
+      type: object
+    ClientRegistrationResponse:
+      properties:
+        client_id:
+          type: string
+        client_id_issued_at:
+          format: int64
+          type: integer
+        client_name:
+          type: string
+        client_secret:
+          type: string
+        client_secret_expires_at:
+          type:
+          - "null"
+          - integer
+        grant_types:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        redirect_uris:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        response_types:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        token_endpoint_auth_method:
+          type: string
+      required:
+      - client_id
+      - client_id_issued_at
+      - client_name
+      - redirect_uris
+      - grant_types
+      - response_types
+      - token_endpoint_auth_method
+      type: object
     CodeResponse:
       properties:
         code:
@@ -6857,6 +7527,24 @@ components:
       - code
       - expires_at
       - codes_left
+      type: object
+    ConnectedApp:
+      properties:
+        client_name:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        grant_id:
+          type: string
+        last_used_at:
+          format: date-time
+          type: string
+      required:
+      - grant_id
+      - client_name
+      - created_at
+      - last_used_at
       type: object
     ContainerStatus:
       properties:
@@ -7730,6 +8418,30 @@ components:
       required:
       - state
       type: object
+    FormDataTokenForm:
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        code:
+          type: string
+        code_verifier:
+          type: string
+        grant_type:
+          description: authorization_code or refresh_token; anything else is unsupported_grant_type.
+          type: string
+        redirect_uri:
+          type: string
+        refresh_token:
+          type: string
+        resource:
+          type: string
+        scope:
+          type: string
+      required:
+      - grant_type
+      type: object
     GetAppResponse:
       properties:
         app:
@@ -8219,6 +8931,15 @@ components:
       required:
       - at
       - server
+      type: object
+    LibraryError:
+      properties:
+        error:
+          type: string
+        error_description:
+          type: string
+      required:
+      - error
       type: object
     ListAppsResponse:
       properties:
@@ -8829,6 +9550,34 @@ components:
       - email
       - must_change_password
       type: object
+    ProtectedResourceMetadata:
+      properties:
+        authorization_servers:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        bearer_methods_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        resource:
+          type: string
+        scopes_supported:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - resource
+      - authorization_servers
+      - scopes_supported
+      - bearer_methods_supported
+      type: object
     PublicKeyResponse:
       properties:
         public_key:
@@ -9008,6 +9757,13 @@ components:
       - hash
       - subject
       - timestamp
+      type: object
+    RevokeConnectedAppRequest:
+      properties:
+        grant_id:
+          type: string
+      required:
+      - grant_id
       type: object
     RollbackAppRequest:
       properties:
@@ -10109,6 +10865,25 @@ components:
           type: boolean
       required:
       - ok
+      type: object
+    TokenResponse:
+      properties:
+        access_token:
+          type: string
+        expires_in:
+          type: integer
+        refresh_token:
+          type: string
+        scope:
+          type: string
+        token_type:
+          type: string
+      required:
+      - access_token
+      - token_type
+      - expires_in
+      - refresh_token
+      - scope
       type: object
     UnlinkIdentityRequest:
       properties:

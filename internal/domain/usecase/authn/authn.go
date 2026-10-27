@@ -145,6 +145,12 @@ func (u *UseCase) IssueOAuthAccess(ctx context.Context, userID, grantID string, 
 	return raw, err
 }
 
+// RevokeGrantTokens revokes every access token issued under an OAuth grant
+// (the grant was revoked, replaced or caught replaying a refresh token).
+func (u *UseCase) RevokeGrantTokens(ctx context.Context, grantID string) error {
+	return u.repo.RevokeByGrant(ctx, grantID, u.now())
+}
+
 // Prune deletes tokens revoked or expired more than 30 days ago.
 func (u *UseCase) Prune(ctx context.Context) error {
 	_, err := u.repo.DeleteDead(ctx, u.now().Add(-deadRetention))

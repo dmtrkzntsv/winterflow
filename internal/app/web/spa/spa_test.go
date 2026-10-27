@@ -38,6 +38,7 @@ func TestHandler(t *testing.T) {
 		{"root serves shell", "GET", "/", 200, "shell", "no-cache"},
 		{"client route falls back to shell", "GET", "/apps/some-id", 200, "shell", "no-cache"},
 		{"register route falls back", "GET", "/register", 200, "shell", ""},
+		{"oauth consent page falls back", "GET", "/oauth/authorize?client_id=x&state=y", 200, "shell", ""},
 		{"real asset served immutable", "GET", "/assets/app-abc.js", 200, "js", "public, max-age=31536000, immutable"},
 		{"real top-level file served", "GET", "/favicon.svg", 200, "<svg/>", "no-cache"},
 		{"missing asset-like path 404s", "GET", "/assets/gone.js", 404, "", ""},

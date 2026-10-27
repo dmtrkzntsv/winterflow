@@ -13,6 +13,7 @@ import (
 	halerts "winterflow/internal/app/web/handler/alerts"
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
+	hauthserver "winterflow/internal/app/web/handler/authserver"
 	hdocker "winterflow/internal/app/web/handler/docker"
 	henroll "winterflow/internal/app/web/handler/enroll"
 	hhubjoin "winterflow/internal/app/web/handler/hubjoin"
@@ -46,8 +47,11 @@ func (s *Server) registerRoutes() {
 	enrollLimiter := ratelimit.New(5, 30)
 	// Starting an enrollment stores a row: about 3 a minute per IP, burst 5.
 	enrollStartLimiter := ratelimit.New(0.05, 5)
+	// OAuth client registration is open and stores a row: one every 5 s
+	// per IP, burst 10.
+	oauthRegisterLimiter := ratelimit.New(0.2, 10)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
-		EnrollStartLimit: enrollStartLimiter.Middleware}
+		EnrollStartLimit: enrollStartLimiter.Middleware, OAuthRegisterLimit: oauthRegisterLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to
@@ -105,8 +109,9 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	}
 	authAPI := hauth.NewHandler(&hauth.Deps{
 		Logger: d.Log, Cfg: d.Cfg, Users: d.UserService, Sessions: d.Authn, AfterSignIn: afterSignIn,
-		Providers: providers,
+		Providers: providers, OAuthServer: d.AuthServer.Enabled(),
 	})
+	authServerAPI := hauthserver.NewHandler(&hauthserver.Deps{Logger: d.Log, Server: d.AuthServer})
 	var sessionAuth authn.Authenticator
 	if d.Authn != nil {
 		sessionAuth = d.Authn
@@ -251,6 +256,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		agentHubAPI.Routes(g),
 		authAPI.Routes(g),
 		oauthLoginAPI.Routes(g),
+		authServerAPI.Routes(g),
 		notificationAPI.Routes(g),
 		appsAPI.Routes(g),
 		dockerAPI.Routes(g),

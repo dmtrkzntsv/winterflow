@@ -20,6 +20,7 @@ import (
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
+	authserverrepo "winterflow/internal/infra/db/repository/authserver"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	oauthloginrepo "winterflow/internal/infra/db/repository/oauthlogin"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
@@ -77,6 +78,9 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 
 	tokens := authn.New(r.accessToken, nil)
 	startTokenMaintenance(ctx, tokens, log)
+	authServer := newAuthServer(r.authServer, tokens, conn, o, cfg, log)
+	// Removing a user revokes their OAuth grants too.
+	tokens.SetGrantRevoker(authServer)
 
 	// Alerts: the evaluator rides the events sink (samples, statuses,
 	// liveness sweep); the notifier sends through the org's channels.
@@ -122,6 +126,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		UserService:              r.user,
 		Authn:                    tokens,
 		SignIns:                  newSignIns(r.signIn, r.user, o, cfg, log),
+		AuthServer:               authServer,
 		ServerRepository:         r.server,
 		AppRepository:            r.app,
 		AppDomainRepository:      r.appDomain,
@@ -153,6 +158,7 @@ type repos struct {
 	user          *userrepo.Repo
 	accessToken   *accesstokenrepo.Repo
 	signIn        *oauthloginrepo.Repo
+	authServer    *authserverrepo.Repo
 	server        *serverrepo.Repo
 	app           *apprepo.Repo
 	appDomain     *appdomainrepo.Repo
@@ -180,6 +186,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		return r, err
 	}
 	if r.signIn, err = oauthloginrepo.New(conn.Tx, conn.Driver); err != nil {
+		return r, err
+	}
+	if r.authServer, err = authserverrepo.New(conn.Tx, conn.Driver); err != nil {
 		return r, err
 	}
 	if r.server, err = serverrepo.New(conn.Tx, conn.Driver, log); err != nil {

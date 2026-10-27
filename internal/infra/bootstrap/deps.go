@@ -7,6 +7,7 @@ import (
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/authn"
+	"winterflow/internal/domain/usecase/authserver"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
@@ -35,7 +36,10 @@ type Deps struct {
 	Authn *authn.UseCase
 	// SignIns runs sign-in with Google, Apple or an OIDC provider and the
 	// linked identities.
-	SignIns             *oauthlogin.Service
+	SignIns *oauthlogin.Service
+	// AuthServer is the OAuth authorization server MCP clients sign in
+	// to; disabled (Enabled false) unless WEB_URL is a usable origin.
+	AuthServer          *authserver.UseCase
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	AppDomainRepository port.AppDomainRepository

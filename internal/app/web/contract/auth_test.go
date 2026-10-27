@@ -20,8 +20,8 @@ func TestAuthClaimFlow(t *testing.T) {
 		OAuthServer         bool       `json:"oauth_server"`
 	}
 	anon.get(t, "/api/v1/auth/state", nil).expect(t, http.StatusOK).data(t, &st)
-	if !st.Bootstrap || !st.RegistrationEnabled || st.Providers == nil || len(st.Providers) != 0 || st.OAuthServer {
-		t.Fatalf("fresh instance state = %+v, want bootstrap + open, no providers", st)
+	if !st.Bootstrap || !st.RegistrationEnabled || st.Providers == nil || len(st.Providers) != 0 || !st.OAuthServer {
+		t.Fatalf("fresh instance state = %+v, want bootstrap + open, no providers, the OAuth server on", st)
 	}
 
 	t.Run("register rejects a short password", func(t *testing.T) {

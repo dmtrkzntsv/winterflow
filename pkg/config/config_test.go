@@ -343,6 +343,10 @@ func TestGetPublicOrigin(t *testing.T) {
 		{"https://user@wf.example.com", "", false},
 		{"ftp://wf.example.com", "", false},
 		{"", "", false},
+		{"HTTPS://WF.Example.COM/", "https://wf.example.com", true},
+		{"https://wf.example.com:/", "", false},
+		{"https://wf.example.com/?", "", false},
+		{"https://:8443", "", false},
 	}
 	for _, tc := range cases {
 		t.Setenv("WEB_URL", tc.web)

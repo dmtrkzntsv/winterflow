@@ -330,8 +330,6 @@ var (
 	_ = pgsqlgen.AccessToken(sqlitegen.AccessToken{})
 	_ = sqlitegen.DeleteDeadAccessTokensParams(pgsqlgen.DeleteDeadAccessTokensParams{})
 	_ = pgsqlgen.DeleteDeadAccessTokensParams(sqlitegen.DeleteDeadAccessTokensParams{})
-	_ = sqlitegen.DeleteDeadOAuthAccessTokensParams(pgsqlgen.DeleteDeadOAuthAccessTokensParams{})
-	_ = pgsqlgen.DeleteDeadOAuthAccessTokensParams(sqlitegen.DeleteDeadOAuthAccessTokensParams{})
 	_ = sqlitegen.DeleteDeadOAuthGrantsParams(pgsqlgen.DeleteDeadOAuthGrantsParams{})
 	_ = pgsqlgen.DeleteDeadOAuthGrantsParams(sqlitegen.DeleteDeadOAuthGrantsParams{})
 	_ = sqlitegen.DeleteIdentityByUserProviderParams(pgsqlgen.DeleteIdentityByUserProviderParams{})

@@ -169,7 +169,7 @@ func TestCreateTokenAndFindByToken(t *testing.T) {
 	}
 
 	// The DB must not contain the plaintext anywhere.
-	stored := dbtest.QueryString(t, d, `SELECT token_hash FROM user_tokens WHERE token_id = ?`, rec.ID)
+	stored := dbtest.QueryString(t, d, `SELECT token_hash FROM access_tokens WHERE id = ?`, rec.ID)
 	if stored == plaintext || stored != pat.Hash(plaintext) {
 		t.Error("token stored in plaintext or not as its hash")
 	}

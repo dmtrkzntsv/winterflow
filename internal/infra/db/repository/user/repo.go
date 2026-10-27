@@ -27,7 +27,7 @@ import (
 type (
 	userRow           = sqlitegen.User
 	credentialsRow    = sqlitegen.UserCredential
-	tokenRow          = sqlitegen.UserToken
+	tokenRow          = sqlitegen.AccessToken
 	organizationRow   = sqlitegen.Organization
 	insertUserParams  = sqlitegen.InsertUserParams
 	accountParams     = sqlitegen.InsertConnectedAccountParams
@@ -219,7 +219,7 @@ func (r *Repo) FindByToken(ctx context.Context, plaintext string) (model.User, e
 	}
 	if t.LastUsedAt == nil || time.Since(t.LastUsedAt.Time()) > lastUsedWriteInterval {
 		now := types.NewDateTime()
-		if err := r.q.TouchTokenLastUsed(ctx, r.tx.Querier(ctx), touchTokenParams{LastUsedAt: &now, TokenID: t.TokenID}); err != nil {
+		if err := r.q.TouchTokenLastUsed(ctx, r.tx.Querier(ctx), touchTokenParams{LastUsedAt: &now, ID: t.ID}); err != nil {
 			r.log.Error("FindByToken: stamp last_used_at", "error", err)
 		}
 	}
@@ -234,12 +234,11 @@ func (r *Repo) CreateToken(ctx context.Context, userID, name string, expiresAt *
 		return model.UserToken{}, "", err
 	}
 	row := insertTokenParams{
-		TokenID:     util.GenerateID(),
+		ID:          util.GenerateID(),
 		UserID:      userID,
-		Name:        name,
-		TokenPrefix: prefix,
+		Name:        &name,
+		TokenPrefix: &prefix,
 		TokenHash:   hash,
-		TokenType:   "pat",
 		CreatedAt:   types.NewDateTime(),
 	}
 	if expiresAt != nil {
@@ -249,7 +248,7 @@ func (r *Repo) CreateToken(ctx context.Context, userID, name string, expiresAt *
 	if err := r.q.InsertToken(ctx, r.tx.Querier(ctx), row); err != nil {
 		return model.UserToken{}, "", err
 	}
-	return toDomainToken(tokenRow(row)), plaintext, nil
+	return toDomainToken(tokenRow{ID: row.ID, UserID: row.UserID, Name: row.Name, TokenPrefix: row.TokenPrefix, CreatedAt: row.CreatedAt, LastUsedAt: row.LastUsedAt, ExpiresAt: row.ExpiresAt}), plaintext, nil
 }
 
 // ListTokens returns the user's tokens, newest first.
@@ -268,7 +267,7 @@ func (r *Repo) ListTokens(ctx context.Context, userID string) ([]model.UserToken
 // DeleteToken removes the user's token; model.ErrTokenNotFound when the id
 // does not exist or belongs to someone else.
 func (r *Repo) DeleteToken(ctx context.Context, userID, tokenID string) error {
-	n, err := r.q.DeleteToken(ctx, r.tx.Querier(ctx), deleteTokenParams{TokenID: tokenID, UserID: userID})
+	n, err := r.q.DeleteToken(ctx, r.tx.Querier(ctx), deleteTokenParams{ID: tokenID, UserID: userID})
 	if err != nil {
 		return err
 	}
@@ -278,12 +277,19 @@ func (r *Repo) DeleteToken(ctx context.Context, userID, tokenID string) error {
 	return nil
 }
 
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func toDomainToken(t tokenRow) model.UserToken {
 	out := model.UserToken{
-		ID:        t.TokenID,
+		ID:        t.ID,
 		UserID:    t.UserID,
-		Name:      t.Name,
-		Prefix:    t.TokenPrefix,
+		Name:      deref(t.Name),
+		Prefix:    deref(t.TokenPrefix),
 		CreatedAt: t.CreatedAt.Time(),
 	}
 	if t.ExpiresAt != nil {

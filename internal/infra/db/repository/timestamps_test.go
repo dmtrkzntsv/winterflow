@@ -28,6 +28,8 @@ import (
 	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	templaterepo "winterflow/internal/infra/db/repository/template"
 	userrepo "winterflow/internal/infra/db/repository/user"
+	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
+	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/util"
 )
 
@@ -212,6 +214,35 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 	if _, err := rollouts.Complete(ctx, dbtest.ID(601), "w", 1); err != nil {
 		t.Fatal(err)
+	}
+
+	// The access-token and OAuth tables have no repository yet: write through
+	// the generated queries, which bind types.DateTime like every repository.
+	// (Replace with the repositories' own writes as they land.)
+	q := sqlitegen.New(d.Tx.Querier(ctx))
+	dt := types.DateTime(at)
+	revoked := types.DateTime(at.Add(time.Hour))
+	userID := admin.ID
+	tokenID, clientID, grantID := dbtest.ID(701), dbtest.ID(702), dbtest.ID(703)
+	for _, err := range []error{
+		q.InsertAccessToken(ctx, sqlitegen.InsertAccessTokenParams{ID: tokenID, UserID: userID, Kind: "session", TokenHash: "h1", Scope: "full",
+			CreatedAt: dt, LastUsedAt: &dt, ExpiresAt: &dt}),
+		q.RevokeAccessToken(ctx, sqlitegen.RevokeAccessTokenParams{RevokedAt: &revoked, ID: tokenID}),
+		q.InsertOAuthClient(ctx, sqlitegen.InsertOAuthClientParams{ID: clientID, Name: "c", RedirectUris: "[]", CreatedAt: dt, LastUsedAt: &dt}),
+		q.InsertOAuthCode(ctx, sqlitegen.InsertOAuthCodeParams{CodeHash: "c1", ClientID: clientID, UserID: userID, RedirectUri: "u",
+			CodeChallenge: "x", Resource: "r", CreatedAt: dt, ExpiresAt: dt}),
+		q.InsertOAuthGrant(ctx, sqlitegen.InsertOAuthGrantParams{ID: grantID, UserID: userID, ClientID: clientID, RefreshTokenHash: "r1",
+			RotatedAt: &dt, CreatedAt: dt, LastUsedAt: dt, ExpiresAt: dt, RevokedAt: &revoked}),
+		q.InsertOAuthSpentRefreshHash(ctx, sqlitegen.InsertOAuthSpentRefreshHashParams{TokenHash: "r0", GrantID: grantID, SpentAt: dt}),
+		q.InsertOAuthLoginState(ctx, sqlitegen.InsertOAuthLoginStateParams{StateHash: "s1", Provider: "google", Nonce: "n", Intent: "login",
+			CreatedAt: dt, ExpiresAt: dt}),
+		q.InsertOAuthHandoff(ctx, sqlitegen.InsertOAuthHandoffParams{CodeHash: "d1", Kind: "login", UserID: userID, Provider: "google",
+			CreatedAt: dt, ExpiresAt: dt}),
+		q.InsertIdentity(ctx, sqlitegen.InsertIdentityParams{Provider: "google", ExternalID: "sub", UserID: userID, CreatedAt: dt}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	columns := timestampColumns(t, d)

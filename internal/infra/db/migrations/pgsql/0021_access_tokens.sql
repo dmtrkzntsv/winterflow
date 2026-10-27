@@ -38,6 +38,3 @@ DROP TABLE user_tokens;
 -- this migration read the epoch).
 ALTER TABLE user_connected_accounts ADD COLUMN email TEXT;
 ALTER TABLE user_connected_accounts ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT TIMESTAMPTZ '1970-01-01 00:00:00+00';
-
--- One identity per provider per user.
-CREATE UNIQUE INDEX uq_user_connected_accounts_user_provider ON user_connected_accounts (user_id, provider);

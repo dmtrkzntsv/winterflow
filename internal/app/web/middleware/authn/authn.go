@@ -56,7 +56,7 @@ func Middleware(a Authenticator, opts Options) func(http.Handler) http.Handler {
 				}
 				webutil.Unauthorized(w)
 			}
-			raw, byCookie := credential(r)
+			raw, byCookie := Credential(r)
 			if raw == "" {
 				deny()
 				return
@@ -89,9 +89,10 @@ func Middleware(a Authenticator, opts Options) func(http.Handler) http.Handler {
 	}
 }
 
-// credential returns the request's raw token and whether it came from the
-// session cookie; "" when the request carries none.
-func credential(r *http.Request) (raw string, byCookie bool) {
+// Credential returns the request's raw token and whether it came from the
+// session cookie; "" when the request carries none. A long-lived handler
+// (the SSE stream) uses it to re-authenticate the same credential.
+func Credential(r *http.Request) (raw string, byCookie bool) {
 	if h := r.Header.Get("Authorization"); h != "" {
 		const bearer = "bearer "
 		if len(h) > len(bearer) && strings.EqualFold(h[:len(bearer)], bearer) {

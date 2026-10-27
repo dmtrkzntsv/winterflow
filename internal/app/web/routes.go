@@ -124,6 +124,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	notificationAPI := notification.NewHandler(&notification.Deps{
 		Logger:              d.Log,
 		NotificationManager: d.NotificationManager,
+		Auth:                sessionAuth,
 	})
 	appsAPI := happ.NewHandler(&happ.Deps{
 		Logger:                  d.Log,

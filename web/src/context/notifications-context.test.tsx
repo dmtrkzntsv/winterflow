@@ -60,10 +60,10 @@ describe("NotificationsProvider", () => {
     expect(latest()).not.toBe(first);
   });
 
-  // The server ends every stream after about ten minutes (a stream is
-  // authenticated only at connect); the browser's EventSource reconnects on
-  // its own. That must stay invisible: the same stream object comes back,
-  // no new one is opened, a pending waitFor still resolves.
+  // A dropped stream (a network blip, a restart, or the server ending a
+  // stream whose session was revoked) is reconnected by the browser's
+  // EventSource on its own. That must stay invisible: the same stream object
+  // comes back, no new one is opened, a pending waitFor still resolves.
   it("rides out a server-ended stream without a new EventSource or a lost waitFor", async () => {
     const { latest, send } = mount();
     act(() => streams[0].onopen?.());

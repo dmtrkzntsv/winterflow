@@ -17,14 +17,14 @@ import (
 )
 
 type (
-	row           = sqlitegen.SecretRequest
-	insertParams  = sqlitegen.InsertSecretRequestParams
-	getParams     = sqlitegen.GetSecretRequestParams
-	submitParams  = sqlitegen.SubmitSecretRequestParams
-	useParams     = sqlitegen.UseSecretRequestParams
-	claimParams   = sqlitegen.ClaimSecretRequestParams
-	holdParams    = sqlitegen.HoldSecretRequestParams
-	releaseParams = sqlitegen.ReleaseSecretRequestParams
+	row            = sqlitegen.SecretRequest
+	insertParams   = sqlitegen.InsertSecretRequestParams
+	getParams      = sqlitegen.GetSecretRequestParams
+	submitParams   = sqlitegen.SubmitSecretRequestParams
+	useParams      = sqlitegen.UseSecretRequestParams
+	claimParams    = sqlitegen.ClaimSecretRequestParams
+	dispatchParams = sqlitegen.DispatchSecretRequestParams
+	releaseParams  = sqlitegen.ReleaseSecretRequestParams
 )
 
 type querier interface {
@@ -34,9 +34,10 @@ type querier interface {
 	SubmitSecretRequest(ctx context.Context, db backend.DBTX, p submitParams) (int64, error)
 	UseSecretRequest(ctx context.Context, db backend.DBTX, p useParams) (int64, error)
 	ClaimSecretRequest(ctx context.Context, db backend.DBTX, p claimParams) (int64, error)
-	HoldSecretRequest(ctx context.Context, db backend.DBTX, p holdParams) (int64, error)
+	DispatchSecretRequest(ctx context.Context, db backend.DBTX, p dispatchParams) (int64, error)
 	ReleaseSecretRequest(ctx context.Context, db backend.DBTX, p releaseParams) (int64, error)
 	ExpireSecretRequests(ctx context.Context, db backend.DBTX, now *types.DateTime) (int64, error)
+	EndDispatchedSecretRequests(ctx context.Context, db backend.DBTX, now *types.DateTime) (int64, error)
 	PruneSecretRequests(ctx context.Context, db backend.DBTX, cutoff *types.DateTime) (int64, error)
 }
 
@@ -124,30 +125,37 @@ func (r *Repo) Claim(ctx context.Context, id, claimID string, now, claimedUntil 
 	return n > 0, err
 }
 
-// Hold moves claimID's claim deadline.
-func (r *Repo) Hold(ctx context.Context, id, claimID string, claimedUntil time.Time) (bool, error) {
+// MarkDispatched marks a request claimed by claimID dispatched until
+// claimedUntil.
+func (r *Repo) MarkDispatched(ctx context.Context, id, claimID string, claimedUntil time.Time) (bool, error) {
 	until := types.DateTime(claimedUntil)
-	n, err := r.q.HoldSecretRequest(ctx, r.tx.Querier(ctx), holdParams{ClaimedUntil: &until, ID: id, ClaimID: &claimID})
+	n, err := r.q.DispatchSecretRequest(ctx, r.tx.Querier(ctx), dispatchParams{ClaimedUntil: &until, ID: id, ClaimID: &claimID})
 	return n > 0, err
 }
 
-// MarkUsed ends a request claimed by claimID as used.
+// MarkUsed ends a request claimID dispatched as used.
 func (r *Repo) MarkUsed(ctx context.Context, id, claimID string, now time.Time) (bool, error) {
 	at := types.DateTime(now)
 	n, err := r.q.UseSecretRequest(ctx, r.tx.Querier(ctx), useParams{UsedAt: &at, ID: id, ClaimID: &claimID})
 	return n > 0, err
 }
 
-// Release returns a request claimed by claimID to submitted.
+// Release returns a request claimed (or dispatched) by claimID to submitted.
 func (r *Repo) Release(ctx context.Context, id, claimID string) (bool, error) {
 	n, err := r.q.ReleaseSecretRequest(ctx, r.tx.Querier(ctx), releaseParams{ID: id, ClaimID: &claimID})
 	return n > 0, err
 }
 
-// Expire ends the requests past their deadline.
+// Expire ends the requests past their deadline, and the dispatched ones
+// whose holder went away (as used).
 func (r *Repo) Expire(ctx context.Context, now time.Time) (int64, error) {
 	at := types.DateTime(now)
-	return r.q.ExpireSecretRequests(ctx, r.tx.Querier(ctx), &at)
+	expired, err := r.q.ExpireSecretRequests(ctx, r.tx.Querier(ctx), &at)
+	if err != nil {
+		return 0, err
+	}
+	ended, err := r.q.EndDispatchedSecretRequests(ctx, r.tx.Querier(ctx), &at)
+	return expired + ended, err
 }
 
 // Prune deletes the requests that ended before cutoff.

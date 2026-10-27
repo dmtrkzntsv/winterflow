@@ -130,6 +130,12 @@ const wait = 1500 * time.Millisecond
 // instance lookup.
 func newEnv(t *testing.T, instances port.InstanceLinks) *env {
 	t.Helper()
+	return newEnvWith(t, instances, nil)
+}
+
+// newEnvWith is newEnv with tweak, when set, applied to the tools' deps.
+func newEnvWith(t *testing.T, instances port.InstanceLinks, tweak func(*tools.Deps)) *env {
+	t.Helper()
 	cfg := config.NewServerConfig("standalone")
 	conn := dbtest.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -155,6 +161,9 @@ func newEnv(t *testing.T, instances port.InstanceLinks) *env {
 		})
 	}
 	d.Wait = wait
+	if tweak != nil {
+		tweak(&d)
+	}
 	g := api.Guards{AuthLimit: ratelimit.New(100, 100).Middleware, UserLimit: userlimit.New(100, 100).Middleware}
 	routes := webmcp.Routes(webmcp.Edge{Auth: deps.Authn, Register: tools.New(d)}, g)
 	srv := httptest.NewServer(routes[0].Handler)

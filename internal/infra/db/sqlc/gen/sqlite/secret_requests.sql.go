@@ -37,6 +37,39 @@ func (q *Queries) ClaimSecretRequest(ctx context.Context, arg ClaimSecretRequest
 	return result.RowsAffected()
 }
 
+const dispatchSecretRequest = `-- name: DispatchSecretRequest :execrows
+UPDATE secret_requests SET status = 'dispatched', claimed_until = ?1
+WHERE id = ?2 AND status = 'claimed' AND claim_id = ?3
+`
+
+type DispatchSecretRequestParams struct {
+	ClaimedUntil *types.DateTime
+	ID           string
+	ClaimID      *string
+}
+
+func (q *Queries) DispatchSecretRequest(ctx context.Context, arg DispatchSecretRequestParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, dispatchSecretRequest, arg.ClaimedUntil, arg.ID, arg.ClaimID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const endDispatchedSecretRequests = `-- name: EndDispatchedSecretRequests :execrows
+UPDATE secret_requests
+SET status = 'used', ciphertexts = NULL, used_at = ?1, ended_at = ?1, claim_id = NULL, claimed_until = NULL
+WHERE status = 'dispatched' AND claimed_until <= ?1
+`
+
+func (q *Queries) EndDispatchedSecretRequests(ctx context.Context, now *types.DateTime) (int64, error) {
+	result, err := q.db.ExecContext(ctx, endDispatchedSecretRequests, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const expireSecretRequests = `-- name: ExpireSecretRequests :execrows
 UPDATE secret_requests SET status = 'expired', ciphertexts = NULL, ended_at = ?1, claim_id = NULL, claimed_until = NULL
 WHERE expires_at <= ?1
@@ -122,25 +155,6 @@ func (q *Queries) GetSecretRequestByTokenHash(ctx context.Context, tokenHash str
 	return i, err
 }
 
-const holdSecretRequest = `-- name: HoldSecretRequest :execrows
-UPDATE secret_requests SET claimed_until = ?1
-WHERE id = ?2 AND status = 'claimed' AND claim_id = ?3
-`
-
-type HoldSecretRequestParams struct {
-	ClaimedUntil *types.DateTime
-	ID           string
-	ClaimID      *string
-}
-
-func (q *Queries) HoldSecretRequest(ctx context.Context, arg HoldSecretRequestParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, holdSecretRequest, arg.ClaimedUntil, arg.ID, arg.ClaimID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const insertSecretRequest = `-- name: InsertSecretRequest :exec
 
 INSERT INTO secret_requests (id, org_id, server_id, app_id, created_by, names, notes, message, token_hash, status, created_at, expires_at)
@@ -194,7 +208,7 @@ func (q *Queries) PruneSecretRequests(ctx context.Context, endedAt *types.DateTi
 
 const releaseSecretRequest = `-- name: ReleaseSecretRequest :execrows
 UPDATE secret_requests SET status = 'submitted', claim_id = NULL, claimed_until = NULL
-WHERE id = ?1 AND status = 'claimed' AND claim_id = ?2
+WHERE id = ?1 AND status IN ('claimed', 'dispatched') AND claim_id = ?2
 `
 
 type ReleaseSecretRequestParams struct {
@@ -241,7 +255,7 @@ func (q *Queries) SubmitSecretRequest(ctx context.Context, arg SubmitSecretReque
 const useSecretRequest = `-- name: UseSecretRequest :execrows
 UPDATE secret_requests
 SET status = 'used', ciphertexts = NULL, used_at = ?1, ended_at = ?1, claim_id = NULL, claimed_until = NULL
-WHERE id = ?2 AND status = 'claimed' AND claim_id = ?3
+WHERE id = ?2 AND status = 'dispatched' AND claim_id = ?3
 `
 
 type UseSecretRequestParams struct {

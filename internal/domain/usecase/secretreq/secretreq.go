@@ -58,8 +58,12 @@ const (
 	// 24 KiB).
 	MaxCiphertextBytes = 32 << 10
 
-	// commitTimeout bounds the write that ends or releases a claim.
+	// commitTimeout bounds the writes that end or release a claim.
 	commitTimeout = 30 * time.Second
+	// commitTries is how often a dispatched claim's MarkUsed is tried.
+	commitTries = 4
+	// commitRetryDelay is the first delay between those tries (doubling).
+	commitRetryDelay = 250 * time.Millisecond
 	// ClaimTTL is how long a save holds a claimed request: past the MCP
 	// wait (50 s) plus its margins, so a live save never loses its claim;
 	// a crashed one's lapses and the request reads submitted again.
@@ -93,11 +97,15 @@ type Deps struct {
 	Apps    Apps
 	// Now defaults to time.Now.
 	Now func() time.Time
+	// RetryDelay is the first delay between MarkUsed tries (default
+	// 250 ms).
+	RetryDelay time.Duration
 }
 
 // UseCase is the secret links usecase.
 type UseCase struct {
-	d Deps
+	d          Deps
+	retryDelay time.Duration
 }
 
 // New builds the usecase.
@@ -105,7 +113,11 @@ func New(d Deps) *UseCase {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &UseCase{d: d}
+	delay := d.RetryDelay
+	if delay <= 0 {
+		delay = commitRetryDelay
+	}
+	return &UseCase{d: d, retryDelay: delay}
 }
 
 // Request is a request as its creator sees it.
@@ -336,7 +348,7 @@ var errInUse = model.Rejected("secrets_from: this secret request is already bein
 	"wait for that save, then check get_secret_request")
 
 // Claim is a save's hold on a submitted request: no other save may use
-// it until Commit (or ClaimTTL).
+// it until Commit (or ClaimTTL, unless Dispatch marked it dispatched).
 type Claim struct {
 	u    *UseCase
 	ctx  context.Context
@@ -346,10 +358,13 @@ type Claim struct {
 	err  error
 }
 
-// Hold renews the claim right before dispatching; an error (the claim
-// lapsed and another save took the request) means do not dispatch.
-func (c *Claim) Hold(ctx context.Context) error {
-	ok, err := c.u.d.Repo.Hold(ctx, c.id, c.cid, c.u.d.Now().Add(ClaimTTL))
+// Dispatch renews the claim and marks the request dispatched right before
+// the save is sent, in one conditional write: from then on no claim takes
+// it again, even if Commit never comes (a crash, a database that fails
+// every try): the sweep ends it used. An error (the claim lapsed and
+// another save took the request) means do not dispatch.
+func (c *Claim) Dispatch(ctx context.Context) error {
+	ok, err := c.u.d.Repo.MarkDispatched(ctx, c.id, c.cid, c.u.d.Now().Add(ClaimTTL))
 	if err != nil {
 		return err
 	}
@@ -360,8 +375,10 @@ func (c *Claim) Hold(ctx context.Context) error {
 }
 
 // Commit ends the claim once (later calls answer the first's result):
-// dispatched marks the request used and deletes its ciphertexts, else it
-// returns to submitted for a retry. A dispatched save whose claim was lost
+// dispatched marks the request used and deletes its ciphertexts, retried
+// a few times on an error (the request stays dispatched either way, so it
+// is never used twice), else it returns to submitted for a retry (the save
+// was refused, or its send failed). A dispatched save whose claim was lost
 // is an error: another save may have used the request too.
 func (c *Claim) Commit(dispatched bool) error {
 	c.once.Do(func() {
@@ -369,7 +386,7 @@ func (c *Claim) Commit(dispatched bool) error {
 		defer cancel()
 		var ok bool
 		if dispatched {
-			ok, c.err = c.u.d.Repo.MarkUsed(ctx, c.id, c.cid, c.u.d.Now())
+			ok, c.err = c.markUsed(ctx)
 		} else {
 			ok, c.err = c.u.d.Repo.Release(ctx, c.id, c.cid)
 		}
@@ -378,6 +395,24 @@ func (c *Claim) Commit(dispatched bool) error {
 		}
 	})
 	return c.err
+}
+
+// markUsed is MarkUsed, tried up to commitTries times with a doubling
+// delay while it fails (a transient database error).
+func (c *Claim) markUsed(ctx context.Context) (bool, error) {
+	delay := c.u.retryDelay
+	for try := 1; ; try++ {
+		ok, err := c.u.d.Repo.MarkUsed(ctx, c.id, c.cid, c.u.d.Now())
+		if err == nil || try == commitTries {
+			return ok, err
+		}
+		select {
+		case <-ctx.Done():
+			return false, err
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
 }
 
 // Consume claims the caller's org's submitted request id for a save on
@@ -415,6 +450,9 @@ func (u *UseCase) Consume(ctx context.Context, userID, serverID, appID, id strin
 		return nil, nil, rejected("secrets_from: the request expired; ask again with request_secrets")
 	case model.SecretClaimed:
 		return nil, nil, errInUse
+	case model.SecretSubmitted:
+	default:
+		return nil, nil, rejected("secrets_from: the request was used already; ask again with request_secrets")
 	}
 	c := &Claim{u: u, ctx: ctx, id: req.ID, cid: util.GenerateID()}
 	ok, err := u.d.Repo.Claim(ctx, req.ID, c.cid, now, now.Add(ClaimTTL))

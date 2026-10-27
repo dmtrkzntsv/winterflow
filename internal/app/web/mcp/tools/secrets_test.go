@@ -3,6 +3,7 @@ package tools_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,7 +12,10 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"winterflow/internal/app/web/mcp/tools"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/port"
+	"winterflow/internal/domain/usecase/secretreq"
 	"winterflow/internal/infra/db/dbtest"
 	"winterflow/internal/infra/transport/codec"
 	"winterflow/pkg/crypto/cryptotest"
@@ -328,5 +332,63 @@ func TestSaveAppSecretsFromFailedCheckKeepsSubmitted(t *testing.T) {
 		"files": []map[string]any{{"name": "compose.yml", "content": secretCompose}}}, &out)
 	if st := secretStatus(t, e, alice, asked.RequestID); st != "used" {
 		t.Fatalf("after the retry = %s", st)
+	}
+}
+
+// failingUse fails every MarkUsed, as a database that stays down after the
+// save was sent.
+type failingUse struct {
+	port.SecretRequestRepository
+}
+
+func (failingUse) MarkUsed(context.Context, string, string, time.Time) (bool, error) {
+	return false, errors.New("database is locked")
+}
+
+// testClock is a settable clock.
+type testClock struct {
+	mu  sync.Mutex
+	off time.Duration
+}
+
+func (c *testClock) Now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return time.Now().Add(c.off) }
+func (c *testClock) add(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.off += d
+}
+
+// TestSaveAppSecretsFromMarkUsedFails: a save was sent but its request
+// could not be marked used; the request was marked dispatched before the
+// send, so once the claim's deadline passed, a second save with it is
+// still refused and the agent gets the ciphertexts once.
+func TestSaveAppSecretsFromMarkUsedFails(t *testing.T) {
+	clock := &testClock{}
+	e := newEnvWith(t, nil, func(d *tools.Deps) {
+		d.SecretRequests = failingUse{d.SecretRequests}
+		d.Now = clock.Now
+	})
+	alice := e.newUser(t, "alice@example.test")
+	asked, raw := askSecrets(t, e, alice, map[string]any{"names": []string{"API_KEY"}})
+	e.submit(t, alice, raw, map[string]string{"API_KEY": "key-1"})
+	args := map[string]any{"server_id": alice.serverID, "name": "web", "secrets_from": asked.RequestID,
+		"files": []map[string]any{{"name": "compose.yml", "content": secretCompose}}}
+	s := e.session(t, alice)
+	text, isErr := call(t, s, "save_app", args)
+	if !isErr || !strings.Contains(text, "could not be marked used") {
+		t.Fatalf("save whose MarkUsed failed = %q (isError %v)", text, isErr)
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 1 {
+		t.Fatalf("the agent received %d saves, want 1", n)
+	}
+	clock.add(secretreq.ClaimTTL + time.Second)
+	if st := secretStatus(t, e, alice, asked.RequestID); st != "used" {
+		t.Fatalf("status after the claim's deadline = %s, want used", st)
+	}
+	if text, isErr := call(t, s, "save_app", args); !isErr || !strings.Contains(text, "used already") {
+		t.Fatalf("second save after the claim's deadline = %q (isError %v)", text, isErr)
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 1 {
+		t.Fatalf("the agent received %d saves, want 1", n)
 	}
 }

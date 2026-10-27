@@ -477,12 +477,26 @@ func (uc *UseCase) SaveAppObserved(ctx context.Context, userID, serverID string,
 // agent may already hold instead of creating another. It is "" only when
 // the save was refused before the id was assigned.
 func (uc *UseCase) SaveAppAssigned(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool, observe Observer) (appID, requestID string, err error) {
+	return uc.SaveAppGated(ctx, userID, serverID, app, payload, draft, observe, nil)
+}
+
+// SaveAppGated is SaveAppAssigned with gate, when set, run after every
+// check passed and right before the save is dispatched: its error refuses
+// the save (nothing is sent, appID is ""). A caller whose save carries
+// something to be sent at most once marks it sent there.
+func (uc *UseCase) SaveAppGated(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool,
+	observe Observer, gate func(context.Context) error) (appID, requestID string, err error) {
 	if err := uc.requireUnmanaged(ctx, serverID, app.ID); err != nil {
 		return "", "", err
 	}
 	checked, err := uc.CheckSave(ctx, serverID, app, payload, draft)
 	if err != nil {
 		return "", "", err
+	}
+	if gate != nil {
+		if err := gate(ctx); err != nil {
+			return "", "", err
+		}
 	}
 	requestID, err = uc.DispatchSave(ctx, userID, checked, observe)
 	return checked.AppID(), requestID, err

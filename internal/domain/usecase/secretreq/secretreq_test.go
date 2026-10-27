@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/usecase/secretreq"
 	"winterflow/internal/infra/db/dbtest"
 	secretreqrepo "winterflow/internal/infra/db/repository/secretreq"
@@ -69,6 +70,14 @@ func (c *clock) add(d time.Duration) {
 
 func setup(t *testing.T) (*secretreq.UseCase, *clock) {
 	t.Helper()
+	u, c, _ := setupWith(t, nil)
+	return u, c
+}
+
+// setupWith is setup with the repository wrapped by wrap (when set); it
+// also returns the unwrapped repository.
+func setupWith(t *testing.T, wrap func(port.SecretRequestRepository) port.SecretRequestRepository) (*secretreq.UseCase, *clock, port.SecretRequestRepository) {
+	t.Helper()
 	d := dbtest.Open(t)
 	dbtest.SeedServer(t, d, orgA, serverA)
 	dbtest.SeedServer(t, d, orgB, serverB)
@@ -79,8 +88,31 @@ func setup(t *testing.T) (*secretreq.UseCase, *clock) {
 		t.Fatal(err)
 	}
 	c := &clock{now: time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)}
-	return secretreq.New(secretreq.Deps{Repo: repo, Orgs: orgs{alice: orgA, bob: orgB}, Servers: servers{},
-		Apps: apps{}, Now: c.Now}), c
+	var used port.SecretRequestRepository = repo
+	if wrap != nil {
+		used = wrap(repo)
+	}
+	return secretreq.New(secretreq.Deps{Repo: used, Orgs: orgs{alice: orgA, bob: orgB}, Servers: servers{},
+		Apps: apps{}, Now: c.Now, RetryDelay: time.Millisecond}), c, repo
+}
+
+// flakyUse fails MarkUsed the first fails times (every time when fails < 0).
+type flakyUse struct {
+	port.SecretRequestRepository
+	mu    sync.Mutex
+	fails int
+	tries int
+}
+
+func (f *flakyUse) MarkUsed(ctx context.Context, id, claimID string, now time.Time) (bool, error) {
+	f.mu.Lock()
+	f.tries++
+	fail := f.fails < 0 || f.tries <= f.fails
+	f.mu.Unlock()
+	if fail {
+		return false, errors.New("database is locked")
+	}
+	return f.SecretRequestRepository.MarkUsed(ctx, id, claimID, now)
 }
 
 // request creates alice's request for names on her server (app-1 when app).
@@ -302,7 +334,7 @@ func TestConsume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consume after a release = %v", err)
 	}
-	if err := claim.Hold(ctx); err != nil {
+	if err := claim.Dispatch(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := claim.Commit(true); err != nil {
@@ -334,11 +366,14 @@ func TestClaimLapses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("consume after the claim lapsed = %v", err)
 	}
-	if err := first.Hold(ctx); err == nil || !strings.Contains(err.Error(), "already being used") {
-		t.Fatalf("the lapsed claim's hold = %v", err)
+	if err := first.Dispatch(ctx); err == nil || !strings.Contains(err.Error(), "already being used") {
+		t.Fatalf("the lapsed claim's dispatch = %v", err)
 	}
 	if err := first.Commit(true); err == nil || !strings.Contains(err.Error(), "claim was lost") {
 		t.Fatalf("the lapsed claim's commit = %v", err)
+	}
+	if err := second.Dispatch(ctx); err != nil {
+		t.Fatal(err)
 	}
 	if err := second.Commit(true); err != nil {
 		t.Fatal(err)
@@ -403,5 +438,104 @@ func TestSweep(t *testing.T) {
 	// fresh expired in the second sweep: kept for a week.
 	if _, err := u.Get(ctx, alice, fresh.ID); err != nil {
 		t.Fatalf("fresh = %v", err)
+	}
+}
+
+// TestMarkUsedRetried: a transient error on MarkUsed is retried.
+func TestMarkUsedRetried(t *testing.T) {
+	flaky := &flakyUse{fails: 2}
+	u, _, _ := setupWith(t, func(r port.SecretRequestRepository) port.SecretRequestRepository {
+		flaky.SecretRequestRepository = r
+		return flaky
+	})
+	ctx := context.Background()
+	req, raw := request(t, u, false, "API_KEY")
+	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
+		t.Fatal(err)
+	}
+	_, claim, err := u.Consume(ctx, alice, serverA, "", req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Commit(true); err != nil || flaky.tries != 3 {
+		t.Fatalf("commit = %v after %d tries, want success on the third", err, flaky.tries)
+	}
+	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretUsed {
+		t.Fatalf("status = %s", r.Status)
+	}
+}
+
+// TestDispatchedNeverClaimedAgain: once a save marked the request
+// dispatched, a MarkUsed that keeps failing leaves it unclaimable, past
+// the claim's deadline too, and the sweep ends it used, deleting the
+// ciphertexts.
+func TestDispatchedNeverClaimedAgain(t *testing.T) {
+	flaky := &flakyUse{fails: -1}
+	u, c, repo := setupWith(t, func(r port.SecretRequestRepository) port.SecretRequestRepository {
+		flaky.SecretRequestRepository = r
+		return flaky
+	})
+	ctx := context.Background()
+	req, raw := request(t, u, false, "API_KEY")
+	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
+		t.Fatal(err)
+	}
+	_, claim, err := u.Consume(ctx, alice, serverA, "", req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Commit(true); err == nil || flaky.tries != 4 {
+		t.Fatalf("commit = %v after %d tries, want an error after 4", err, flaky.tries)
+	}
+	// The save's deferred release is a no-op after the commit.
+	if err := claim.Commit(false); err == nil {
+		t.Fatal("a release after a failed commit answers the commit's result")
+	}
+	c.add(secretreq.ClaimTTL + time.Second)
+	if _, _, err := u.Consume(ctx, alice, serverA, "", req.ID); err == nil || !strings.Contains(err.Error(), "used already") {
+		t.Fatalf("consume after the claim's deadline = %v", err)
+	}
+	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretUsed {
+		t.Fatalf("status = %s", r.Status)
+	}
+	if err := u.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, orgA, req.ID)
+	if err != nil || got.Status != model.SecretUsed || got.Ciphertexts != nil {
+		t.Fatalf("after the sweep = %+v, %v", got, err)
+	}
+}
+
+// TestDispatchFailedReleases: a save whose send failed after Dispatch
+// releases the request for a retry.
+func TestDispatchFailedReleases(t *testing.T) {
+	u, _ := setup(t)
+	ctx := context.Background()
+	req, raw := request(t, u, false, "API_KEY")
+	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
+		t.Fatal(err)
+	}
+	_, claim, err := u.Consume(ctx, alice, serverA, "", req.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := claim.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretUsed {
+		t.Fatalf("dispatched reads %s, want used", r.Status)
+	}
+	if err := claim.Commit(false); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretSubmitted {
+		t.Fatalf("after a failed send = %s", r.Status)
 	}
 }

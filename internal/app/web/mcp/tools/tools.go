@@ -54,6 +54,8 @@ type Deps struct {
 	WebURL string
 	// Wait bounds a tool's wait for a command (0: DefaultWait).
 	Wait time.Duration
+	// Now is the secret links' clock (nil: time.Now).
+	Now func() time.Time
 }
 
 // FromDeps wires the tools over the process's dependencies.
@@ -112,7 +114,7 @@ func New(d Deps) webmcp.Register {
 		d.Wait = DefaultWait
 	}
 	t := &tools{Deps: d}
-	t.secrets = secretreq.New(secretreq.Deps{Repo: d.SecretRequests, Orgs: d.Users, Servers: d.Servers})
+	t.secrets = secretreq.New(secretreq.Deps{Repo: d.SecretRequests, Orgs: d.Users, Servers: d.Servers, Now: d.Now})
 	return webmcp.Compose(t.servers, t.apps, t.domains, t.docker, t.sharedVars, t.results, t.secretTools)
 }
 

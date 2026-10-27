@@ -115,14 +115,26 @@ func TestLifecycle(t *testing.T) {
 	if ok, err := r.Claim(ctx, id, "c-4", later, later.Add(2*time.Minute)); err != nil || !ok {
 		t.Fatalf("claim after the lapse = %v, %v", ok, err)
 	}
-	if ok, err := r.Hold(ctx, id, "c-3", later.Add(time.Hour)); err != nil || ok {
-		t.Fatalf("hold of a lost claim = %v, %v", ok, err)
+	if ok, err := r.MarkDispatched(ctx, id, "c-3", later.Add(time.Hour)); err != nil || ok {
+		t.Fatalf("dispatch by a lost claim = %v, %v", ok, err)
 	}
 	if ok, err := r.MarkUsed(ctx, id, "c-3", later); err != nil || ok {
 		t.Fatalf("use by a lost claim = %v, %v", ok, err)
 	}
-	if ok, err := r.Hold(ctx, id, "c-4", later.Add(3*time.Minute)); err != nil || !ok {
-		t.Fatalf("hold = %v, %v", ok, err)
+	// A claim not yet dispatched is not used.
+	if ok, err := r.MarkUsed(ctx, id, "c-4", later); err != nil || ok {
+		t.Fatalf("use before the dispatch = %v, %v", ok, err)
+	}
+	if ok, err := r.MarkDispatched(ctx, id, "c-4", later.Add(3*time.Minute)); err != nil || !ok {
+		t.Fatalf("dispatch = %v, %v", ok, err)
+	}
+	// Dispatched, it is taken by no claim, even once its deadline passed.
+	gone := later.Add(time.Hour)
+	if ok, err := r.Claim(ctx, id, "c-5", gone, gone.Add(2*time.Minute)); err != nil || ok {
+		t.Fatalf("claim of a dispatched request = %v, %v", ok, err)
+	}
+	if got, _ = r.Get(ctx, org, id); got.Status != model.SecretDispatched || got.Ciphertexts == nil {
+		t.Fatalf("dispatched = %+v", got)
 	}
 
 	used := later.Add(time.Second)
@@ -181,5 +193,50 @@ func TestExpireAndPrune(t *testing.T) {
 	}
 	if _, err := r.Get(ctx, org, fresh); err != nil {
 		t.Fatalf("a live request was pruned: %v", err)
+	}
+}
+
+// TestDispatched: a dispatched request returns to submitted only by its
+// holder's release (the send failed); one whose holder went away is ended
+// used by the sweep once its deadline passed, its ciphertexts deleted.
+func TestDispatched(t *testing.T) {
+	r, ctx := open(t), context.Background()
+	released, left := dbtest.ID(20), dbtest.ID(21)
+	for i, id := range []string{released, left} {
+		create(t, r, id, "h-d"+string(rune('a'+i)), "", t0)
+		if ok, err := r.Submit(ctx, id, map[string]string{"API_KEY": "c"}, t0.Add(time.Hour), t0.Add(25*time.Hour)); err != nil || !ok {
+			t.Fatalf("submit = %v, %v", ok, err)
+		}
+		at := t0.Add(2 * time.Hour)
+		if ok, err := r.Claim(ctx, id, "c", at, at.Add(2*time.Minute)); err != nil || !ok {
+			t.Fatalf("claim = %v, %v", ok, err)
+		}
+		if ok, err := r.MarkDispatched(ctx, id, "c", at.Add(2*time.Minute)); err != nil || !ok {
+			t.Fatalf("dispatch = %v, %v", ok, err)
+		}
+	}
+	if ok, err := r.Release(ctx, released, "other"); err != nil || ok {
+		t.Fatalf("release by another claim = %v, %v", ok, err)
+	}
+	if ok, err := r.Release(ctx, released, "c"); err != nil || !ok {
+		t.Fatalf("release = %v, %v", ok, err)
+	}
+	if got, _ := r.Get(ctx, org, released); got.Status != model.SecretSubmitted || got.Ciphertexts == nil {
+		t.Fatalf("released = %+v", got)
+	}
+	// Before its deadline the sweep leaves it alone.
+	if n, err := r.Expire(ctx, t0.Add(2*time.Hour+time.Minute)); err != nil || n != 0 {
+		t.Fatalf("expire before the deadline = %d, %v", n, err)
+	}
+	end := t0.Add(3 * time.Hour)
+	if n, err := r.Expire(ctx, end); err != nil || n != 1 {
+		t.Fatalf("expire after the deadline = %d, %v", n, err)
+	}
+	got, _ := r.Get(ctx, org, left)
+	if got.Status != model.SecretUsed || got.Ciphertexts != nil || got.EndedAt == nil || !got.EndedAt.Equal(end) {
+		t.Fatalf("a dispatched request whose holder went away = %+v", got)
+	}
+	if ok, err := r.MarkUsed(ctx, left, "c", end); err != nil || ok {
+		t.Fatalf("use after the sweep = %v, %v", ok, err)
 	}
 }

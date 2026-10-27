@@ -89,7 +89,9 @@ type Querier interface {
 	// A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteUser(ctx context.Context, userID string) error
+	DispatchSecretRequest(ctx context.Context, arg DispatchSecretRequestParams) (int64, error)
 	EmailTaken(ctx context.Context, email string) (bool, error)
+	EndDispatchedSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
 	ExpireSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
 	// rollout ended or a stop was requested (it would end stopped, losing the
@@ -161,7 +163,6 @@ type Querier interface {
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
 	HasAnyServer(ctx context.Context) (bool, error)
-	HoldSecretRequest(ctx context.Context, arg HoldSecretRequestParams) (int64, error)
 	// Access tokens (access_tokens): login sessions, personal access tokens
 	// (kind pat) and OAuth server tokens (kind oauth), hashed at rest. Liveness
 	// (revoked/expired) is evaluated in Go, not SQL, so list/get return raw rows.

@@ -26,23 +26,28 @@ UPDATE secret_requests SET status = 'claimed', claim_id = sqlc.arg(claim_id), cl
 WHERE id = sqlc.arg(id) AND expires_at > sqlc.arg(now)
   AND (status = 'submitted' OR (status = 'claimed' AND claimed_until <= sqlc.arg(now)));
 
--- name: HoldSecretRequest :execrows
-UPDATE secret_requests SET claimed_until = sqlc.arg(claimed_until)
+-- name: DispatchSecretRequest :execrows
+UPDATE secret_requests SET status = 'dispatched', claimed_until = sqlc.arg(claimed_until)
 WHERE id = sqlc.arg(id) AND status = 'claimed' AND claim_id = sqlc.arg(claim_id);
 
 -- name: UseSecretRequest :execrows
 UPDATE secret_requests
 SET status = 'used', ciphertexts = NULL, used_at = sqlc.arg(used_at), ended_at = sqlc.arg(used_at), claim_id = NULL, claimed_until = NULL
-WHERE id = sqlc.arg(id) AND status = 'claimed' AND claim_id = sqlc.arg(claim_id);
+WHERE id = sqlc.arg(id) AND status = 'dispatched' AND claim_id = sqlc.arg(claim_id);
 
 -- name: ReleaseSecretRequest :execrows
 UPDATE secret_requests SET status = 'submitted', claim_id = NULL, claimed_until = NULL
-WHERE id = sqlc.arg(id) AND status = 'claimed' AND claim_id = sqlc.arg(claim_id);
+WHERE id = sqlc.arg(id) AND status IN ('claimed', 'dispatched') AND claim_id = sqlc.arg(claim_id);
 
 -- name: ExpireSecretRequests :execrows
 UPDATE secret_requests SET status = 'expired', ciphertexts = NULL, ended_at = sqlc.arg(now), claim_id = NULL, claimed_until = NULL
 WHERE expires_at <= sqlc.arg(now)
   AND (status IN ('pending', 'submitted') OR (status = 'claimed' AND claimed_until <= sqlc.arg(now)));
+
+-- name: EndDispatchedSecretRequests :execrows
+UPDATE secret_requests
+SET status = 'used', ciphertexts = NULL, used_at = sqlc.arg(now), ended_at = sqlc.arg(now), claim_id = NULL, claimed_until = NULL
+WHERE status = 'dispatched' AND claimed_until <= sqlc.arg(now);
 
 -- name: PruneSecretRequests :execrows
 DELETE FROM secret_requests

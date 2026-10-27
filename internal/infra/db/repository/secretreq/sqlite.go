@@ -36,8 +36,8 @@ func (sqliteQuerier) ClaimSecretRequest(ctx context.Context, db backend.DBTX, p 
 	return sqlitegen.New(db).ClaimSecretRequest(ctx, p)
 }
 
-func (sqliteQuerier) HoldSecretRequest(ctx context.Context, db backend.DBTX, p holdParams) (int64, error) {
-	return sqlitegen.New(db).HoldSecretRequest(ctx, p)
+func (sqliteQuerier) DispatchSecretRequest(ctx context.Context, db backend.DBTX, p dispatchParams) (int64, error) {
+	return sqlitegen.New(db).DispatchSecretRequest(ctx, p)
 }
 
 func (sqliteQuerier) ReleaseSecretRequest(ctx context.Context, db backend.DBTX, p releaseParams) (int64, error) {
@@ -46,6 +46,10 @@ func (sqliteQuerier) ReleaseSecretRequest(ctx context.Context, db backend.DBTX, 
 
 func (sqliteQuerier) ExpireSecretRequests(ctx context.Context, db backend.DBTX, now *types.DateTime) (int64, error) {
 	return sqlitegen.New(db).ExpireSecretRequests(ctx, now)
+}
+
+func (sqliteQuerier) EndDispatchedSecretRequests(ctx context.Context, db backend.DBTX, now *types.DateTime) (int64, error) {
+	return sqlitegen.New(db).EndDispatchedSecretRequests(ctx, now)
 }
 
 func (sqliteQuerier) PruneSecretRequests(ctx context.Context, db backend.DBTX, cutoff *types.DateTime) (int64, error) {

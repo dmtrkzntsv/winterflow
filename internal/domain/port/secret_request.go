@@ -24,17 +24,20 @@ type SecretRequestRepository interface {
 	// deadline is after now for claimID until claimedUntil; reports
 	// whether it did.
 	Claim(ctx context.Context, id, claimID string, now, claimedUntil time.Time) (bool, error)
-	// Hold moves claimID's claim deadline to claimedUntil; false when the
-	// request is no longer claimed by claimID.
-	Hold(ctx context.Context, id, claimID string, claimedUntil time.Time) (bool, error)
-	// MarkUsed ends a request claimed by claimID as used and deletes its
+	// MarkDispatched marks a request claimed by claimID dispatched (right
+	// before its save is sent) until claimedUntil: no Claim takes it again;
+	// false when the request is no longer claimed by claimID.
+	MarkDispatched(ctx context.Context, id, claimID string, claimedUntil time.Time) (bool, error)
+	// MarkUsed ends a request claimID dispatched as used and deletes its
 	// ciphertexts; reports whether it did.
 	MarkUsed(ctx context.Context, id, claimID string, now time.Time) (bool, error)
-	// Release returns a request claimed by claimID to submitted; reports
-	// whether it did.
+	// Release returns a request claimed (or dispatched, when the send
+	// failed) by claimID to submitted; reports whether it did.
 	Release(ctx context.Context, id, claimID string) (bool, error)
 	// Expire ends every pending or submitted request (or claimed one whose
-	// claim lapsed) past its deadline, deleting its ciphertexts.
+	// claim lapsed) past its deadline, deleting its ciphertexts, and ends
+	// as used every dispatched one past its claim deadline (its save went
+	// away before marking it used).
 	Expire(ctx context.Context, now time.Time) (int64, error)
 	// Prune deletes requests that ended before cutoff.
 	Prune(ctx context.Context, cutoff time.Time) (int64, error)

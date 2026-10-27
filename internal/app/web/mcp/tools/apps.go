@@ -358,7 +358,8 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 			return t.fail(err, "read the secret request")
 		}
 		// Every path that does not dispatch releases the claim for a
-		// retry (Commit runs once: after a dispatch this is a no-op).
+		// retry (Commit runs once: after a dispatch's Commit(true), even a
+		// failed one, this is a no-op and the request stays dispatched).
 		defer func() {
 			if err := claim.Commit(false); err != nil {
 				t.Log.Error("mcp: release a secret request", "error", err, "request_id", in.SecretsFrom)
@@ -387,20 +388,21 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	)
 	rec, fail := t.dispatchWithin(ctx, userID, in.ServerID, command.TypeAppSave, "save app", bound,
 		func(ctx context.Context, o appuc.Observer) (string, error) {
+			var gate func(context.Context) error
 			if claim != nil {
-				// Renew the claim right before dispatching: a save whose
-				// claim lapsed (and may be another's now) sends nothing.
-				if err := claim.Hold(ctx); err != nil {
-					return "", err
-				}
+				// Once every check passed, mark the request dispatched
+				// right before sending: a save whose claim lapsed (and may
+				// be another's now) sends nothing, and a dispatched request
+				// is never claimed again, whatever happens to its MarkUsed.
+				gate = claim.Dispatch
 			}
-			appID, requestID, err := t.Apps.SaveAppAssigned(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			appID, requestID, err := t.Apps.SaveAppGated(ctx, userID, in.ServerID, app, payload, in.Draft, o, gate)
 			if err != nil {
+				// Refused, or its send failed: the defer releases the claim.
 				return "", err
 			}
 			assigned = appID
-			// Once dispatched, the request is used (its ciphertexts went to
-			// the agent); a save refused before is released by the defer.
+			// Sent: the request is used (its ciphertexts went to the agent).
 			if claim != nil {
 				usedErr = claim.Commit(true)
 			}
@@ -409,7 +411,7 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	if usedErr != nil {
 		t.Log.Error("mcp: mark a secret request used", "error", usedErr, "request_id", in.SecretsFrom)
 		return withAppID(webmcp.ErrorText("the save was sent, but the secret request "+in.SecretsFrom+
-			" could not be marked used; do not reuse it: check the app with get_app_status, and ask again with request_secrets if needed"),
+			" could not be marked used (it takes no other save): check the app with get_app_status, and ask again with request_secrets if needed"),
 			assigned)
 	}
 	if fail != nil {

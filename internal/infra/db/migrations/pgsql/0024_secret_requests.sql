@@ -3,13 +3,18 @@
 -- encrypts each value to the server's key and the API stores only the
 -- ciphertexts (a JSON object NAME -> ECIES ciphertext), which the agent's
 -- next save_app (secrets_from) puts in as those variables' values.
--- status is pending, submitted, claimed, used or expired. expires_at is the
--- current deadline: 24 h after creation while pending, 24 h after submission
--- while submitted. A save claims a submitted request (claim_id, until
--- claimed_until) so only one save dispatches its ciphertexts; it then ends
--- it used, or releases it to submitted; a claim past claimed_until counts as
--- released. ended_at is set when the request becomes used or expired; the
--- row is pruned a week later. Only the token's SHA-256 is stored.
+-- status is pending, submitted, claimed, dispatched, used or expired.
+-- expires_at is the current deadline: 24 h after creation while pending, 24 h
+-- after submission while submitted. A save claims a submitted request
+-- (claim_id, until claimed_until) so only one save dispatches its
+-- ciphertexts; a claim past claimed_until counts as released. Right before
+-- it sends the save, the claim's holder marks it dispatched, which no claim
+-- takes again: the holder then ends it used (or, when the send failed,
+-- releases it to submitted); a dispatched request whose holder went away is
+-- ended used by the sweep once claimed_until passes. A refused save
+-- releases its claim to submitted. ended_at is set when the request becomes
+-- used or expired; the row is pruned a week later. Only the token's SHA-256
+-- is stored.
 CREATE TABLE secret_requests (
     id           UUID PRIMARY KEY,
     org_id       UUID NOT NULL,

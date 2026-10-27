@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"winterflow/internal/app/web/mcp"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/infra/transport/codec"
 )
 
 // TestToolsListNames is the golden list of tool names.
@@ -122,6 +124,79 @@ func TestSaveAppWaitsForResult(t *testing.T) {
 	ok(t, e.session(t, alice), "get_command_result", map[string]any{"request_id": out.RequestID}, &rec)
 	if rec.Status != "succeeded" {
 		t.Fatalf("get_command_result = %+v", rec)
+	}
+}
+
+// TestSaveAppFailedCreateAnswersAppID: the agent commits a save before it
+// deploys, so a create whose deploy failed left the app on the server; the
+// answer names its id, and a retry passing it changes that app instead of
+// creating a second one. A running answer names it too.
+func TestSaveAppFailedCreateAnswersAppID(t *testing.T) {
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	var (
+		mu    sync.Mutex
+		saved = map[string]int{} // the apps the agent holds, by id: saves
+		fail  = true
+	)
+	e.agent.on(command.TypeAppSave, func(raw json.RawMessage) reply {
+		var in command.SaveAppRequest
+		_ = codec.DecodePayload(raw, &in)
+		mu.Lock()
+		defer mu.Unlock()
+		saved[in.App.AppID]++
+		if fail {
+			return reply{Err: "docker compose up: port is already allocated"}
+		}
+		return reply{Payload: command.SaveAppResponse{AppID: in.App.AppID, Revision: "rev-2"}}
+	})
+	s := e.session(t, alice)
+	args := map[string]any{
+		"server_id": alice.serverID, "name": "web",
+		"files": []map[string]any{{"name": "compose.yml", "content": compose}},
+	}
+	text, isErr := call(t, s, "save_app", args)
+	mu.Lock()
+	var appID string
+	for id := range saved {
+		appID = id
+	}
+	fail = false
+	mu.Unlock()
+	if !isErr || !strings.Contains(text, "port is already allocated") ||
+		!strings.Contains(text, "pass app_id "+appID+" to save_app") || appID == "" {
+		t.Fatalf("failed create = %q (isError %v), agent saw %v", text, isErr, saved)
+	}
+
+	args["app_id"] = appID
+	var out struct {
+		Status string `json:"status"`
+		AppID  string `json:"app_id"`
+		Result struct {
+			AppID string `json:"app_id"`
+		} `json:"result"`
+	}
+	ok(t, s, "save_app", args, &out)
+	if out.Status != "succeeded" || out.AppID != appID || out.Result.AppID != appID {
+		t.Fatalf("retry = %+v, want app %s", out, appID)
+	}
+	mu.Lock()
+	if len(saved) != 1 || saved[appID] != 2 {
+		t.Fatalf("the agent holds %v, want one app saved twice", saved)
+	}
+	mu.Unlock()
+
+	// A create still running at the bound names its app too.
+	e.agent.delay(command.TypeAppSave, wait+700*time.Millisecond)
+	delete(args, "app_id")
+	var running struct {
+		Status    string `json:"status"`
+		RequestID string `json:"request_id"`
+		AppID     string `json:"app_id"`
+	}
+	ok(t, s, "save_app", args, &running)
+	if running.Status != "running" || running.RequestID == "" || running.AppID == "" || running.AppID == appID {
+		t.Fatalf("running create = %+v", running)
 	}
 }
 

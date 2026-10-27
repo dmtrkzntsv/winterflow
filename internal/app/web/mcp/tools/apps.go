@@ -147,7 +147,9 @@ func (t *tools) apps(s *sdk.Server) {
 		"Send the app's full state: files, variables and ingress left out are removed (call get_app first when editing). "+
 		"A secret variable or file is sent only as <encrypted>, which keeps the value the app already stores under that "+
 		"name (a new app or a renamed secret has none); new secret values come from the user through request_secrets, then "+
-		"secrets_from: <request_id>. Answers the agent's result and the app's latest container status.",
+		"secrets_from: <request_id>. Answers the agent's result and the app's latest container status. Every answer "+
+		"after the save was sent carries the app_id (also an error or a running one: a new app may already exist on the "+
+		"server); pass app_id from the previous answer when retrying, or a second app is created.",
 		nil, t.saveApp)
 	add(s, "control_app", "Start, stop, restart or update (pull and redeploy) an app, waiting for the outcome.", nil, t.controlApp)
 	add(s, "rename_app", "Change an app's display name.", nil, t.renameApp)
@@ -377,40 +379,76 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 	// The whole call stays within one wait: the stored-secrets read above
 	// came out of it.
 	bound := max(t.Wait-time.Since(start), time.Second)
-	var usedErr error
+	var (
+		usedErr error
+		// assigned is the id the dispatched save addresses (a new app's
+		// is assigned by the API): every answer after a dispatch names it.
+		assigned string
+	)
 	rec, fail := t.dispatchWithin(ctx, userID, in.ServerID, command.TypeAppSave, "save app", bound,
 		func(ctx context.Context, o appuc.Observer) (string, error) {
-			if claim == nil {
-				return t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			if claim != nil {
+				// Renew the claim right before dispatching: a save whose
+				// claim lapsed (and may be another's now) sends nothing.
+				if err := claim.Hold(ctx); err != nil {
+					return "", err
+				}
 			}
-			// Renew the claim right before dispatching: a save whose claim
-			// lapsed (and may be another's now) sends nothing.
-			if err := claim.Hold(ctx); err != nil {
+			appID, requestID, err := t.Apps.SaveAppAssigned(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			if err != nil {
 				return "", err
 			}
-			requestID, err := t.Apps.SaveAppObserved(ctx, userID, in.ServerID, app, payload, in.Draft, o)
+			assigned = appID
 			// Once dispatched, the request is used (its ciphertexts went to
 			// the agent); a save refused before is released by the defer.
-			if err == nil {
+			if claim != nil {
 				usedErr = claim.Commit(true)
 			}
-			return requestID, err
+			return requestID, nil
 		})
 	if usedErr != nil {
 		t.Log.Error("mcp: mark a secret request used", "error", usedErr, "request_id", in.SecretsFrom)
-		return webmcp.ErrorText("the save was sent, but the secret request " + in.SecretsFrom +
-			" could not be marked used; do not reuse it: check the app with get_app_status, and ask again with request_secrets if needed")
+		return withAppID(webmcp.ErrorText("the save was sent, but the secret request "+in.SecretsFrom+
+			" could not be marked used; do not reuse it: check the app with get_app_status, and ask again with request_secrets if needed"),
+			assigned)
 	}
 	if fail != nil {
-		return withSecretHint(fail, secrets)
+		return withAppID(withSecretHint(fail, secrets), assigned)
 	}
 	var saved command.SaveAppResponse
 	_ = json.Unmarshal(rec.Result, &saved)
 	appID := saved.AppID
 	if appID == "" {
-		appID = in.AppID
+		appID = assigned
 	}
-	return t.withStatus(rec, in.ServerID, appID)
+	return withAppID(t.withStatus(rec, in.ServerID, appID), appID)
+}
+
+// withAppID adds the app's id to a dispatched save's answer (unchanged
+// when nothing was dispatched): an error's text says it, a JSON answer
+// (succeeded, running, unknown) carries "app_id". The agent commits a save
+// before it deploys, so a create whose deploy failed or is still running
+// has left the app on the server: a retry must pass this id, or it creates
+// a second app.
+func withAppID(res *sdk.CallToolResult, appID string) *sdk.CallToolResult {
+	if appID == "" || res == nil || len(res.Content) != 1 {
+		return res
+	}
+	text, ok := res.Content[0].(*sdk.TextContent)
+	if !ok {
+		return res
+	}
+	if res.IsError {
+		return webmcp.ErrorText(text.Text + " (the save addressed app_id " + appID +
+			"; pass app_id " + appID + " to save_app when you retry, or a second app is created)")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text.Text), &fields); err != nil {
+		return res
+	}
+	id, _ := json.Marshal(appID)
+	fields["app_id"] = id
+	return webmcp.JSONResult(fields)
 }
 
 // checkFill refuses secrets_from values the save does not take as

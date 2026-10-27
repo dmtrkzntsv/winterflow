@@ -39,7 +39,8 @@ const instructions = "Winterflow deploys Docker Compose apps to the user's serve
 	"to save_app: what you leave out is removed), declare what an install fills in under the compose file's " +
 	"x-winterflow block (variables with required, encrypted, pattern and description; expose entries naming the " +
 	"service ports Winterflow publishes and routes hostnames to), save_app, then check get_app_status and " +
-	"get_app_logs, fix and save again. A hostname in ingress must be covered by a domain registered on the server " +
+	"get_app_logs, fix and save again, passing the app_id the previous save_app answered (also after an error), " +
+	"or the retry creates a second app. A hostname in ingress must be covered by a domain registered on the server " +
 	"(list_domains, create_domain). Secret values never pass through this connection: a secret variable is sent " +
 	"only as \"<encrypted>\" to keep the stored value, and new secret values are asked from the user with " +
 	"request_secrets. Commands run on the server's agent: a tool waits up to 50 seconds for the outcome and " +

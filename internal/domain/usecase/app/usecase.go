@@ -467,14 +467,25 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 // SaveAppObserved is SaveApp with an observer on the result (it runs after
 // the catalog record is persisted).
 func (uc *UseCase) SaveAppObserved(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool, observe Observer) (string, error) {
+	_, requestID, err := uc.SaveAppAssigned(ctx, userID, serverID, app, payload, draft, observe)
+	return requestID, err
+}
+
+// SaveAppAssigned is SaveAppObserved that also returns the id the save
+// addresses: app.ID, or the one assigned to a new app. A caller that
+// retries a failed create passes it back, so the retry changes the app the
+// agent may already hold instead of creating another. It is "" only when
+// the save was refused before the id was assigned.
+func (uc *UseCase) SaveAppAssigned(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool, observe Observer) (appID, requestID string, err error) {
 	if err := uc.requireUnmanaged(ctx, serverID, app.ID); err != nil {
-		return "", err
+		return "", "", err
 	}
 	checked, err := uc.CheckSave(ctx, serverID, app, payload, draft)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return uc.DispatchSave(ctx, userID, checked, observe)
+	requestID, err = uc.DispatchSave(ctx, userID, checked, observe)
+	return checked.AppID(), requestID, err
 }
 
 // requireUnmanaged refuses an app a live template instance manages

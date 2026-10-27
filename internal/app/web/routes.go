@@ -26,8 +26,10 @@ import (
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
 	huser "winterflow/internal/app/web/handler/user"
+	webmcp "winterflow/internal/app/web/mcp"
 	"winterflow/internal/app/web/middleware/authn"
 	"winterflow/internal/app/web/middleware/ratelimit"
+	"winterflow/internal/app/web/middleware/userlimit"
 	"winterflow/internal/app/web/util"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/bootstrap"
@@ -50,8 +52,12 @@ func (s *Server) registerRoutes() {
 	// OAuth client registration is open and stores a row: one every 5 s
 	// per IP, burst 10.
 	oauthRegisterLimiter := ratelimit.New(0.2, 10)
+	// /mcp is limited per user, not per IP: MCP clients run by an AI
+	// provider share its egress IPs. 10 calls a second, burst 30.
+	mcpUserLimiter := userlimit.New(10, 30)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
-		EnrollStartLimit: enrollStartLimiter.Middleware, OAuthRegisterLimit: oauthRegisterLimiter.Middleware}
+		EnrollStartLimit: enrollStartLimiter.Middleware, OAuthRegisterLimit: oauthRegisterLimiter.Middleware,
+		UserLimit: mcpUserLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to
@@ -246,6 +252,10 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Instances:               d.Instances,
 	})
 	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: rollouts})
+	mcpRoutes := webmcp.Routes(webmcp.Edge{
+		Auth: sessionAuth, AllowOAuth: d.AuthServer.Enabled(), Challenge: d.AuthServer.Challenge(),
+		Register: webmcp.Compose(),
+	}, g)
 
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
@@ -269,6 +279,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
 		rolloutsAPI.Routes(g),
+		mcpRoutes,
 	} {
 		routes = append(routes, table...)
 	}

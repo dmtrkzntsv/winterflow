@@ -168,6 +168,7 @@ var probes = map[string]probe{
 	"POST /auth/oauth/{provider}/callback": {malformed: call{Method: http.MethodPost, Path: "/auth/oauth/oidc/callback", Invalid: true}},
 	"POST /api/v1/user/unlink-identity":    {malformed: bad("POST", "/api/v1/user/unlink-identity")},
 	"POST /oauth/register":                 {malformed: bad("POST", "/oauth/register")},
+	"POST /mcp":                            {malformed: call{Method: http.MethodPost, Path: "/mcp", Body: "{", Invalid: true, Header: http.Header{"Accept": {"application/json, text/event-stream"}}}},
 	"POST /oauth/token": {malformed: call{Method: http.MethodPost, Path: "/oauth/token", Body: "grant_type=password",
 		Header: http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, Invalid: true}},
 	"GET /api/v1/authserver/get-authorization-request": {malformed: bad("GET", "/api/v1/authserver/get-authorization-request")},

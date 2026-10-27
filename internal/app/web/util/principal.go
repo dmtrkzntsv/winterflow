@@ -20,6 +20,12 @@ func WithPrincipal(r *http.Request, p model.Principal) *http.Request {
 // Principal returns the request's authenticated principal; false on a
 // request the auth middleware did not authenticate.
 func Principal(r *http.Request) (model.Principal, bool) {
-	p, ok := r.Context().Value(principalKey{}).(model.Principal)
+	return PrincipalFrom(r.Context())
+}
+
+// PrincipalFrom is Principal for a handler that sees only the request's
+// context (an MCP tool).
+func PrincipalFrom(ctx context.Context) (model.Principal, bool) {
+	p, ok := ctx.Value(principalKey{}).(model.Principal)
 	return p, ok
 }

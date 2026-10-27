@@ -47,6 +47,10 @@ type Guards struct {
 	// OAuthRegisterLimit is the per-IP limiter of the OAuth server's open
 	// dynamic client registration, which stores a row per call.
 	OAuthRegisterLimit Middleware
+	// UserLimit is the per-user limiter of /mcp (keyed by the
+	// authenticated user, not the IP: MCP clients share egress IPs); it
+	// runs behind the auth middleware.
+	UserLimit Middleware
 }
 
 // Route describes one endpoint: how to serve it and how to document it.

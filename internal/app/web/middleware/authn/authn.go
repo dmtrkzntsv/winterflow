@@ -17,6 +17,7 @@ package authn
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -42,20 +43,48 @@ type Options struct {
 	AllowOAuth bool
 	// Challenge, when set, is sent as WWW-Authenticate on every 401.
 	Challenge string
+	// DenyLimit, when set, wraps the 401 answer: a request that does not
+	// authenticate passes it first (the per-IP limiter of /mcp), so it
+	// can answer 429 instead.
+	DenyLimit func(http.Handler) http.Handler
+	// RawErrors answers the 401 and 403 as {"error": "..."} instead of the
+	// webutil envelope, for a Raw route (/mcp).
+	RawErrors bool
 }
 
 // Middleware authenticates every request it wraps, answering 401 (no
 // credential, or one that does not authenticate) or 403 (a cookie-borne
 // unsafe request without the CSRF header) itself.
 func Middleware(a Authenticator, opts Options) func(http.Handler) http.Handler {
+	refuse := func(w http.ResponseWriter, status int) {
+		if !opts.RawErrors {
+			if status == http.StatusUnauthorized {
+				webutil.Unauthorized(w)
+			} else {
+				webutil.Forbidden(w)
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		msg := "unauthorized"
+		if status == http.StatusForbidden {
+			msg = "forbidden"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	}
+	var unauthorized http.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if opts.Challenge != "" {
+			w.Header().Set("WWW-Authenticate", opts.Challenge)
+		}
+		refuse(w, http.StatusUnauthorized)
+	})
+	if opts.DenyLimit != nil {
+		unauthorized = opts.DenyLimit(unauthorized)
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			deny := func() {
-				if opts.Challenge != "" {
-					w.Header().Set("WWW-Authenticate", opts.Challenge)
-				}
-				webutil.Unauthorized(w)
-			}
+			deny := func() { unauthorized.ServeHTTP(w, r) }
 			raw, byCookie := Credential(r)
 			if raw == "" {
 				deny()
@@ -81,7 +110,7 @@ func Middleware(a Authenticator, opts Options) func(http.Handler) http.Handler {
 				return
 			}
 			if byCookie && !safeMethod(r.Method) && r.Header.Get(CSRFHeader) != "1" {
-				webutil.Forbidden(w)
+				refuse(w, http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, webutil.WithPrincipal(r, p))

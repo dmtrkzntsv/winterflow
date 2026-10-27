@@ -179,3 +179,45 @@ func TestRequireAppRequest(t *testing.T) {
 		}
 	}
 }
+
+// TestDenyLimitWrapsOnlyTheRefusal: DenyLimit sees every request that does
+// not authenticate (no credential, a bad one) and never one that does.
+func TestDenyLimitWrapsOnlyTheRefusal(t *testing.T) {
+	seen := 0
+	limit := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen++
+			if seen > 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	opts := authn.Options{Challenge: "Bearer x", DenyLimit: limit}
+
+	w := serve(t, opts, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	expect(t, w, http.StatusUnauthorized, "")
+	if w.Header().Get("WWW-Authenticate") != "Bearer x" {
+		t.Fatalf("challenge = %q", w.Header().Get("WWW-Authenticate"))
+	}
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer wfp_unknown")
+	expect(t, serve(t, opts, r), http.StatusTooManyRequests, "")
+
+	r = httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer wfp_pat")
+	expect(t, serve(t, opts, r), http.StatusOK, "u-pat")
+	if seen != 2 {
+		t.Fatalf("DenyLimit saw %d requests, want 2", seen)
+	}
+}
+
+func TestRawErrors(t *testing.T) {
+	opts := authn.Options{RawErrors: true}
+	w := serve(t, opts, httptest.NewRequest(http.MethodPost, "/mcp", nil))
+	expect(t, w, http.StatusUnauthorized, "{\"error\":\"unauthorized\"}\n")
+
+	r := withCookie(httptest.NewRequest(http.MethodPost, "/mcp", nil), "wfs_session")
+	expect(t, serve(t, opts, r), http.StatusForbidden, "{\"error\":\"forbidden\"}\n")
+}

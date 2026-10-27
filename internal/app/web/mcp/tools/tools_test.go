@@ -11,6 +11,8 @@ import (
 
 	"winterflow/internal/app/web/mcp"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/db/dbtest"
 	"winterflow/internal/infra/transport/codec"
 )
 
@@ -460,5 +462,57 @@ func TestGetAppLargeApp(t *testing.T) {
 	}
 	if !isErr || !strings.Contains(text, "too large to show over MCP") {
 		t.Fatalf("get_command_result of a large app.get = %.200q (isError %v)", text, isErr)
+	}
+}
+
+// TestSaveAppEditWithoutIngressFreesHosts: an edit that leaves ingress out
+// removes it (the agent replaces the config), so its hostnames are freed in
+// the domain index and another app may take them.
+func TestSaveAppEditWithoutIngressFreesHosts(t *testing.T) {
+	e := newEnv(t, nil)
+	alice := e.newUser(t, "alice@example.test")
+	if err := e.deps.ServerDomainRepository.Upsert(dbtest.Ctx(t), alice.serverID,
+		model.RegisteredDomain{Name: "a.example.test", TLS: model.DomainTLSOff}); err != nil {
+		t.Fatal(err)
+	}
+	s := e.session(t, alice)
+	files := []map[string]any{{"name": "compose.yml", "content": compose}}
+	ingress := map[string]any{"domains": []map[string]any{{"domain": "a.example.test", "upstream_port": 8080}}}
+	var first struct {
+		Status string `json:"status"`
+		AppID  string `json:"app_id"`
+	}
+	ok(t, s, "save_app", map[string]any{"server_id": alice.serverID, "name": "one", "files": files, "ingress": ingress}, &first)
+	if first.Status != "succeeded" || first.AppID == "" {
+		t.Fatalf("first save = %+v", first)
+	}
+	// The host is claimed: a second app is refused it.
+	if text, isErr := call(t, s, "save_app", map[string]any{
+		"server_id": alice.serverID, "name": "two", "files": files, "ingress": ingress,
+	}); !isErr || !strings.Contains(text, "already used") {
+		t.Fatalf("second app while claimed = %s (error %v)", text, isErr)
+	}
+	// The edit leaves ingress out: the save sends an empty one.
+	var sent command.SaveAppRequest
+	e.agent.on(command.TypeAppSave, func(raw json.RawMessage) reply {
+		_ = codec.DecodePayload(raw, &sent)
+		return reply{Payload: command.SaveAppResponse{AppID: sent.App.AppID, Revision: "rev-2"}}
+	})
+	var edit struct {
+		Status string `json:"status"`
+	}
+	ok(t, s, "save_app", map[string]any{"server_id": alice.serverID, "app_id": first.AppID, "name": "one", "files": files}, &edit)
+	if edit.Status != "succeeded" {
+		t.Fatalf("edit = %+v", edit)
+	}
+	if ing, err := model.ParseIngress(sent.App.Config); err != nil || ing == nil || len(ing.Domains)+len(ing.Redirects) != 0 {
+		t.Fatalf("edit's ingress = %+v, %v (config %s)", ing, err, sent.App.Config)
+	}
+	var second struct {
+		Status string `json:"status"`
+	}
+	ok(t, s, "save_app", map[string]any{"server_id": alice.serverID, "name": "two", "files": files, "ingress": ingress}, &second)
+	if second.Status != "succeeded" {
+		t.Fatalf("second app after the edit = %+v", second)
 	}
 }

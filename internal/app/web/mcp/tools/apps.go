@@ -91,7 +91,7 @@ type saveAppInput struct {
 	Files       []fileInput     `json:"files,omitempty" jsonschema:"every file of the app, compose.yml included (none for a git-sourced app); files left out are removed"`
 	Variables   []variableInput `json:"variables,omitempty" jsonschema:"the app's variables; variables left out are removed"`
 	Source      *sourceInput    `json:"source,omitempty" jsonschema:"deploy from a git repository instead of files"`
-	Ingress     *ingressInput   `json:"ingress,omitempty" jsonschema:"hostnames routed to the app; omit for none"`
+	Ingress     *ingressInput   `json:"ingress,omitempty" jsonschema:"hostnames routed to the app; omit for none (on an edit, omitting it removes the app's hostnames)"`
 	Draft       bool            `json:"draft,omitempty" jsonschema:"save the change without deploying it"`
 	SecretsFrom string          `json:"secrets_from,omitempty" jsonschema:"a submitted secret request (request_secrets, get_secret_request) whose values become these secret variables; each must be a secret the save declares (x-winterflow variables with encrypted: true, or a variable sent with encrypted: true); a variable it fills may be left out"`
 }
@@ -519,7 +519,8 @@ func buildSave(in saveAppInput, fill map[string]string) (model.App, command.AppP
 		payload.Variables = append(payload.Variables, command.ContentItem{Name: name, Content: []byte(fill[name]), Encrypted: true})
 	}
 	cfg["files"], cfg["variables"] = files, vars
-	if in.Ingress != nil {
+	switch {
+	case in.Ingress != nil:
 		ing := model.Ingress{Domains: []model.IngressDomain{}, Redirects: []model.IngressRedirect{}}
 		for _, d := range in.Ingress.Domains {
 			ing.Domains = append(ing.Domains, model.IngressDomain{Domain: strings.TrimSpace(d.Domain), Expose: d.Expose, UpstreamPort: d.UpstreamPort})
@@ -528,6 +529,12 @@ func buildSave(in saveAppInput, fill map[string]string) (model.App, command.AppP
 			ing.Redirects = append(ing.Redirects, model.IngressRedirect{Domain: strings.TrimSpace(r.Domain), Path: r.Path, To: r.To, Code: r.Code})
 		}
 		cfg["ingress"] = ing
+	case in.AppID != "":
+		// An edit without ingress removes it: the agent replaces the
+		// config, so say so explicitly (as the app editor does for an
+		// emptied ingress), or the save would read as leaving ingress
+		// untouched and the domain index would keep the hostnames claimed.
+		cfg["ingress"] = model.Ingress{Domains: []model.IngressDomain{}, Redirects: []model.IngressRedirect{}}
 	}
 	if src := in.Source; src != nil {
 		if strings.TrimSpace(src.RepoURL) == "" || strings.TrimSpace(src.Branch) == "" {

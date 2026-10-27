@@ -862,11 +862,16 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 // containerIndexRe is the replica suffix compose gives container names.
 var containerIndexRe = regexp.MustCompile(`-[0-9]+$`)
 
-// fromService reports whether a compose container name
-// (<project>-<service>-<n>) is one of service's in appID's project, which
-// the agent names "wf-<app id>" (docker_compose.projectName).
+// fromService reports whether a log entry's container is one of service's
+// replicas in appID's project. The entry carries the prefix `docker compose
+// logs` prints (parseComposeLogLine): current compose prints the container
+// name without the project, <service>-<n>; older releases print the whole
+// name, <project>-<service>-<n>, with the project the agent names
+// "wf-<app id>" (docker_compose.projectName). Both are compared whole after
+// the replica suffix, so "db" never matches "app-db-1".
 func fromService(container, appID, service string) bool {
-	return containerIndexRe.ReplaceAllString(container, "") == strings.ToLower("wf-"+appID)+"-"+service
+	name := containerIndexRe.ReplaceAllString(container, "")
+	return name == service || name == strings.ToLower("wf-"+appID)+"-"+service
 }
 
 func (t *tools) getAppRevisions(ctx context.Context, in appInput) *sdk.CallToolResult {

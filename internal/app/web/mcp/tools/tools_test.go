@@ -335,9 +335,17 @@ func TestGetAppLogsFiltersService(t *testing.T) {
 	alice := e.newUser(t, "alice@example.test")
 	e.agent.on(command.TypeAppLogs, func(json.RawMessage) reply {
 		return reply{Payload: command.GetLogsResponse{AppID: "app-1", Logs: []command.LogEntry{
-			{Message: "from web", Container: "wf-app-1-web-1"},
-			{Message: "from db", Container: "wf-app-1-db-1"},
-			{Message: "from app-db", Container: "wf-app-1-app-db-1"},
+			// The prefix current compose prints: <service>-<n>.
+			{Message: "from web", Container: "web-1"},
+			{Message: "from db", Container: "db-1"},
+			{Message: "from db, second replica", Container: "db-2"},
+			{Message: "from app-db", Container: "app-db-1"},
+			{Message: "from db-backup", Container: "db-backup-1"},
+			// Older compose prints the whole name: <project>-<service>-<n>.
+			{Message: "from db, whole name", Container: "wf-app-1-db-1"},
+			{Message: "from app-db, whole name", Container: "wf-app-1-app-db-1"},
+			// Another project's container is not this app's.
+			{Message: "from another app", Container: "wf-app-2-db-1"},
 		}}}
 	})
 	var out struct {
@@ -346,8 +354,12 @@ func TestGetAppLogsFiltersService(t *testing.T) {
 		} `json:"result"`
 	}
 	ok(t, e.session(t, alice), "get_app_logs", map[string]any{"server_id": alice.serverID, "app_id": "app-1", "service": "db"}, &out)
-	if len(out.Result.Logs) != 1 || out.Result.Logs[0].Message != "from db" {
-		t.Fatalf("get_app_logs = %+v", out.Result.Logs)
+	var got []string
+	for _, l := range out.Result.Logs {
+		got = append(got, l.Message)
+	}
+	if want := []string{"from db", "from db, second replica", "from db, whole name"}; !slices.Equal(got, want) {
+		t.Fatalf("get_app_logs = %q, want %q", got, want)
 	}
 }
 

@@ -167,6 +167,9 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	if ok, err := secretReqs.Claim(ctx, dbtest.ID(801), "claim-1", at, expires); err != nil || !ok {
 		t.Fatalf("claim secret request: %v, %v", ok, err)
 	}
+	if ok, err := secretReqs.MarkDispatched(ctx, dbtest.ID(801), "claim-1", expires); err != nil || !ok {
+		t.Fatalf("dispatch secret request: %v, %v", ok, err)
+	}
 	if ok, err := secretReqs.MarkUsed(ctx, dbtest.ID(801), "claim-1", at); err != nil || !ok {
 		t.Fatalf("use secret request: %v, %v", ok, err)
 	}

@@ -81,8 +81,46 @@ func NewClient(issuer Issuer, hc *http.Client) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: 10 * time.Second}
 	}
+	if hc.CheckRedirect == nil {
+		// A copy, so the caller's client keeps its own policy.
+		cp := *hc
+		cp.CheckRedirect = secureRedirect
+		hc = &cp
+	}
 	issuer.IssuerURL = strings.TrimSuffix(issuer.IssuerURL, "/")
 	return &Client{issuer: issuer, http: hc}
+}
+
+// ValidateIssuerURL enforces on a configured issuer the rule validateEndpoint
+// applies to discovered endpoints: an absolute https URL (plain http only on
+// a loopback host), without userinfo, query or fragment. The discovery
+// document fetched from it names the JWKS and token endpoints, so a
+// plaintext fetch would let anyone on the path substitute their own.
+func ValidateIssuerURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" || u.Opaque != "" {
+		return fmt.Errorf("oidc: issuer %q is not an absolute URL", raw)
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("oidc: issuer %q must not carry userinfo, a query or a fragment", raw)
+	}
+	if u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("oidc: issuer %q must use https (http only on a loopback host)", raw)
+}
+
+// secureRedirect follows at most 10 redirects and none that downgrades to
+// plain http off loopback, so an https issuer cannot be bounced to a
+// plaintext discovery, JWKS or token request.
+func secureRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("oidc: stopped after 10 redirects")
+	}
+	if req.URL.Scheme == "https" || (req.URL.Scheme == "http" && isLoopbackHost(req.URL.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("oidc: refusing a redirect to %s", req.URL.Redacted())
 }
 
 func (c *Client) Issuer() Issuer { return c.issuer }
@@ -109,6 +147,9 @@ func (c *Client) Discover(ctx context.Context) (Discovery, error) {
 		return d, nil
 	}
 	c.mu.Unlock()
+	if err := ValidateIssuerURL(c.issuer.IssuerURL); err != nil {
+		return Discovery{}, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.issuer.IssuerURL+"/.well-known/openid-configuration", nil)
 	if err != nil {
 		return Discovery{}, err

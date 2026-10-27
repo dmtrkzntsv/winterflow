@@ -239,6 +239,22 @@ describe("LoginPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("says why a provider sign-in failed and lets a retry resume ?next=", async () => {
+    fakeAPI({
+      "/api/v1/auth/state": {
+        bootstrap: false,
+        registration_enabled: false,
+        providers: [{ id: "google", name: "Google" }],
+      },
+    });
+    const next = "/oauth/authorize?client_id=c1&state=s";
+    renderLogin(undefined, "?error=provider_error&next=" + encodeURIComponent(next));
+    expect(await screen.findByText("The sign-in provider couldn't sign you in. Try again.")).toBeInTheDocument();
+    const google = await screen.findByRole("link", { name: "Continue with Google" });
+    const start = new URL(google.getAttribute("href") ?? "", "http://x");
+    expect(start.searchParams.get("return_to")).toBe(next);
+  });
+
   it("says an unknown provider error plainly", async () => {
     fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
     renderLogin(undefined, "?error=weird");

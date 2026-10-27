@@ -3,6 +3,8 @@ package oauthlogin
 import (
 	"strings"
 	"testing"
+
+	"winterflow/internal/domain/model"
 )
 
 func TestSafeReturnTo(t *testing.T) {
@@ -39,6 +41,32 @@ func TestWithError(t *testing.T) {
 		if got := withError(in, "denied"); got != want {
 			t.Errorf("withError(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestLoginErrorURL(t *testing.T) {
+	cases := map[string]string{
+		"":                 "/login?error=denied",
+		"/":                "/login?error=denied",
+		"//evil.example/x": "/login?error=denied",
+		"/apps":            "/login?error=denied&next=%2Fapps",
+		"/oauth/authorize?client_id=c&state=a%26b": "/login?error=denied&next=%2Foauth%2Fauthorize%3Fclient_id%3Dc%26state%3Da%2526b",
+	}
+	for in, want := range cases {
+		if got := loginErrorURL(in, "denied"); got != want {
+			t.Errorf("loginErrorURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestErrorURLKeepsReturnTo(t *testing.T) {
+	login := model.LoginState{Intent: model.IntentLogin, ReturnTo: "/oauth/authorize?x=1"}
+	if got := errorURL(login, ErrCodeProvider); got != "/login?error=provider_error&next=%2Foauth%2Fauthorize%3Fx%3D1" {
+		t.Errorf("login errorURL = %q", got)
+	}
+	link := model.LoginState{Intent: model.IntentLink, ReturnTo: "/settings"}
+	if got := errorURL(link, ErrCodeProvider); got != "/settings?error=provider_error" {
+		t.Errorf("link errorURL = %q", got)
 	}
 }
 

@@ -125,12 +125,14 @@ func (s *Service) consumeState(ctx context.Context, provider, state, flow string
 }
 
 // errorURL reports a failure where the flow started: a link back on its
-// return page, a sign-in on the login page.
+// return page, a sign-in on the login page, carrying the sign-in's return
+// path as ?next= so a retry resumes where it was headed (an
+// /oauth/authorize request, say).
 func errorURL(st model.LoginState, code string) string {
 	if st.Intent == model.IntentLink {
 		return withError(st.ReturnTo, code)
 	}
-	return withError(loginPage, code)
+	return loginErrorURL(st.ReturnTo, code)
 }
 
 // userinfoFallback fills email/verified/name only where the ID token left

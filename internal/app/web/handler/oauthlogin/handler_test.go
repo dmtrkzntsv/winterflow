@@ -299,6 +299,21 @@ func TestProviderLoginNewUserRegistrationOpen(t *testing.T) {
 	}
 }
 
+// TestProviderLoginFailureKeepsReturnTo: a failed sign-in lands on the login
+// page with the flow's return path as ?next=, so a retry resumes there (an
+// /oauth/authorize request a connector started, say).
+func TestProviderLoginFailureKeepsReturnTo(t *testing.T) {
+	h := newHarness(t, model.ProviderOIDC)
+	h.passwordUser("someone@example.test")
+
+	rt := "/oauth/authorize?client_id=c&state=s"
+	loc, _ := h.flow(h.client(), url.Values{"return_to": {rt}})
+	want := "/login?" + url.Values{"error": {"registration_closed"}, "next": {rt}}.Encode()
+	if loc != want {
+		t.Fatalf("redirect = %q, want %q", loc, want)
+	}
+}
+
 func TestProviderLoginUnknownEmailRegistrationClosed(t *testing.T) {
 	h := newHarness(t, model.ProviderOIDC)
 	h.passwordUser("someone@example.test")

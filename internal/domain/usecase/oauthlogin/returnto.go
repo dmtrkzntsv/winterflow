@@ -41,3 +41,14 @@ func withError(path, code string) string {
 	u.RawQuery = q.Encode()
 	return u.String()
 }
+
+// loginErrorURL is the login page with error=code and, unless returnTo is
+// home or not a SafeReturnTo, next=returnTo.
+func loginErrorURL(returnTo, code string) string {
+	q := url.Values{}
+	q.Set("error", code)
+	if next := SafeReturnTo(returnTo); next != "/" {
+		q.Set("next", next)
+	}
+	return loginPage + "?" + q.Encode()
+}

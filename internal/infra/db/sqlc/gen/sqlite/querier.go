@@ -59,15 +59,11 @@ type Querier interface {
 	DeleteAppDomainsByServer(ctx context.Context, serverID string) error
 	DeleteDeadAccessTokens(ctx context.Context, arg DeleteDeadAccessTokensParams) (int64, error)
 	DeleteDeadOAuthGrants(ctx context.Context, arg DeleteDeadOAuthGrantsParams) (int64, error)
-	DeleteExpiredOAuthHandoffs(ctx context.Context, expiresAt types.DateTime) (int64, error)
 	DeleteExpiredOAuthLoginStates(ctx context.Context, expiresAt types.DateTime) (int64, error)
 	DeleteIdentityByUserProvider(ctx context.Context, arg DeleteIdentityByUserProviderParams) (int64, error)
 	DeleteMetricSamplesBefore(ctx context.Context, arg DeleteMetricSamplesBeforeParams) (int64, error)
 	DeleteMetricSamplesByApp(ctx context.Context, appID string) error
 	DeleteNotificationChannel(ctx context.Context, arg DeleteNotificationChannelParams) (int64, error)
-	DeleteOAuthHandoff(ctx context.Context, codeHash string) (int64, error)
-	DeleteOAuthHandoffsByUser(ctx context.Context, userID string) (int64, error)
-	DeleteOAuthHandoffsByUserProvider(ctx context.Context, arg DeleteOAuthHandoffsByUserProviderParams) (int64, error)
 	DeleteOAuthLoginState(ctx context.Context, stateHash string) (int64, error)
 	DeleteOAuthLoginStatesByLinkUser(ctx context.Context, linkUserID *string) (int64, error)
 	DeleteRegistration(ctx context.Context, serverID string) error
@@ -127,7 +123,7 @@ type Querier interface {
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetHubCertificate(ctx context.Context, fingerprint string) (GetHubCertificateRow, error)
 	// Sign-in with a provider: linked identities (user_connected_accounts),
-	// in-flight states, one-shot handoffs.
+	// in-flight states.
 	GetIdentityByProviderSubject(ctx context.Context, arg GetIdentityByProviderSubjectParams) (UserConnectedAccount, error)
 	GetIdentityByUserProvider(ctx context.Context, arg GetIdentityByUserProviderParams) (UserConnectedAccount, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
@@ -140,7 +136,6 @@ type Querier interface {
 	GetOAuthGrant(ctx context.Context, id string) (OauthGrant, error)
 	GetOAuthGrantByRefreshHash(ctx context.Context, refreshTokenHash string) (OauthGrant, error)
 	GetOAuthGrantBySpentRefreshHash(ctx context.Context, tokenHash string) (OauthGrant, error)
-	GetOAuthHandoff(ctx context.Context, codeHash string) (OauthHandoff, error)
 	GetOAuthLoginState(ctx context.Context, stateHash string) (OauthLoginState, error)
 	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
@@ -186,7 +181,6 @@ type Querier interface {
 	InsertOAuthClient(ctx context.Context, arg InsertOAuthClientParams) error
 	InsertOAuthCode(ctx context.Context, arg InsertOAuthCodeParams) error
 	InsertOAuthGrant(ctx context.Context, arg InsertOAuthGrantParams) error
-	InsertOAuthHandoff(ctx context.Context, arg InsertOAuthHandoffParams) error
 	InsertOAuthLoginState(ctx context.Context, arg InsertOAuthLoginStateParams) error
 	InsertOAuthSpentRefreshHash(ctx context.Context, arg InsertOAuthSpentRefreshHashParams) error
 	// Organizations and memberships.

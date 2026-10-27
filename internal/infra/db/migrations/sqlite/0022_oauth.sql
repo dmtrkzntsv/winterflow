@@ -79,20 +79,8 @@ CREATE TABLE oauth_login_states (
 
 CREATE INDEX idx_oauth_login_states_expires_at ON oauth_login_states (expires_at);
 
--- One-shot codes a client exchanges for a session (kind 'login') or for the
--- identity write a link callback defers to the initiating browser (kind
--- 'link'), so no token travels in a URL.
-CREATE TABLE oauth_handoffs (
-    code_hash  VARCHAR(64) PRIMARY KEY,
-    kind       VARCHAR(16) NOT NULL DEFAULT 'login',
-    user_id    VARCHAR(36) NOT NULL,
-    provider   VARCHAR(16) NOT NULL,
-    subject    TEXT NOT NULL DEFAULT '',
-    email      TEXT NOT NULL DEFAULT '',
-    flow_hash  VARCHAR(64) NOT NULL DEFAULT '',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_oauth_handoffs_expires_at ON oauth_handoffs (expires_at);
+-- The issuer a linked identity was verified against. A subject is unique only
+-- per issuer (some IdPs use small integers), so a sign-in through a provider
+-- slot now pointing at another issuer must not match it. NULL on rows that
+-- predate this column: Google's (fixed issuer).
+ALTER TABLE user_connected_accounts ADD COLUMN issuer TEXT;

@@ -192,10 +192,18 @@ func (h *harness) passwordUser(email string) model.User {
 	return u
 }
 
-// providerUser creates a passwordless account linked to subject.
+// providerUser creates a passwordless account linked to subject at the fake
+// provider's issuer.
 func (h *harness) providerUser(subject, email string) model.User {
 	h.t.Helper()
-	u, err := h.users.CreateProviderUser(h.ctx, "Ida", model.Identity{Provider: h.slot, Subject: subject, Email: email, CreatedAt: time.Now()}, false)
+	return h.providerUserAt(subject, email, h.fake.IssuerURL())
+}
+
+// providerUserAt creates a passwordless account linked to subject at issuer
+// ("" for a row that predates the issuer column).
+func (h *harness) providerUserAt(subject, email, issuer string) model.User {
+	h.t.Helper()
+	u, err := h.users.CreateProviderUser(h.ctx, "Ida", model.Identity{Provider: h.slot, Subject: subject, Email: email, Issuer: issuer, CreatedAt: time.Now()}, false)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -237,6 +245,35 @@ func TestOIDCLoginExistingIdentity(t *testing.T) {
 	}
 }
 
+// TestOIDCIdentityOfAnotherIssuerRefused: a subject is unique only per
+// issuer. After AUTH_OIDC_ISSUER is repointed at another IdP, that IdP's user
+// with the same sub must not sign in to the account the old IdP's user
+// linked, nor link it to theirs.
+func TestOIDCIdentityOfAnotherIssuerRefused(t *testing.T) {
+	h := newHarness(t, model.ProviderOIDC)
+	h.open = true
+	victim := h.providerUserAt(h.fake.Subject, "victim@example.test", "https://old-idp.example.test")
+
+	loc, resp := h.flow(h.client(), nil)
+	if loc != "/login?error=provider_error" {
+		t.Fatalf("redirect = %q, want /login?error=provider_error", loc)
+	}
+	if got := h.sessionUser(resp); got != "" {
+		t.Fatalf("signed in as %q through another issuer", got)
+	}
+	if n := h.countUsers(); n != 1 {
+		t.Fatalf("users = %d, want 1", n)
+	}
+
+	loc, _ = h.flow(h.signedIn(victim.ID), url.Values{"mode": {"link"}, "return_to": {"/settings"}})
+	if loc != "/settings?error=identity_taken" {
+		t.Fatalf("link redirect = %q", loc)
+	}
+	if ids := h.identities(victim.ID); len(ids) != 1 || ids[0].Issuer != "https://old-idp.example.test" {
+		t.Fatalf("identities = %+v", ids)
+	}
+}
+
 func TestProviderLoginNewUserRegistrationOpen(t *testing.T) {
 	h := newHarness(t, model.ProviderOIDC)
 	h.passwordUser("someone@example.test")
@@ -254,7 +291,7 @@ func TestProviderLoginNewUserRegistrationOpen(t *testing.T) {
 		t.Fatalf("users = %d, want 2", n)
 	}
 	ids := h.identities(userID)
-	if len(ids) != 1 || ids[0].Subject != h.fake.Subject || ids[0].Email != h.fake.Email {
+	if len(ids) != 1 || ids[0].Subject != h.fake.Subject || ids[0].Email != h.fake.Email || ids[0].Issuer != h.fake.IssuerURL() {
 		t.Fatalf("identities = %+v", ids)
 	}
 	if _, err := h.users.PrimaryOrganizationID(h.ctx, userID); err != nil {
@@ -487,7 +524,7 @@ func TestLegacyGoogleAccountAdopted(t *testing.T) {
 	h := newHarness(t, model.ProviderGoogle)
 	sum := sha1.Sum([]byte(h.fake.Subject)) //nolint:gosec // see the import
 	legacy := hex.EncodeToString(sum[:])
-	u := h.providerUser(legacy, "")
+	u := h.providerUserAt(legacy, "", "")
 
 	_, resp := h.flow(h.client(), nil)
 	if got := h.sessionUser(resp); got != u.ID {

@@ -74,7 +74,7 @@ func New(tx *backend.TxManager, driver string) (*Repo, error) {
 func hydrate(row identityRow) model.Identity {
 	return model.Identity{
 		Provider: row.Provider, Subject: row.ExternalID, UserID: row.UserID,
-		Email: util.DerefString(row.Email), CreatedAt: row.CreatedAt.Time(),
+		Email: util.DerefString(row.Email), Issuer: util.DerefString(row.Issuer), CreatedAt: row.CreatedAt.Time(),
 	}
 }
 
@@ -129,7 +129,9 @@ func (r *Repo) lockUser(ctx context.Context, userID string) error {
 	return notFound(err, model.ErrorUserNotFound)
 }
 
-// LinkIdentity attaches a provider account to id.UserID.
+// LinkIdentity attaches a provider account to id.UserID. A row with the same
+// subject but another issuer (model.Identity.SameIssuer) is
+// model.ErrIdentityTaken, even when it is the same user's.
 func (r *Repo) LinkIdentity(ctx context.Context, id model.Identity) error {
 	if id.Provider == localProvider {
 		return fmt.Errorf("sign-in repository: %q is not a provider", localProvider)
@@ -141,7 +143,9 @@ func (r *Repo) LinkIdentity(ctx context.Context, id model.Identity) error {
 		db := r.tx.Querier(ctx)
 		existing, err := r.q.GetIdentityByProviderSubject(ctx, db, subjectParams{Provider: id.Provider, ExternalID: id.Subject})
 		switch {
-		case err == nil && existing.UserID != id.UserID:
+		case err == nil && (existing.UserID != id.UserID || !hydrate(existing).SameIssuer(id.Issuer)):
+			// Another user's, or the same subject at another issuer: a
+			// different account holding the key.
 			return model.ErrIdentityTaken
 		case err == nil:
 			_, err = r.q.UpdateIdentityEmail(ctx, db, emailParams{Email: util.RefString(id.Email), Provider: id.Provider, ExternalID: id.Subject})
@@ -156,7 +160,7 @@ func (r *Repo) LinkIdentity(ctx context.Context, id model.Identity) error {
 		}
 		n, err := r.q.InsertIdentityIfAbsent(ctx, db, insertIDParams{
 			Provider: id.Provider, ExternalID: id.Subject, UserID: id.UserID,
-			Email: util.RefString(id.Email), CreatedAt: types.DateTime(id.CreatedAt),
+			Email: util.RefString(id.Email), CreatedAt: types.DateTime(id.CreatedAt), Issuer: util.RefString(id.Issuer),
 		})
 		if err != nil {
 			return err

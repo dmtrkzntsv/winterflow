@@ -95,7 +95,7 @@ func (s *Service) Callback(ctx context.Context, provider string, in CallbackInpu
 		s.warn("legacy identity", err, provider)
 		return fail(ErrCodeProvider)
 	}
-	id := model.Identity{Provider: provider, Subject: claims.Subject, Email: email, CreatedAt: now}
+	id := model.Identity{Provider: provider, Subject: claims.Subject, Email: email, Issuer: p.Client.IssuerURL(), CreatedAt: now}
 	if st.Intent == model.IntentLink {
 		return s.link(ctx, st, in, id)
 	}
@@ -193,6 +193,14 @@ func (s *Service) login(ctx context.Context, st model.LoginState, in CallbackInp
 	ok := func(userID string) CallbackResult { return CallbackResult{Redirect: st.ReturnTo, SignIn: userID} }
 
 	existing, err := s.repo.IdentityBySubject(ctx, id.Provider, id.Subject)
+	if err == nil && !existing.SameIssuer(id.Issuer) {
+		// The same subject at another issuer is another person: the slot
+		// was repointed at a different IdP. Never sign them in to the
+		// account linked through the old one.
+		s.log.Warn("oauth callback: identity linked through another issuer",
+			"provider", id.Provider, "stored_issuer", existing.Issuer, "issuer", id.Issuer, "user_id", existing.UserID)
+		return fail(ErrCodeProvider)
+	}
 	if err == nil {
 		if existing.Email != id.Email {
 			if err := s.repo.UpdateIdentityEmail(ctx, id.Provider, id.Subject, id.Email); err != nil {

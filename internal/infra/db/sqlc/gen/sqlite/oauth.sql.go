@@ -100,18 +100,6 @@ func (q *Queries) DeleteDeadOAuthGrants(ctx context.Context, arg DeleteDeadOAuth
 	return result.RowsAffected()
 }
 
-const deleteExpiredOAuthHandoffs = `-- name: DeleteExpiredOAuthHandoffs :execrows
-DELETE FROM oauth_handoffs WHERE expires_at < ?
-`
-
-func (q *Queries) DeleteExpiredOAuthHandoffs(ctx context.Context, expiresAt types.DateTime) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteExpiredOAuthHandoffs, expiresAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const deleteExpiredOAuthLoginStates = `-- name: DeleteExpiredOAuthLoginStates :execrows
 DELETE FROM oauth_login_states WHERE expires_at < ?
 `
@@ -135,47 +123,6 @@ type DeleteIdentityByUserProviderParams struct {
 
 func (q *Queries) DeleteIdentityByUserProvider(ctx context.Context, arg DeleteIdentityByUserProviderParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteIdentityByUserProvider, arg.UserID, arg.Provider)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const deleteOAuthHandoff = `-- name: DeleteOAuthHandoff :execrows
-DELETE FROM oauth_handoffs WHERE code_hash = ?
-`
-
-func (q *Queries) DeleteOAuthHandoff(ctx context.Context, codeHash string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteOAuthHandoff, codeHash)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const deleteOAuthHandoffsByUser = `-- name: DeleteOAuthHandoffsByUser :execrows
-DELETE FROM oauth_handoffs WHERE user_id = ?
-`
-
-func (q *Queries) DeleteOAuthHandoffsByUser(ctx context.Context, userID string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteOAuthHandoffsByUser, userID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const deleteOAuthHandoffsByUserProvider = `-- name: DeleteOAuthHandoffsByUserProvider :execrows
-DELETE FROM oauth_handoffs WHERE user_id = ? AND provider = ?
-`
-
-type DeleteOAuthHandoffsByUserProviderParams struct {
-	UserID   string
-	Provider string
-}
-
-func (q *Queries) DeleteOAuthHandoffsByUserProvider(ctx context.Context, arg DeleteOAuthHandoffsByUserProviderParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteOAuthHandoffsByUserProvider, arg.UserID, arg.Provider)
 	if err != nil {
 		return 0, err
 	}
@@ -208,7 +155,7 @@ func (q *Queries) DeleteOAuthLoginStatesByLinkUser(ctx context.Context, linkUser
 
 const getIdentityByProviderSubject = `-- name: GetIdentityByProviderSubject :one
 
-SELECT provider, external_id, user_id, email, created_at
+SELECT provider, external_id, user_id, email, created_at, issuer
 FROM user_connected_accounts
 WHERE provider = ? AND external_id = ?
 `
@@ -219,7 +166,7 @@ type GetIdentityByProviderSubjectParams struct {
 }
 
 // Sign-in with a provider: linked identities (user_connected_accounts),
-// in-flight states, one-shot handoffs.
+// in-flight states.
 func (q *Queries) GetIdentityByProviderSubject(ctx context.Context, arg GetIdentityByProviderSubjectParams) (UserConnectedAccount, error) {
 	row := q.db.QueryRowContext(ctx, getIdentityByProviderSubject, arg.Provider, arg.ExternalID)
 	var i UserConnectedAccount
@@ -229,12 +176,13 @@ func (q *Queries) GetIdentityByProviderSubject(ctx context.Context, arg GetIdent
 		&i.UserID,
 		&i.Email,
 		&i.CreatedAt,
+		&i.Issuer,
 	)
 	return i, err
 }
 
 const getIdentityByUserProvider = `-- name: GetIdentityByUserProvider :one
-SELECT provider, external_id, user_id, email, created_at
+SELECT provider, external_id, user_id, email, created_at, issuer
 FROM user_connected_accounts
 WHERE user_id = ? AND provider = ?
 `
@@ -253,6 +201,7 @@ func (q *Queries) GetIdentityByUserProvider(ctx context.Context, arg GetIdentity
 		&i.UserID,
 		&i.Email,
 		&i.CreatedAt,
+		&i.Issuer,
 	)
 	return i, err
 }
@@ -343,27 +292,6 @@ func (q *Queries) GetOAuthGrantBySpentRefreshHash(ctx context.Context, tokenHash
 	return i, err
 }
 
-const getOAuthHandoff = `-- name: GetOAuthHandoff :one
-SELECT code_hash, kind, user_id, provider, subject, email, flow_hash, created_at, expires_at FROM oauth_handoffs WHERE code_hash = ?
-`
-
-func (q *Queries) GetOAuthHandoff(ctx context.Context, codeHash string) (OauthHandoff, error) {
-	row := q.db.QueryRowContext(ctx, getOAuthHandoff, codeHash)
-	var i OauthHandoff
-	err := row.Scan(
-		&i.CodeHash,
-		&i.Kind,
-		&i.UserID,
-		&i.Provider,
-		&i.Subject,
-		&i.Email,
-		&i.FlowHash,
-		&i.CreatedAt,
-		&i.ExpiresAt,
-	)
-	return i, err
-}
-
 const getOAuthLoginState = `-- name: GetOAuthLoginState :one
 SELECT state_hash, provider, nonce, code_verifier, flow_hash, intent, return_to, link_user_id, created_at, expires_at FROM oauth_login_states WHERE state_hash = ?
 `
@@ -387,8 +315,8 @@ func (q *Queries) GetOAuthLoginState(ctx context.Context, stateHash string) (Oau
 }
 
 const insertIdentity = `-- name: InsertIdentity :exec
-INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at, issuer)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type InsertIdentityParams struct {
@@ -397,6 +325,7 @@ type InsertIdentityParams struct {
 	UserID     string
 	Email      *string
 	CreatedAt  types.DateTime
+	Issuer     *string
 }
 
 func (q *Queries) InsertIdentity(ctx context.Context, arg InsertIdentityParams) error {
@@ -406,13 +335,14 @@ func (q *Queries) InsertIdentity(ctx context.Context, arg InsertIdentityParams) 
 		arg.UserID,
 		arg.Email,
 		arg.CreatedAt,
+		arg.Issuer,
 	)
 	return err
 }
 
 const insertIdentityIfAbsent = `-- name: InsertIdentityIfAbsent :execrows
-INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at, issuer)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (provider, external_id) DO NOTHING
 `
 
@@ -422,6 +352,7 @@ type InsertIdentityIfAbsentParams struct {
 	UserID     string
 	Email      *string
 	CreatedAt  types.DateTime
+	Issuer     *string
 }
 
 // 0 rows: the provider account is already linked (to anyone).
@@ -432,6 +363,7 @@ func (q *Queries) InsertIdentityIfAbsent(ctx context.Context, arg InsertIdentity
 		arg.UserID,
 		arg.Email,
 		arg.CreatedAt,
+		arg.Issuer,
 	)
 	if err != nil {
 		return 0, err
@@ -531,38 +463,6 @@ func (q *Queries) InsertOAuthGrant(ctx context.Context, arg InsertOAuthGrantPara
 	return err
 }
 
-const insertOAuthHandoff = `-- name: InsertOAuthHandoff :exec
-INSERT INTO oauth_handoffs (code_hash, kind, user_id, provider, subject, email, flow_hash, created_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`
-
-type InsertOAuthHandoffParams struct {
-	CodeHash  string
-	Kind      string
-	UserID    string
-	Provider  string
-	Subject   string
-	Email     string
-	FlowHash  string
-	CreatedAt types.DateTime
-	ExpiresAt types.DateTime
-}
-
-func (q *Queries) InsertOAuthHandoff(ctx context.Context, arg InsertOAuthHandoffParams) error {
-	_, err := q.db.ExecContext(ctx, insertOAuthHandoff,
-		arg.CodeHash,
-		arg.Kind,
-		arg.UserID,
-		arg.Provider,
-		arg.Subject,
-		arg.Email,
-		arg.FlowHash,
-		arg.CreatedAt,
-		arg.ExpiresAt,
-	)
-	return err
-}
-
 const insertOAuthLoginState = `-- name: InsertOAuthLoginState :exec
 INSERT INTO oauth_login_states (state_hash, provider, nonce, code_verifier, flow_hash, intent, return_to, link_user_id, created_at, expires_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -615,7 +515,7 @@ func (q *Queries) InsertOAuthSpentRefreshHash(ctx context.Context, arg InsertOAu
 
 const listIdentitiesByUser = `-- name: ListIdentitiesByUser :many
 
-SELECT provider, external_id, user_id, email, created_at
+SELECT provider, external_id, user_id, email, created_at, issuer
 FROM user_connected_accounts
 WHERE user_id = ? AND provider <> 'local'
 ORDER BY created_at, provider
@@ -638,6 +538,7 @@ func (q *Queries) ListIdentitiesByUser(ctx context.Context, userID string) ([]Us
 			&i.UserID,
 			&i.Email,
 			&i.CreatedAt,
+			&i.Issuer,
 		); err != nil {
 			return nil, err
 		}

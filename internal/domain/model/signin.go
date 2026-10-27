@@ -34,13 +34,28 @@ type ProviderTokens struct {
 
 // Identity is a provider account linked to a user (a
 // user_connected_accounts row): Subject is the provider's stable user id,
-// Email the address it vouched for when the link was made or last used.
+// Email the address it vouched for when the link was made or last used,
+// Issuer the provider's issuer URL the subject was verified against ("" on
+// rows that predate it).
 type Identity struct {
 	Provider  string
 	Subject   string
 	UserID    string
 	Email     string
+	Issuer    string
 	CreatedAt time.Time
+}
+
+// SameIssuer reports whether a stored identity was verified against issuer.
+// A subject is unique only per issuer, so an identity linked through another
+// issuer (a provider slot repointed at another IdP) is not this account. A
+// row with no issuer predates the column and can only be Google's or
+// Apple's, whose issuer is fixed; a generic OIDC identity always has one.
+func (id Identity) SameIssuer(issuer string) bool {
+	if id.Issuer == "" {
+		return id.Provider != ProviderOIDC
+	}
+	return id.Issuer == issuer
 }
 
 // Sign-in intents a login state carries.

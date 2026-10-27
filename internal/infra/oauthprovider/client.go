@@ -82,6 +82,9 @@ func (c *Client) UsesPKCE() bool { return c.issuer.UsePKCE }
 // without an email_verified claim saying so.
 func (c *Client) TrustsEmail() bool { return c.issuer.TrustEmail }
 
+// IssuerURL is the configured issuer, without a trailing slash.
+func (c *Client) IssuerURL() string { return c.issuer.IssuerURL }
+
 // Discover loads the OpenID configuration once per process (lazily), so an
 // issuer that is down at boot only fails the requests that need it.
 func (c *Client) Discover(ctx context.Context) (Discovery, error) {

@@ -186,18 +186,6 @@ type OauthGrant struct {
 	RevokedAt            *types.DateTime
 }
 
-type OauthHandoff struct {
-	CodeHash  string
-	Kind      string
-	UserID    string
-	Provider  string
-	Subject   string
-	Email     string
-	FlowHash  string
-	CreatedAt types.DateTime
-	ExpiresAt types.DateTime
-}
-
 type OauthLoginState struct {
 	StateHash    string
 	Provider     string
@@ -393,6 +381,7 @@ type UserConnectedAccount struct {
 	UserID     string
 	Email      *string
 	CreatedAt  types.DateTime
+	Issuer     *string
 }
 
 type UserCredential struct {

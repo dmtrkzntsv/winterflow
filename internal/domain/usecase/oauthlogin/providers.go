@@ -16,6 +16,10 @@ type Client interface {
 	// TrustsEmail reports whether the email claim counts as verified
 	// without an email_verified claim saying so.
 	TrustsEmail() bool
+	// IssuerURL is the issuer ID tokens are verified against; identities
+	// record it, so repointing a provider slot at another IdP cannot match
+	// an account linked through the old one.
+	IssuerURL() string
 	AuthURL(ctx context.Context, state, nonce, codeChallenge, redirectURI string) (string, error)
 	Exchange(ctx context.Context, code, codeVerifier, redirectURI string, now time.Time) (model.ProviderTokens, error)
 	// VerifyIDToken checks the signature, issuer, audience, expiry and nonce.

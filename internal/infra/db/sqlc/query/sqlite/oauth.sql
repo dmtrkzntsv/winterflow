@@ -83,15 +83,15 @@ WHERE (revoked_at IS NOT NULL AND revoked_at < ?)
    OR expires_at < ?;
 
 -- Sign-in with a provider: linked identities (user_connected_accounts),
--- in-flight states, one-shot handoffs.
+-- in-flight states.
 
 -- name: GetIdentityByProviderSubject :one
-SELECT provider, external_id, user_id, email, created_at
+SELECT provider, external_id, user_id, email, created_at, issuer
 FROM user_connected_accounts
 WHERE provider = ? AND external_id = ?;
 
 -- name: GetIdentityByUserProvider :one
-SELECT provider, external_id, user_id, email, created_at
+SELECT provider, external_id, user_id, email, created_at, issuer
 FROM user_connected_accounts
 WHERE user_id = ? AND provider = ?;
 
@@ -99,7 +99,7 @@ WHERE user_id = ? AND provider = ?;
 -- linked provider: the identity lists and counts leave them out.
 
 -- name: ListIdentitiesByUser :many
-SELECT provider, external_id, user_id, email, created_at
+SELECT provider, external_id, user_id, email, created_at, issuer
 FROM user_connected_accounts
 WHERE user_id = ? AND provider <> 'local'
 ORDER BY created_at, provider;
@@ -108,13 +108,13 @@ ORDER BY created_at, provider;
 SELECT COUNT(*) FROM user_connected_accounts WHERE user_id = ? AND provider <> 'local';
 
 -- name: InsertIdentity :exec
-INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at, issuer)
+VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: InsertIdentityIfAbsent :execrows
 -- 0 rows: the provider account is already linked (to anyone).
-INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO user_connected_accounts (provider, external_id, user_id, email, created_at, issuer)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (provider, external_id) DO NOTHING;
 
 -- name: RekeyIdentity :execrows
@@ -167,22 +167,3 @@ DELETE FROM oauth_login_states WHERE link_user_id = ?;
 
 -- name: DeleteExpiredOAuthLoginStates :execrows
 DELETE FROM oauth_login_states WHERE expires_at < ?;
-
--- name: InsertOAuthHandoff :exec
-INSERT INTO oauth_handoffs (code_hash, kind, user_id, provider, subject, email, flow_hash, created_at, expires_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-
--- name: GetOAuthHandoff :one
-SELECT * FROM oauth_handoffs WHERE code_hash = ?;
-
--- name: DeleteOAuthHandoff :execrows
-DELETE FROM oauth_handoffs WHERE code_hash = ?;
-
--- name: DeleteOAuthHandoffsByUser :execrows
-DELETE FROM oauth_handoffs WHERE user_id = ?;
-
--- name: DeleteOAuthHandoffsByUserProvider :execrows
-DELETE FROM oauth_handoffs WHERE user_id = ? AND provider = ?;
-
--- name: DeleteExpiredOAuthHandoffs :execrows
-DELETE FROM oauth_handoffs WHERE expires_at < ?;

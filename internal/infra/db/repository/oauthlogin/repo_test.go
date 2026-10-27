@@ -32,9 +32,16 @@ func newFixture(t *testing.T) *fixture {
 	return &fixture{repo: r, d: d, ctx: dbtest.Ctx(t), now: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)}
 }
 
+const testIssuer = "https://idp.example.test"
+
 func (f *fixture) link(t *testing.T, user, provider, subject, email string) error {
 	t.Helper()
-	return f.repo.LinkIdentity(f.ctx, model.Identity{Provider: provider, Subject: subject, UserID: user, Email: email, CreatedAt: f.now})
+	return f.linkAt(t, user, provider, subject, email, testIssuer)
+}
+
+func (f *fixture) linkAt(t *testing.T, user, provider, subject, email, issuer string) error {
+	t.Helper()
+	return f.repo.LinkIdentity(f.ctx, model.Identity{Provider: provider, Subject: subject, UserID: user, Email: email, Issuer: issuer, CreatedAt: f.now})
 }
 
 func (f *fixture) setPassword(t *testing.T, user, email string) {
@@ -56,6 +63,10 @@ func TestLinkAndList(t *testing.T) {
 	if err := f.link(t, a, "oidc", "sub-other", "a@example.test"); !errors.Is(err, model.ErrProviderAlreadyLinked) {
 		t.Fatalf("a second oidc account = %v, want ErrProviderAlreadyLinked", err)
 	}
+	// The same subject at another issuer is another account, even for a.
+	if err := f.linkAt(t, a, "oidc", "sub-a", "a@example.test", "https://other-idp.example.test"); !errors.Is(err, model.ErrIdentityTaken) {
+		t.Fatalf("same subject, another issuer = %v, want ErrIdentityTaken", err)
+	}
 	// Re-linking one the user has refreshes its email.
 	if err := f.link(t, a, "oidc", "sub-a", "new@example.test"); err != nil {
 		t.Fatal(err)
@@ -76,7 +87,7 @@ func TestLinkAndList(t *testing.T) {
 		t.Fatalf("identities = %+v, want google and oidc (no local row)", ids)
 	}
 	got, err := f.repo.IdentityBySubject(f.ctx, "oidc", "sub-a")
-	if err != nil || got.UserID != a || got.Email != "new@example.test" || !got.CreatedAt.Equal(f.now) {
+	if err != nil || got.UserID != a || got.Email != "new@example.test" || got.Issuer != testIssuer || !got.CreatedAt.Equal(f.now) {
 		t.Fatalf("IdentityBySubject = %+v, %v", got, err)
 	}
 	if _, err := f.repo.IdentityBySubject(f.ctx, "oidc", "nope"); !errors.Is(err, model.ErrIdentityNotFound) {

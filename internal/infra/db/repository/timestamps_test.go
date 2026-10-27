@@ -238,8 +238,6 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 		q.InsertOAuthSpentRefreshHash(ctx, sqlitegen.InsertOAuthSpentRefreshHashParams{TokenHash: "r0", GrantID: grantID, SpentAt: dt}),
 		q.InsertOAuthLoginState(ctx, sqlitegen.InsertOAuthLoginStateParams{StateHash: "s1", Provider: "google", Nonce: "n", Intent: "login",
 			CreatedAt: dt, ExpiresAt: dt}),
-		q.InsertOAuthHandoff(ctx, sqlitegen.InsertOAuthHandoffParams{CodeHash: "d1", Kind: "login", UserID: userID, Provider: "google",
-			CreatedAt: dt, ExpiresAt: dt}),
 		q.InsertIdentity(ctx, sqlitegen.InsertIdentityParams{Provider: "google", ExternalID: "sub", UserID: userID, CreatedAt: dt}),
 	} {
 		if err != nil {

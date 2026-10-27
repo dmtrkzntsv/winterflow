@@ -499,7 +499,7 @@ func (r *Repo) CreateProviderUser(ctx context.Context, name string, id model.Ide
 		}
 		return r.q.InsertIdentity(ctx, db, identityParams{
 			Provider: id.Provider, ExternalID: id.Subject, UserID: user.UserID,
-			Email: util.RefString(id.Email), CreatedAt: types.DateTime(id.CreatedAt),
+			Email: util.RefString(id.Email), CreatedAt: types.DateTime(id.CreatedAt), Issuer: util.RefString(id.Issuer),
 		})
 	})
 	if err != nil {

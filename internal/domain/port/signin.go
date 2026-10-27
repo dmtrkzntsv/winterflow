@@ -26,7 +26,8 @@ type SignInRepository interface {
 	// user's row lock: model.ErrIdentityTaken when it belongs to another
 	// user, model.ErrProviderAlreadyLinked when the user already has
 	// another account of that provider. Linking one the user already has
-	// refreshes its email.
+	// refreshes its email; one stored under another issuer is
+	// model.ErrIdentityTaken.
 	LinkIdentity(ctx context.Context, id model.Identity) error
 	// UnlinkIdentity removes the user's account of provider, under the
 	// user's row lock: model.ErrIdentityNotFound when there is none,

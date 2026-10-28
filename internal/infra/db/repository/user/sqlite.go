@@ -55,6 +55,14 @@ func (sqliteQuerier) GetCredentialsByUser(ctx context.Context, db backend.DBTX, 
 	return sqlitegen.New(db).GetCredentialsByUser(ctx, userID)
 }
 
+func (sqliteQuerier) EmailTakenByOther(ctx context.Context, db backend.DBTX, p takenByOther) (bool, error) {
+	return sqlitegen.New(db).EmailTakenByOther(ctx, p)
+}
+
+func (sqliteQuerier) UserHasIdentityEmail(ctx context.Context, db backend.DBTX, p identityEmail) (bool, error) {
+	return sqlitegen.New(db).UserHasIdentityEmail(ctx, p)
+}
+
 func (sqliteQuerier) EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error) {
 	return sqlitegen.New(db).EmailTaken(ctx, email)
 }

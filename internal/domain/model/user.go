@@ -25,6 +25,12 @@ var (
 	// ErrNotBootstrap is returned when a bootstrap is attempted on a
 	// non-empty instance (users already exist).
 	ErrNotBootstrap = errors.New("users already exist")
+	// ErrPasswordAlreadySet refuses adding a password to an account that
+	// has one (change it instead).
+	ErrPasswordAlreadySet = errors.New("the account already has a password")
+	// ErrNotIdentityEmail refuses a password set for an address none of
+	// the account's linked sign-in providers vouched for.
+	ErrNotIdentityEmail = errors.New("use the email address of one of your linked sign-in accounts")
 )
 
 // MinPasswordLen is the minimum accepted password length (registration,

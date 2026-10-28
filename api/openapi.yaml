@@ -6445,6 +6445,72 @@ paths:
       summary: 'Revoke a connected app: its tokens stop working at once'
       tags:
       - oauth
+  /api/v1/user/set-password:
+    post:
+      description: No current password is asked. `email` must be an address one of
+        the caller's linked sign-in providers vouched for, and no other account may
+        use it (409); an account that has a password gets a 409.
+      operationId: userSetPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPasswordRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Give an account without a password (made through a sign-in provider)
+        its first one
+      tags:
+      - user
   /api/v1/user/unlink-identity:
     post:
       description: 409 when it is the only way into the account (no password and no
@@ -10757,6 +10823,13 @@ components:
       - name
       - email
       - avatar_url
+      type: object
+    SetPasswordRequest:
+      properties:
+        email:
+          type: string
+        new_password:
+          type: string
       type: object
     SignInProvider:
       properties:

@@ -7,8 +7,9 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-// Routes is the user handler's slice of the route table.
-func (h *Handler) Routes(api.Guards) []api.Route {
+// Routes is the user handler's slice of the route table. set-password
+// hashes a password without verifying one, so it sits behind g.AuthLimit.
+func (h *Handler) Routes(g api.Guards) []api.Route {
 	bad := []int{http.StatusBadRequest}
 	return []api.Route{
 		{
@@ -35,6 +36,14 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/user/change-password", Handler: h.ChangePassword, Auth: api.User,
 			Summary: "Change the caller's local password", Tag: "user",
 			Request: ChangePasswordRequest{}, Errors: bad,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/user/set-password", Handler: h.SetPassword, Auth: api.User,
+			Middleware: []api.Middleware{g.AuthLimit},
+			Summary:    "Give an account without a password (made through a sign-in provider) its first one", Tag: "user",
+			Description: "No current password is asked. `email` must be an address one of the caller's linked sign-in " +
+				"providers vouched for, and no other account may use it (409); an account that has a password gets a 409.",
+			Request: SetPasswordRequest{}, Errors: []int{http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError},
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/user/logout-all", Handler: h.LogoutAll, Auth: api.User,

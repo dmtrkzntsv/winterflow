@@ -94,6 +94,10 @@ type Querier interface {
 	// address: a password account's email, or the email a linked sign-in
 	// provider vouched for. Compared case-insensitively.
 	EmailTaken(ctx context.Context, email string) (bool, error)
+	// EmailTaken for a user adding a password: a password account's email, or
+	// the email another user's linked sign-in provider vouched for (the user's
+	// own identities do not count).
+	EmailTakenByOther(ctx context.Context, arg EmailTakenByOtherParams) (bool, error)
 	EndDispatchedSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
 	ExpireSecretRequests(ctx context.Context, now *types.DateTime) (int64, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
@@ -432,6 +436,9 @@ type Querier interface {
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
 	UseSecretRequest(ctx context.Context, arg UseSecretRequestParams) (int64, error)
+	// Whether one of the user's linked sign-in providers vouched for this
+	// (normalized, lower-case) address.
+	UserHasIdentityEmail(ctx context.Context, arg UserHasIdentityEmailParams) (bool, error)
 	UserHasPassword(ctx context.Context, userID string) (bool, error)
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 	// A catalog template the feed no longer lists: 0 rows when it is withdrawn

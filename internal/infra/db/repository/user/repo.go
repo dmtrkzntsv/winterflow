@@ -31,6 +31,8 @@ type (
 	credentialsParams = sqlitegen.InsertCredentialsParams
 	passwordParams    = sqlitegen.UpdatePasswordParams
 	rehashParams      = sqlitegen.RehashPasswordParams
+	takenByOther      = sqlitegen.EmailTakenByOtherParams
+	identityEmail     = sqlitegen.UserHasIdentityEmailParams
 	insertOrgParams   = sqlitegen.InsertOrganizationParams
 	updateOrgParams   = sqlitegen.UpdateOrganizationParams
 	membershipParams  = sqlitegen.InsertOrganizationUserParams
@@ -52,6 +54,8 @@ type querier interface {
 	GetCredentialsByEmail(ctx context.Context, db backend.DBTX, email string) (credentialsRow, error)
 	GetCredentialsByUser(ctx context.Context, db backend.DBTX, userID string) (credentialsRow, error)
 	EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error)
+	EmailTakenByOther(ctx context.Context, db backend.DBTX, p takenByOther) (bool, error)
+	UserHasIdentityEmail(ctx context.Context, db backend.DBTX, p identityEmail) (bool, error)
 	LockUserCreation(ctx context.Context, db backend.DBTX) error
 	UpdatePassword(ctx context.Context, db backend.DBTX, p passwordParams) (int64, error)
 	RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error)
@@ -389,6 +393,48 @@ func (r *Repo) SetPassword(ctx context.Context, userID, pw string, mustChange bo
 		return model.ErrorUserNotFound
 	}
 	return nil
+}
+
+// AddPassword creates the local credentials (and the "local" connected
+// account) of an account that has none, under the user-creation lock so
+// the email-in-use rule holds against a concurrent registration.
+func (r *Repo) AddPassword(ctx context.Context, userID, email, pw string) error {
+	email = normalizeEmail(email)
+	hash, err := password.Hash(ctx, pw)
+	if err != nil {
+		return err
+	}
+	return r.tx.WithTx(ctx, func(ctx context.Context) error {
+		db := r.tx.Querier(ctx)
+		if err := r.q.LockUserCreation(ctx, db); err != nil {
+			return fmt.Errorf("lock user creation: %w", err)
+		}
+		if _, err := r.q.GetCredentialsByUser(ctx, db, userID); err == nil {
+			return model.ErrPasswordAlreadySet
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		own, err := r.q.UserHasIdentityEmail(ctx, db, identityEmail{UserID: userID, Email: email})
+		if err != nil {
+			return err
+		}
+		if !own {
+			return model.ErrNotIdentityEmail
+		}
+		taken, err := r.q.EmailTakenByOther(ctx, db, takenByOther{Email: email, UserID: userID})
+		if err != nil {
+			return err
+		}
+		if taken {
+			return model.ErrEmailTaken
+		}
+		if err := r.q.InsertConnectedAccount(ctx, db, accountParams{Provider: localProvider, ExternalID: email, UserID: userID}); err != nil {
+			return err
+		}
+		return r.q.InsertCredentials(ctx, db, credentialsParams{
+			UserID: userID, Email: email, PasswordHash: hash, UpdatedAt: types.NewDateTime(),
+		})
+	})
 }
 
 // GetCredentials returns the non-secret credential info;

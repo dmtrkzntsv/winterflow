@@ -21,9 +21,10 @@ export type SettingsSection = { title: string; items: SettingsItem[] };
 
 // settingsSections is the Settings sub-menu (spec §6): the active server's
 // sections (Domains only with ingress), the organization's, and the
-// account's (Password only for accounts with local credentials, Sign-in
-// methods only when a sign-in provider is configured, Connected apps only
-// when MCP clients can connect). The layout and the ⌘K palette both read it.
+// account's (Password, or Set a password for an account made through a
+// sign-in provider, which has none yet; Sign-in methods only when a
+// sign-in provider is configured, Connected apps only when MCP clients can
+// connect). The layout and the ⌘K palette both read it.
 export function settingsSections({
   server,
   hasPassword,
@@ -55,7 +56,7 @@ export function settingsSections({
     ],
   });
   const account: SettingsItem[] = [];
-  if (hasPassword) account.push({ label: "Password", to: settingsPath("password"), icon: LockKeyhole });
+  account.push({ label: hasPassword ? "Password" : "Set a password", to: settingsPath("password"), icon: LockKeyhole });
   if (hasProviders) account.push({ label: "Sign-in methods", to: settingsPath("identities"), icon: LogIn });
   account.push({ label: "API tokens", to: settingsPath("tokens"), icon: KeyRound });
   if (oauthServer) account.push({ label: "Connected apps", to: settingsPath("connected-apps"), icon: Plug });

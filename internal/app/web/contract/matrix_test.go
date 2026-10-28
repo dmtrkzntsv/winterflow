@@ -178,6 +178,7 @@ var probes = map[string]probe{
 	"POST /api/v1/user/create-token":                   {malformed: post("/api/v1/user/create-token", map[string]any{"name": ""})},
 	"POST /api/v1/user/delete-token":                   {malformed: bad("POST", "/api/v1/user/delete-token")},
 	"POST /api/v1/user/change-password":                {malformed: post("/api/v1/user/change-password", map[string]any{"current_password": "x", "new_password": "1"})},
+	"POST /api/v1/user/set-password":                   {malformed: post("/api/v1/user/set-password", map[string]any{"email": "x@example.test", "new_password": "1"})},
 	"POST /api/v1/alerts/save-channel":                 {malformed: post("/api/v1/alerts/save-channel", map[string]any{"name": "", "url": "ntfy://ntfy.sh/t"})},
 	"POST /api/v1/alerts/delete-channel":               {malformed: post("/api/v1/alerts/delete-channel", map[string]any{"id": ""})},
 	"POST /api/v1/alerts/test-channel":                 {malformed: post("/api/v1/alerts/test-channel", map[string]any{})},

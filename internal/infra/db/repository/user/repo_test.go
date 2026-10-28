@@ -736,3 +736,65 @@ func TestConcurrentSameEmailCreatesOneAccount(t *testing.T) {
 		t.Fatalf("successes = %d, users = %d (%v); want exactly one account (%v)", ok, n, err, errs)
 	}
 }
+
+// TestAddPassword: an account made through a sign-in provider adds a
+// password for an address one of its identities vouched for (any case),
+// then signs in with it; an account with a password, another address, or
+// an address another account answers to is refused, and nothing is
+// written.
+func TestAddPassword(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	ida, err := r.CreateProviderUser(ctx, "Ida", model.Identity{Provider: "oidc", Subject: "sub-1", Email: "ida@example.test", CreatedAt: at}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pat := mustRegister(t, r, "Pat", "pat@example.test", "password-123")
+	// Ida also linked a provider account whose address Pat's password
+	// account uses, and Bo (a provider account) one with her other address.
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `INSERT INTO user_connected_accounts (provider, external_id, user_id, email) VALUES (?, ?, ?, ?)`),
+		"google", "g-1", ida.ID, "pat@example.test")
+	bo, err := r.CreateProviderUser(ctx, "Bo", model.Identity{Provider: "apple", Subject: "a-1", Email: "bo@example.test", CreatedAt: at}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `INSERT INTO user_connected_accounts (provider, external_id, user_id, email) VALUES (?, ?, ?, ?)`),
+		"github", "gh-1", ida.ID, "shared@example.test")
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `INSERT INTO user_connected_accounts (provider, external_id, user_id, email) VALUES (?, ?, ?, ?)`),
+		"github", "gh-2", bo.ID, "shared@example.test")
+
+	for _, c := range []struct {
+		user, email string
+		want        error
+	}{
+		{pat.ID, "pat@example.test", model.ErrPasswordAlreadySet},
+		{ida.ID, "nobody@example.test", model.ErrNotIdentityEmail},
+		{ida.ID, "pat@example.test", model.ErrEmailTaken},
+		{ida.ID, "shared@example.test", model.ErrEmailTaken},
+	} {
+		if err := r.AddPassword(ctx, c.user, c.email, "new-password"); !errors.Is(err, c.want) {
+			t.Errorf("AddPassword(%s) = %v, want %v", c.email, err, c.want)
+		}
+	}
+	if _, err := r.GetCredentials(ctx, ida.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Fatalf("a refused AddPassword wrote credentials: %v", err)
+	}
+
+	if err := r.AddPassword(ctx, ida.ID, " IDA@Example.test ", "new-password"); err != nil {
+		t.Fatal(err)
+	}
+	creds, err := r.GetCredentials(ctx, ida.ID)
+	if err != nil || creds.Email != "ida@example.test" || creds.MustChangePassword {
+		t.Fatalf("credentials = %+v, %v", creds, err)
+	}
+	if u, err := r.VerifyLocalCredentials(ctx, "ida@example.test", "new-password"); err != nil || u.ID != ida.ID {
+		t.Fatalf("sign-in with the new password = %+v, %v", u, err)
+	}
+	if err := r.AddPassword(ctx, ida.ID, "ida@example.test", "other-password"); !errors.Is(err, model.ErrPasswordAlreadySet) {
+		t.Fatalf("second AddPassword = %v, want ErrPasswordAlreadySet", err)
+	}
+	if m := mustMembers(t, r, mustPrimaryOrg(t, r, ida.ID)); len(m) != 1 || m[0].Provider != "local" || m[0].Email != "ida@example.test" {
+		t.Fatalf("members = %+v", m)
+	}
+}

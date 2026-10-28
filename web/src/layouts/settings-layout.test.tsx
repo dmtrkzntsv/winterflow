@@ -67,13 +67,14 @@ describe("SettingsLayout", () => {
     expect(screen.getByText("members body")).toBeInTheDocument();
   });
 
-  it("leaves Domains out on a server without ingress and Password out without local credentials", () => {
+  it("leaves Domains out on a server without ingress and offers Set a password without local credentials", () => {
     active = { id: "s1", name: "Alpha", features: {} };
     email = "";
     renderAt("/settings/members");
     const menu = screen.getByRole("navigation", { name: "Settings" });
     expect(within(menu).queryByRole("link", { name: "Domains" })).not.toBeInTheDocument();
     expect(within(menu).queryByRole("link", { name: "Password" })).not.toBeInTheDocument();
+    expect(within(menu).getByRole("link", { name: "Set a password" })).toHaveAttribute("href", "/settings/password");
     expect(within(menu).getByRole("link", { name: "API tokens" })).toBeInTheDocument();
   });
 

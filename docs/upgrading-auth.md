@@ -33,7 +33,9 @@ hash). Scripts and MCP clients that use one need no change.
   https.
 - Accounts that only ever signed in with Google have no password, so they
   cannot sign in until both points above are done. If that is the only admin,
-  fix the redirect URI before upgrading.
+  fix the redirect URI before upgrading. Once signed in, such an account can
+  add a password in Settings -> Account -> Set a password, so it keeps a way
+  in should the provider stop working.
 - An account linked by the old library is found on its first Google sign-in
   after the upgrade and re-keyed, so its owner lands in the same account.
 

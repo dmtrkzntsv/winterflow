@@ -41,10 +41,13 @@ describe("settingsSections", () => {
     expect(server.items.map((i) => i.label)).toEqual(["General", "Storages", "Docker"]);
   });
 
-  it("has no server section without a server, and no Password without local credentials", () => {
+  it("has no server section without a server, and offers Set a password without local credentials", () => {
     const sections = settingsSections({ server: null, hasPassword: false });
     expect(sections.map((s) => s.title)).toEqual(["Organization", "Account"]);
-    expect(sections[1].items.map((i) => i.label)).toEqual(["API tokens"]);
+    expect(sections[1].items.map((i) => [i.label, i.to])).toEqual([
+      ["Set a password", "/settings/password"],
+      ["API tokens", "/settings/tokens"],
+    ]);
   });
 });
 

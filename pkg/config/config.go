@@ -190,23 +190,40 @@ func (c *ServerConfig) GetPublicOrigin() (origin string, ok bool) {
 	return u.Scheme + "://" + strings.ToLower(u.Host), true
 }
 
+// EncryptionKeyEnv names the secret alert notification channel URLs are
+// encrypted with at rest.
+const EncryptionKeyEnv = "ENCRYPTION_KEY"
+
 // LegacyEncryptionKeyEnv is the variable ENCRYPTION_KEY was called before
 // sessions became opaque tokens. It is still read when ENCRYPTION_KEY is
 // unset, so an upgraded install keeps decrypting what it stored.
 const LegacyEncryptionKeyEnv = "JWT_SECRET"
 
+// EncryptionKey is the resolved ENCRYPTION_KEY.
+type EncryptionKey struct {
+	// Value is the key; empty when neither variable is set.
+	Value string
+	// FromLegacy is set when Value came from JWT_SECRET (ENCRYPTION_KEY
+	// unset): the caller should warn that the name is deprecated.
+	FromLegacy bool
+	// LegacyIgnored is set when both are set to different values: JWT_SECRET
+	// is ignored, and the caller should say so.
+	LegacyIgnored bool
+}
+
 // GetEncryptionKey is ENCRYPTION_KEY, the secret alert notification channel
 // URLs are encrypted with at rest. When it is unset it falls back to the
-// legacy JWT_SECRET (legacy is then true, so the caller can warn): the key
-// derivation is the same, so channels stored before the rename still open.
-func (c *ServerConfig) GetEncryptionKey() (key string, legacy bool) {
-	if v := os.Getenv("ENCRYPTION_KEY"); v != "" {
-		return v, false
+// legacy JWT_SECRET: the key derivation is the same, so channels stored
+// before the rename still open.
+func (c *ServerConfig) GetEncryptionKey() EncryptionKey {
+	key, legacy := os.Getenv(EncryptionKeyEnv), os.Getenv(LegacyEncryptionKeyEnv)
+	switch {
+	case key != "":
+		return EncryptionKey{Value: key, LegacyIgnored: legacy != "" && legacy != key}
+	case legacy != "":
+		return EncryptionKey{Value: legacy, FromLegacy: true}
 	}
-	if v := os.Getenv(LegacyEncryptionKeyEnv); v != "" {
-		return v, true
-	}
-	return "", false
+	return EncryptionKey{}
 }
 
 func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {

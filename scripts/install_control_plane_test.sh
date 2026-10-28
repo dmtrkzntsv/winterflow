@@ -108,6 +108,15 @@ assert_not_contains "downloads_from_r2_with_sigv4: secret never printed" "$out" 
 assert_not_contains "secret not on the curl command line" "$src" 'SECRET_ACCESS_KEY" "'
 out_ver="$(dry --version 260101.1 --r2-bucket other-bucket)"
 assert_contains "--version picks the channel" "$out_ver" "/other-bucket/winterflow/v260101.1/winterflow-api-linux-"
+# Releases before the rename sign sessions with JWT_SECRET (an empty one is
+# accepted): a pinned install writes it into the API env too, same value.
+compat_comment="# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+api_ver="$(section "$out_ver" /etc/winterflow/control-plane-api.env)"
+assert_contains "pinned: api env keeps ENCRYPTION_KEY" "$api_ver" "ENCRYPTION_KEY=<generated>"
+assert_contains "pinned: api env gets the compat JWT_SECRET" "$api_ver" "$(printf '%s\nJWT_SECRET=<generated>' "$compat_comment")"
+assert_not_contains "pinned: hub env never gets JWT_SECRET" "$(section "$out_ver" /etc/winterflow/control-plane-hub.env)" "JWT_SECRET"
+assert_not_contains "pinned: state file has no JWT_SECRET" "$(section "$out_ver" /etc/winterflow/control-plane.env)" "JWT_SECRET"
+assert_not_contains "unpinned: api env has no compat line" "$(section "$(dry)" /etc/winterflow/control-plane-api.env)" "$compat_comment"
 assert_contains "checksums verified in the script" "$src" "sha256sum -c"
 
 assert_contains "caddy snippet sets the client address" "$out" "header_up X-Forwarded-For {client_ip}"
@@ -284,6 +293,30 @@ printf 'JWT_SECRET=not-hex!\n' > "$legacy/etc/winterflow/control-plane.env"
 out_legacy_bad="$(WF_INSTALL_ROOT="$legacy" bash "$SCRIPT" --dry-run 2>&1)" \
     && fail "legacy rerun: a bad JWT_SECRET is refused" "exit 0" \
     || assert_contains "legacy rerun: a bad JWT_SECRET is refused" "$out_legacy_bad" "JWT_SECRET is not a hex string"
+
+# A pinned rerun writes the compat line with the kept key's value.
+out_legacy_pin="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --version v260101.1 2>&1)"
+out_legacy_pin="${out_legacy_pin//$rerun/}"
+assert_contains "pinned rerun: compat JWT_SECRET is the kept key" "$(section "$out_legacy_pin" /etc/winterflow/control-plane-api.env)" "JWT_SECRET=${key_fp}"
+
+# A state file without the key recovers it from the API env file (either
+# name) instead of generating one stored channels could not use.
+for name in ENCRYPTION_KEY JWT_SECRET; do
+    rec="$(new_root "recover-$name" debian)"
+    mkdir -p "$rec/etc/winterflow"
+    grep -v '^ENCRYPTION_KEY=' "$rerun/etc/winterflow/control-plane.env" > "$rec/etc/winterflow/control-plane.env"
+    printf 'LOG_LEVEL=info\n%s=eeee5555ffff6666\n' "$name" > "$rec/etc/winterflow/control-plane-api.env"
+    out_rec="$(WF_INSTALL_ROOT="$rec" bash "$SCRIPT" --dry-run 2>&1)" || fail "recover $name: dry-run exits 0" "exit $?: $out_rec"
+    out_rec="${out_rec//$rec/}"
+    assert_contains "recover $name: state file gets the api env's key" "$(section "$out_rec" /etc/winterflow/control-plane.env)" "ENCRYPTION_KEY=${key_fp}"
+    assert_contains "recover $name: api env keeps it" "$(section "$out_rec" /etc/winterflow/control-plane-api.env)" "ENCRYPTION_KEY=${key_fp}"
+    assert_not_contains "recover $name: nothing generated" "$out_rec" "<generated>"
+    assert_contains "recover $name: says so" "$out_rec" "Recovered ENCRYPTION_KEY from ${name}"
+done
+printf 'ENCRYPTION_KEY=not-hex!\n' > "$rec/etc/winterflow/control-plane-api.env"
+out_rec_bad="$(WF_INSTALL_ROOT="$rec" bash "$SCRIPT" --dry-run 2>&1)" \
+    && fail "recover: a bad api env key is refused" "exit 0" \
+    || assert_contains "recover: a bad api env key is refused" "$out_rec_bad" "control-plane-api.env: ENCRYPTION_KEY is not a hex string"
 
 # A tampered state file is refused rather than written into units/env.
 bad="$(new_root bad debian)"; mkdir -p "$bad/etc/winterflow"

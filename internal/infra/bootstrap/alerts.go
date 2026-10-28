@@ -23,7 +23,8 @@ const (
 	alertLoadTimeout = 30 * time.Second
 )
 
-// legacyKeyWarning logs the JWT_SECRET deprecation once per process.
+// legacyKeyWarning logs a JWT_SECRET warning (deprecated, or ignored
+// beside a different ENCRYPTION_KEY) once per process. Values are never logged.
 var legacyKeyWarning sync.Once
 
 // alerts is the alerting wiring WireCore hands to the events sink and Deps.
@@ -39,13 +40,19 @@ type alerts struct {
 // from the stored states and the last hour of samples, and starts the
 // maintenance loop. history is nil when metrics are off.
 func wireAlerts(ctx context.Context, repo *alertrepo.Repo, history alerting.History, fan *statusFanout, cfg *config.ServerConfig, log *logger.Logger) alerts {
-	key, legacy := cfg.GetEncryptionKey()
-	if legacy {
+	key := cfg.GetEncryptionKey()
+	switch {
+	case key.FromLegacy:
 		legacyKeyWarning.Do(func() {
-			log.Warn(config.LegacyEncryptionKeyEnv + " is deprecated; rename it to ENCRYPTION_KEY")
+			log.Warn(config.LegacyEncryptionKeyEnv + " is deprecated; rename it to " + config.EncryptionKeyEnv)
+		})
+	case key.LegacyIgnored:
+		legacyKeyWarning.Do(func() {
+			log.Warn(config.LegacyEncryptionKeyEnv + " is ignored: " + config.EncryptionKeyEnv +
+				" is set to a different value; remove " + config.LegacyEncryptionKeyEnv)
 		})
 	}
-	box, err := secretbox.New(key)
+	box, err := secretbox.New(key.Value)
 	if err != nil {
 		log.Warn("notification channels unavailable: cannot build the channel URL cipher from ENCRYPTION_KEY", "error", err)
 		box = nil

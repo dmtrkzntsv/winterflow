@@ -71,7 +71,7 @@ func TestHealth(t *testing.T) {
 // TestHubRoutesNeedTheirUsecase: with enrollment wired but no hub join or
 // agent hub usecase, those two routes answer 404 instead of panicking.
 func TestHubRoutesNeedTheirUsecase(t *testing.T) {
-	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("ENCRYPTION_KEY", "test-secret")
 	t.Setenv("WEB_URL", "http://localhost")
 	t.Setenv("AVATARS_STORAGE_PATH", t.TempDir())
 	deps := &bootstrap.Deps{

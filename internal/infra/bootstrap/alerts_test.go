@@ -128,10 +128,10 @@ func TestAlertMaintenanceTickSeedsAndPrunes(t *testing.T) {
 }
 
 // End to end through WireCore: the default rules are seeded at startup and
-// the alert deps are wired; without JWT_SECRET there is no channel box.
+// the alert deps are wired; without ENCRYPTION_KEY there is no channel box.
 func TestWireCoreWiresAlerts(t *testing.T) {
 	t.Setenv("DATABASE_URL", "sqlite://"+filepath.Join(t.TempDir(), "wf.sqlite"))
-	t.Setenv("JWT_SECRET", "")
+	noEncryptionKey(t)
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	cfg := config.NewServerConfig("standalone")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -210,11 +210,77 @@ func TestWireCoreWarmsAlertsBeforeMetricsMaintenance(t *testing.T) {
 
 // The channel-box warning carries the actual error.
 func TestWireCoreLogsChannelBoxError(t *testing.T) {
-	t.Setenv("JWT_SECRET", "")
+	noEncryptionKey(t)
 	var out syncBuffer
 	log := &logger.Logger{Logger: slog.New(slog.NewJSONHandler(&out, &slog.HandlerOptions{Level: slog.LevelWarn}))}
 	wireCoreForTest(t, log)
 	if got := out.String(); !strings.Contains(got, secretbox.ErrNoSecret.Error()) {
 		t.Fatalf("warning lacks the error: %s", got)
+	}
+}
+
+// noEncryptionKey clears ENCRYPTION_KEY and its legacy name for the test.
+func noEncryptionKey(t *testing.T) {
+	t.Helper()
+	t.Setenv("ENCRYPTION_KEY", "")
+	t.Setenv(config.LegacyEncryptionKeyEnv, "")
+}
+
+// warnLog is a logger whose warnings land in the returned buffer.
+func warnLog() (*logger.Logger, *syncBuffer) {
+	var out syncBuffer
+	return &logger.Logger{Logger: slog.New(slog.NewJSONHandler(&out, &slog.HandlerOptions{Level: slog.LevelWarn}))}, &out
+}
+
+// ENCRYPTION_KEY builds the channel box without a deprecation warning.
+func TestWireCoreUsesEncryptionKey(t *testing.T) {
+	noEncryptionKey(t)
+	t.Setenv("ENCRYPTION_KEY", "new-key")
+	legacyKeyWarning = sync.Once{}
+	log, out := warnLog()
+	deps := wireCoreForTest(t, log)
+	if deps.ChannelBox == nil {
+		t.Fatal("no channel box with ENCRYPTION_KEY set")
+	}
+	if strings.Contains(out.String(), "deprecated") {
+		t.Fatalf("unexpected deprecation warning: %s", out.String())
+	}
+}
+
+// A legacy JWT_SECRET alone still builds the box, with a deprecation
+// warning logged once per process however often the alerts are wired.
+func TestWireCoreLegacyKeyWarnsOnce(t *testing.T) {
+	noEncryptionKey(t)
+	t.Setenv(config.LegacyEncryptionKeyEnv, "old-key")
+	legacyKeyWarning = sync.Once{}
+	t.Cleanup(func() { legacyKeyWarning = sync.Once{} })
+	log, out := warnLog()
+	for range 2 {
+		if deps := wireCoreForTest(t, log); deps.ChannelBox == nil {
+			t.Fatal("no channel box with the legacy key set")
+		}
+	}
+	const want = "JWT_SECRET is deprecated; rename it to ENCRYPTION_KEY"
+	if n := strings.Count(out.String(), want); n != 1 {
+		t.Fatalf("deprecation warning logged %d times, want 1: %s", n, out.String())
+	}
+}
+
+// A channel URL sealed under the legacy JWT_SECRET opens after the value is
+// renamed to ENCRYPTION_KEY: the key derivation did not change.
+func TestChannelSealedUnderLegacyKeyOpensAfterRename(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	noEncryptionKey(t)
+	t.Setenv(config.LegacyEncryptionKeyEnv, secret)
+	log, _ := warnLog()
+	sealed, err := wireCoreForTest(t, log).ChannelBox.Seal("ntfy://ntfy.sh/topic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	noEncryptionKey(t)
+	t.Setenv("ENCRYPTION_KEY", secret)
+	got, err := wireCoreForTest(t, log).ChannelBox.Open(sealed)
+	if err != nil || got != "ntfy://ntfy.sh/topic" {
+		t.Fatalf("Open after rename = %q, %v", got, err)
 	}
 }

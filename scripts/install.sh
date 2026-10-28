@@ -13,7 +13,7 @@
 #   - offers to install Docker and the compose plugin when they are missing
 #     (the agent deploys apps by shelling out to 'docker compose'),
 #   - installs the binary to /usr/local/bin/winterflow,
-#   - writes /etc/winterflow/winterflow.env with a generated JWT secret,
+#   - writes /etc/winterflow/winterflow.env with a generated encryption key,
 #   - creates /var/lib/winterflow for the database, certs, and app data,
 #   - installs a hardened systemd unit and starts it.
 #
@@ -413,10 +413,25 @@ release_asset_name() {
     printf 'winterflow-%s-%s' "$RELEASE_OS" "$RELEASE_ARCH"
 }
 
+# --- Config migration --------------------------------------------------------
+
+migrate_encryption_key() {
+    # migrate_encryption_key FILE: ENCRYPTION_KEY was called JWT_SECRET. A
+    # kept env file with a JWT_SECRET line and no ENCRYPTION_KEY gets the line
+    # renamed, value unchanged, so stored alert channels keep decrypting.
+    local f="$1"
+    grep -q '^JWT_SECRET=' "$f" || return 0
+    if grep -q '^ENCRYPTION_KEY=' "$f"; then
+        return 0
+    fi
+    sed -i 's/^JWT_SECRET=/ENCRYPTION_KEY=/' "$f"
+    log "Renamed JWT_SECRET to ENCRYPTION_KEY in ${f} (same value)"
+}
+
 # --- Renderers (shared by install and --dry-run) ------------------------------
 
 render_env_file() {
-    local jwt_secret="$1"
+    local encryption_key="$1"
     cat <<EOF
 # WinterFlow standalone configuration.
 # Loaded by systemd (EnvironmentFile); see .env.example in the repo for all options.
@@ -427,7 +442,7 @@ WEB_URL=http://localhost:${API_PORT}
 
 # Generated at install time: the key alert notification channel URLs are
 # encrypted with. Rotating it means re-entering every channel URL.
-JWT_SECRET=${jwt_secret}
+ENCRYPTION_KEY=${encryption_key}
 
 DATABASE_URL=sqlite://${DATA_DIR}/winterflow.sqlite
 AGENT_DATA_DIR=${DATA_DIR}/data
@@ -791,10 +806,11 @@ main() {
 
     if [ -f "$ENV_FILE" ]; then
         log "Keeping existing config ${ENV_FILE}"
+        migrate_encryption_key "$ENV_FILE"
     else
         log "Writing ${ENV_FILE}"
-        jwt_secret="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-        render_env_file "$jwt_secret" > "$ENV_FILE"
+        encryption_key="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        render_env_file "$encryption_key" > "$ENV_FILE"
         chown root:"$SERVICE_GROUP" "$ENV_FILE"
         chmod 640 "$ENV_FILE"
     fi

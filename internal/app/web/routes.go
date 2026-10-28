@@ -190,7 +190,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Disabled:    !d.Cfg.IsMetricsEnabled(),
 		Alerts:      d.AlertRepository,
 	})
-	// Typed nils must not become non-nil interfaces: without JWT_SECRET
+	// Typed nils must not become non-nil interfaces: without ENCRYPTION_KEY
 	// there is no box, and the spec-only route table has no notifier.
 	var box halerts.Sealer
 	if d.ChannelBox != nil {

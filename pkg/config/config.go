@@ -190,11 +190,23 @@ func (c *ServerConfig) GetPublicOrigin() (origin string, ok bool) {
 	return u.Scheme + "://" + strings.ToLower(u.Host), true
 }
 
-// GetJwtSecret is JWT_SECRET. Despite the name it no longer signs anything
-// (sessions are opaque tokens): it is only the key alert notification
-// channel URLs are encrypted with.
-func (c *ServerConfig) GetJwtSecret() string {
-	return os.Getenv("JWT_SECRET")
+// LegacyEncryptionKeyEnv is the variable ENCRYPTION_KEY was called before
+// sessions became opaque tokens. It is still read when ENCRYPTION_KEY is
+// unset, so an upgraded install keeps decrypting what it stored.
+const LegacyEncryptionKeyEnv = "JWT_SECRET"
+
+// GetEncryptionKey is ENCRYPTION_KEY, the secret alert notification channel
+// URLs are encrypted with at rest. When it is unset it falls back to the
+// legacy JWT_SECRET (legacy is then true, so the caller can warn): the key
+// derivation is the same, so channels stored before the rename still open.
+func (c *ServerConfig) GetEncryptionKey() (key string, legacy bool) {
+	if v := os.Getenv("ENCRYPTION_KEY"); v != "" {
+		return v, false
+	}
+	if v := os.Getenv(LegacyEncryptionKeyEnv); v != "" {
+		return v, true
+	}
+	return "", false
 }
 
 func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {

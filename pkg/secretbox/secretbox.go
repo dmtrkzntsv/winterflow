@@ -1,6 +1,6 @@
 // Package secretbox encrypts small secrets at rest (notification channel
 // URLs) with AES-256-GCM under a key derived from a server secret
-// (JWT_SECRET) by HKDF-SHA256. Rotating the server secret makes existing
+// (ENCRYPTION_KEY) by HKDF-SHA256. Rotating the server secret makes existing
 // ciphertexts unreadable: they must be re-entered.
 package secretbox
 
@@ -22,7 +22,7 @@ var (
 	ErrNoSecret = errors.New("secretbox: empty secret")
 	// ErrCorrupt is returned by Open for a ciphertext it cannot read:
 	// tampered, truncated, or sealed under another secret.
-	ErrCorrupt = errors.New("cannot decrypt the stored URL (was JWT_SECRET changed?); re-enter it")
+	ErrCorrupt = errors.New("cannot decrypt the stored URL (was ENCRYPTION_KEY changed?); re-enter it")
 )
 
 // Box seals and opens strings. Safe for concurrent use.

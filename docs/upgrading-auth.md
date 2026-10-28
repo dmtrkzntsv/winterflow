@@ -37,9 +37,20 @@ hash). Scripts and MCP clients that use one need no change.
 - An account linked by the old library is found on its first Google sign-in
   after the upgrade and re-keyed, so its owner lands in the same account.
 
-## JWT_SECRET stays
+## JWT_SECRET is renamed to ENCRYPTION_KEY
 
-Sessions no longer use it, but the API still derives the key that encrypts
-alert channel URLs (Org -> Alerts -> Channels) from `JWT_SECRET`. Keep the
-value you have: a new one makes every saved channel fail with "cannot
-decrypt" until its URL is entered again.
+Sessions no longer use it; the only thing it still keys is the encryption of
+alert channel URLs (Org -> Alerts -> Channels), so it is now called
+`ENCRYPTION_KEY`. Keep the value you have: a new one makes every saved
+channel fail with "cannot decrypt" until its URL is entered again.
+
+- Installer installs: rerun the installer. `install.sh` renames the
+  `JWT_SECRET=` line of `/etc/winterflow/winterflow.env` to `ENCRYPTION_KEY=`
+  with the same value; `install-control-plane.sh` moves the kept secret to
+  `ENCRYPTION_KEY` in its state file and the API env file.
+- Manual installs: rename the line in your env file
+  (`JWT_SECRET=...` -> `ENCRYPTION_KEY=...`), keeping the value.
+- Until you do, the old name still works: with `ENCRYPTION_KEY` unset, a set
+  `JWT_SECRET` is used (the derived key is identical, so stored channels keep
+  decrypting) and the API logs "JWT_SECRET is deprecated; rename it to
+  ENCRYPTION_KEY" at startup. The fallback will be removed in a later release.

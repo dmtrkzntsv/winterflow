@@ -406,6 +406,9 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 			// was not (a bus whose PUBLISH went through but whose reply was
 			// lost). Either way the ciphertexts may have reached the agent:
 			// the request is used, never released for another send.
+			// The same goes for the app: a create whose send answered an
+			// error may exist on the agent, so its answer names the id.
+			assigned = appID
 			if claim != nil && appID != "" {
 				usedErr = claim.Commit(true)
 				spent = true
@@ -414,7 +417,6 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 				// Refused before the send: the defer releases the claim.
 				return "", err
 			}
-			assigned = appID
 			return requestID, nil
 		})
 	if usedErr != nil {

@@ -455,3 +455,32 @@ func TestSaveAppSecretsFromAmbiguousSend(t *testing.T) {
 		t.Fatalf("the agent received %d saves, want 1", n)
 	}
 }
+
+// TestSaveAppAmbiguousSendNamesTheApp: a create whose send answered an
+// error may have reached the agent, so the error names the id assigned to
+// it, the one the agent got.
+func TestSaveAppAmbiguousSendNamesTheApp(t *testing.T) {
+	e := newLossyEnv(t)
+	alice := e.newUser(t, "alice@example.test")
+	got := make(chan string, 1)
+	e.agent.on(command.TypeAppSave, func(raw json.RawMessage) reply {
+		var in command.SaveAppRequest
+		_ = codec.DecodePayload(raw, &in)
+		got <- in.App.AppID
+		return reply{Payload: command.SaveAppResponse{AppID: in.App.AppID}}
+	})
+	text, isErr := call(t, e.session(t, alice), "save_app", map[string]any{"server_id": alice.serverID, "name": "web",
+		"files": []map[string]any{{"name": "compose.yml", "content": compose}}})
+	if !isErr {
+		t.Fatalf("save whose send answered an error = %q", text)
+	}
+	var appID string
+	select {
+	case appID = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent received no save")
+	}
+	if appID == "" || !strings.Contains(text, "pass app_id "+appID) {
+		t.Fatalf("error = %q, want it to name app_id %q", text, appID)
+	}
+}

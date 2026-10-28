@@ -7,8 +7,9 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-// Routes is the user handler's slice of the route table. set-password
-// hashes a password without verifying one, so it sits behind g.AuthLimit.
+// Routes is the user handler's slice of the route table. change-password
+// verifies and hashes a password and set-password hashes one, so both sit
+// behind g.AuthLimit.
 func (h *Handler) Routes(g api.Guards) []api.Route {
 	bad := []int{http.StatusBadRequest}
 	return []api.Route{
@@ -34,7 +35,8 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/user/change-password", Handler: h.ChangePassword, Auth: api.User,
-			Summary: "Change the caller's local password", Tag: "user",
+			Middleware: []api.Middleware{g.AuthLimit},
+			Summary:    "Change the caller's local password", Tag: "user",
 			Request: ChangePasswordRequest{}, Errors: bad,
 		},
 		{

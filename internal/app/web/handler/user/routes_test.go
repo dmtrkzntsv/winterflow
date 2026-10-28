@@ -11,8 +11,8 @@ import (
 func TestRoutes(t *testing.T) {
 	limit := func(next http.Handler) http.Handler { return next }
 	routes := NewHandler(&Deps{}).Routes(api.Guards{AuthLimit: limit})
-	// set-password hashes without verifying: it alone is rate limited.
-	limited := map[string]bool{"POST /api/v1/user/set-password": true}
+	// The password routes hash (and verify) a password: they are rate limited.
+	limited := map[string]bool{"POST /api/v1/user/change-password": true, "POST /api/v1/user/set-password": true}
 	want := []string{
 		"POST /api/v1/user/create-token",
 		"GET /api/v1/user/get-tokens",

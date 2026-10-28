@@ -357,6 +357,8 @@ type Querier interface {
 	// at once; a time parks a rollout that waits on a server until the next poll
 	// is due, so the claimable list (LIMIT) does not fill with waiting ones.
 	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
+	// Only a claim that was never dispatched returns to submitted: a dispatched
+	// request's ciphertexts may have reached the agent.
 	ReleaseSecretRequest(ctx context.Context, arg ReleaseSecretRequestParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)

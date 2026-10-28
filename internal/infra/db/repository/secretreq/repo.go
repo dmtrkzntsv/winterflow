@@ -140,7 +140,8 @@ func (r *Repo) MarkUsed(ctx context.Context, id, claimID string, now time.Time) 
 	return n > 0, err
 }
 
-// Release returns a request claimed (or dispatched) by claimID to submitted.
+// Release returns a request claimed by claimID to submitted; a dispatched
+// one is never released (its ciphertexts may have reached the agent).
 func (r *Repo) Release(ctx context.Context, id, claimID string) (bool, error) {
 	n, err := r.q.ReleaseSecretRequest(ctx, r.tx.Querier(ctx), releaseParams{ID: id, ClaimID: &claimID})
 	return n > 0, err

@@ -357,9 +357,10 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 		if err != nil {
 			return t.fail(err, "read the secret request")
 		}
-		// Every path that does not dispatch releases the claim for a
+		// Every path refused before the send releases the claim for a
 		// retry (Commit runs once: after a dispatch's Commit(true), even a
-		// failed one, this is a no-op and the request stays dispatched).
+		// failed one, this is a no-op and the request stays dispatched;
+		// once Dispatch marked it, Commit(false) marks it used too).
 		defer func() {
 			if err := claim.Commit(false); err != nil {
 				t.Log.Error("mcp: release a secret request", "error", err, "request_id", in.SecretsFrom)
@@ -385,6 +386,9 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 		// assigned is the id the dispatched save addresses (a new app's
 		// is assigned by the API): every answer after a dispatch names it.
 		assigned string
+		// spent: the secret request went with a send (even one that
+		// answered an error), so a retry needs a new one.
+		spent bool
 	)
 	rec, fail := t.dispatchWithin(ctx, userID, in.ServerID, command.TypeAppSave, "save app", bound,
 		func(ctx context.Context, o appuc.Observer) (string, error) {
@@ -397,15 +401,20 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 				gate = claim.Dispatch
 			}
 			appID, requestID, err := t.Apps.SaveAppGated(ctx, userID, in.ServerID, app, payload, in.Draft, o, gate)
+			// appID is set once every check and the gate passed: the save
+			// was sent, or its send answered an error that does not say it
+			// was not (a bus whose PUBLISH went through but whose reply was
+			// lost). Either way the ciphertexts may have reached the agent:
+			// the request is used, never released for another send.
+			if claim != nil && appID != "" {
+				usedErr = claim.Commit(true)
+				spent = true
+			}
 			if err != nil {
-				// Refused, or its send failed: the defer releases the claim.
+				// Refused before the send: the defer releases the claim.
 				return "", err
 			}
 			assigned = appID
-			// Sent: the request is used (its ciphertexts went to the agent).
-			if claim != nil {
-				usedErr = claim.Commit(true)
-			}
 			return requestID, nil
 		})
 	if usedErr != nil {
@@ -415,6 +424,9 @@ func (t *tools) saveApp(ctx context.Context, in saveAppInput) *sdk.CallToolResul
 			assigned)
 	}
 	if fail != nil {
+		if spent && fail.IsError {
+			fail = withSpentRequest(fail, in.SecretsFrom)
+		}
 		return withAppID(withSecretHint(fail, secrets), assigned)
 	}
 	var saved command.SaveAppResponse
@@ -451,6 +463,21 @@ func withAppID(res *sdk.CallToolResult, appID string) *sdk.CallToolResult {
 	id, _ := json.Marshal(appID)
 	fields["app_id"] = id
 	return webmcp.JSONResult(fields)
+}
+
+// withSpentRequest adds to a failed save's error that its secret request
+// is used: the send may have reached the agent, so the request takes no
+// other save.
+func withSpentRequest(res *sdk.CallToolResult, requestID string) *sdk.CallToolResult {
+	if len(res.Content) != 1 {
+		return res
+	}
+	text, ok := res.Content[0].(*sdk.TextContent)
+	if !ok {
+		return res
+	}
+	return webmcp.ErrorText(text.Text + " (the save may have reached the agent, so the secret request " + requestID +
+		" is used: check the app with get_app_status, and ask again with request_secrets if the values are still needed)")
 }
 
 // checkFill refuses secrets_from values the save does not take as

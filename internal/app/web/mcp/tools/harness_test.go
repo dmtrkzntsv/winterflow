@@ -136,6 +136,16 @@ func newEnv(t *testing.T, instances port.InstanceLinks) *env {
 // newEnvWith is newEnv with tweak, when set, applied to the tools' deps.
 func newEnvWith(t *testing.T, instances port.InstanceLinks, tweak func(*tools.Deps)) *env {
 	t.Helper()
+	var core func(*tools.Deps, *bootstrap.Deps)
+	if tweak != nil {
+		core = func(d *tools.Deps, _ *bootstrap.Deps) { tweak(d) }
+	}
+	return newEnvCore(t, instances, core)
+}
+
+// newEnvCore is newEnvWith whose tweak also sees the core's deps.
+func newEnvCore(t *testing.T, instances port.InstanceLinks, tweak func(*tools.Deps, *bootstrap.Deps)) *env {
+	t.Helper()
 	cfg := config.NewServerConfig("standalone")
 	conn := dbtest.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -162,7 +172,7 @@ func newEnvWith(t *testing.T, instances port.InstanceLinks, tweak func(*tools.De
 	}
 	d.Wait = wait
 	if tweak != nil {
-		tweak(&d)
+		tweak(&d, deps)
 	}
 	g := api.Guards{AuthLimit: ratelimit.New(100, 100).Middleware, UserLimit: userlimit.New(100, 100).Middleware}
 	routes := webmcp.Routes(webmcp.Edge{Auth: deps.Authn, Register: tools.New(d)}, g)

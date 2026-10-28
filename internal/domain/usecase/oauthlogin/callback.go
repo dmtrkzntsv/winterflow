@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"winterflow/internal/domain/model"
 )
@@ -78,7 +79,10 @@ func (s *Service) Callback(ctx context.Context, provider string, in CallbackInpu
 		s.warn("id token", err, provider)
 		return fail(ErrCodeProvider)
 	}
-	if claims.Email == "" && toks.AccessToken != "" {
+	// The ID token left out the email, or carried one without saying
+	// whether it is verified (a generic OIDC provider may say so only in
+	// userinfo): ask userinfo before deciding.
+	if toks.AccessToken != "" && (claims.Email == "" || (claims.EmailVerifiedMissing && !p.Client.TrustsEmail())) {
 		claims = s.userinfoFallback(ctx, p, toks.AccessToken, claims)
 	}
 	if claims.Name == "" && in.AppleUser != "" {
@@ -135,19 +139,32 @@ func errorURL(st model.LoginState, code string) string {
 	return loginErrorURL(st.ReturnTo, code)
 }
 
+// userinfoTimeout bounds the userinfo request.
+const userinfoTimeout = 10 * time.Second
+
 // userinfoFallback fills email/verified/name only where the ID token left
-// them empty, and only when userinfo's sub matches. Failure is not fatal.
+// them empty, and only when userinfo's sub matches; verification is taken
+// for the ID token's email only when userinfo vouches for the same
+// address. Failure is not fatal (no userinfo endpoint: nothing is asked).
 func (s *Service) userinfoFallback(ctx context.Context, p Provider, accessToken string, claims model.ProviderClaims) model.ProviderClaims {
+	ctx, cancel := context.WithTimeout(ctx, userinfoTimeout)
+	defer cancel()
 	info, err := p.Client.UserInfo(ctx, accessToken)
 	if err != nil {
-		s.warn("userinfo", err, p.ID)
+		if !errors.Is(err, model.ErrNoUserInfo) {
+			s.warn("userinfo", err, p.ID)
+		}
 		return claims
 	}
 	if info.Subject != claims.Subject {
 		return claims
 	}
-	if claims.Email == "" {
+	switch {
+	case claims.Email == "":
 		claims.Email = info.Email
+		claims.EmailVerified = info.EmailVerified
+	case claims.EmailVerifiedMissing && !info.EmailVerifiedMissing &&
+		strings.EqualFold(strings.TrimSpace(info.Email), strings.TrimSpace(claims.Email)):
 		claims.EmailVerified = info.EmailVerified
 	}
 	if claims.Name == "" {

@@ -384,7 +384,7 @@ func (c *Client) UserInfo(ctx context.Context, accessToken string) (Claims, erro
 		return Claims{}, err
 	}
 	if d.UserinfoEndpoint == "" {
-		return Claims{}, errors.New("oidc: issuer publishes no userinfo endpoint")
+		return Claims{}, fmt.Errorf("oidc: %w", model.ErrNoUserInfo)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.UserinfoEndpoint, nil)
 	if err != nil {

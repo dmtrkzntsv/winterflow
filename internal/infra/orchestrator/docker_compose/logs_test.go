@@ -185,3 +185,32 @@ func TestGetLogsRequestService(t *testing.T) {
 		}
 	}
 }
+
+// TestGetLogsComposeFailsQuietly: compose failing with nothing on stdout
+// (some versions do with no containers) reads as no logs, not an error;
+// only an unknown service is one.
+func TestGetLogsComposeFailsQuietly(t *testing.T) {
+	r := newTestRepo(t)
+	dir := r.appDataDir("app-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("services:\n  web:\n    image: nginx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho 'no containers to show' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	resp, err := r.GetLogs(context.Background(), command.GetLogsRequest{AppID: "app-1", Tail: 10})
+	if err != nil || len(resp.Logs) != 0 || resp.AppID != "app-1" {
+		t.Fatalf("GetLogs = %+v, %v; want an empty result", resp, err)
+	}
+	// A service compose does not reject by name fails quietly too.
+	resp, err = r.GetLogs(context.Background(), command.GetLogsRequest{AppID: "app-1", Tail: 10, Service: "web"})
+	if err != nil || len(resp.Logs) != 0 || resp.Service != "web" {
+		t.Fatalf("GetLogs(web) = %+v, %v; want an empty result", resp, err)
+	}
+}

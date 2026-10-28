@@ -138,3 +138,40 @@ func TestAppleFormPostResends(t *testing.T) {
 		t.Fatalf("form_post re-sent to %s", loc)
 	}
 }
+
+// TestProviderAccountSetsPassword: an owner who signed up through a
+// provider adds a password for the address it vouched for, without a
+// current one, and can then sign in with it (a fallback for a provider
+// that stops working); a second set, or one by a password account, is a
+// conflict, and change-password still wants the current password.
+func TestProviderAccountSetsPassword(t *testing.T) {
+	t.Parallel()
+	e, f := newSignInEnv(t)
+	c := e.anon()
+	c.providerSignIn(t, f, nil)
+	var p struct {
+		Email string `json:"email"`
+	}
+	c.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusOK).data(t, &p)
+	if p.Email != "" {
+		t.Fatalf("a provider account's profile email = %q, want none", p.Email)
+	}
+	c.post(t, "/api/v1/user/change-password", map[string]string{"current_password": "", "new_password": "fallback-pass"}).
+		expect(t, http.StatusBadRequest)
+	c.post(t, "/api/v1/user/set-password", map[string]string{"email": "someone-else@example.test", "new_password": "fallback-pass"}).
+		expect(t, http.StatusBadRequest)
+	c.post(t, "/api/v1/user/set-password", map[string]string{"email": f.Email, "new_password": "fallback-pass"}).
+		expect(t, http.StatusOK)
+	c.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusOK).data(t, &p)
+	if p.Email != f.Email {
+		t.Fatalf("profile email after set-password = %q, want %q", p.Email, f.Email)
+	}
+	e.anon().login(t, f.Email, "fallback-pass")
+	c.post(t, "/api/v1/user/set-password", map[string]string{"email": f.Email, "new_password": "another-pass"}).
+		expect(t, http.StatusConflict)
+	c.post(t, "/api/v1/user/change-password", map[string]string{"current_password": "wrong", "new_password": "another-pass"}).
+		expect(t, http.StatusBadRequest)
+	c.post(t, "/api/v1/user/change-password", map[string]string{"current_password": "fallback-pass", "new_password": "another-pass"}).
+		expect(t, http.StatusOK)
+	e.anon().login(t, f.Email, "another-pass")
+}

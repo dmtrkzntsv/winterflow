@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Sign-in providers (Winterflow as an OAuth client). The id is the
 // provider's slot: it names the identity rows, the routes
@@ -23,7 +26,11 @@ type ProviderClaims struct {
 	Subject       string
 	Email         string
 	EmailVerified bool
-	Name          string
+	// EmailVerifiedMissing: the document carried no email_verified claim
+	// (EmailVerified is then false), so the userinfo document may still
+	// vouch for the address.
+	EmailVerifiedMissing bool
+	Name                 string
 }
 
 // ProviderTokens is a provider's answer to the code exchange.
@@ -80,6 +87,10 @@ type LoginState struct {
 	CreatedAt    time.Time
 	ExpiresAt    time.Time
 }
+
+// ErrNoUserInfo is a provider that publishes no userinfo endpoint (nothing
+// was asked).
+var ErrNoUserInfo = errors.New("the provider publishes no userinfo endpoint")
 
 // Sign-in and linked-identity errors.
 var (

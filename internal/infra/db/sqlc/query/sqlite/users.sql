@@ -36,6 +36,25 @@ SELECT * FROM user_credentials WHERE email = ?;
 -- name: GetCredentialsByUser :one
 SELECT * FROM user_credentials WHERE user_id = ?;
 
+-- name: EmailTakenByOther :one
+-- EmailTaken for a user adding a password: a password account's email, or
+-- the email another user's linked sign-in provider vouched for (the user's
+-- own identities do not count).
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = CAST(sqlc.arg(email) AS TEXT)
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a
+    WHERE a.provider <> 'local' AND lower(a.email) = CAST(sqlc.arg(email) AS TEXT) AND a.user_id <> sqlc.arg(user_id)
+);
+
+-- name: UserHasIdentityEmail :one
+-- Whether one of the user's linked sign-in providers vouched for this
+-- (normalized, lower-case) address.
+SELECT EXISTS (
+    SELECT 1 FROM user_connected_accounts
+    WHERE user_id = sqlc.arg(user_id) AND provider <> 'local' AND lower(email) = CAST(sqlc.arg(email) AS TEXT)
+);
+
 -- name: EmailTaken :one
 -- Whether an account already answers to this (normalized, lower-case)
 -- address: a password account's email, or the email a linked sign-in

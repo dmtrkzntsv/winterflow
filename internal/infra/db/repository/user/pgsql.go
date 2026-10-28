@@ -58,6 +58,14 @@ func (pgsqlQuerier) GetCredentialsByUser(ctx context.Context, db backend.DBTX, u
 	return credentialsRow(row), err
 }
 
+func (pgsqlQuerier) EmailTakenByOther(ctx context.Context, db backend.DBTX, p takenByOther) (bool, error) {
+	return pgsqlgen.New(db).EmailTakenByOther(ctx, pgsqlgen.EmailTakenByOtherParams(p))
+}
+
+func (pgsqlQuerier) UserHasIdentityEmail(ctx context.Context, db backend.DBTX, p identityEmail) (bool, error) {
+	return pgsqlgen.New(db).UserHasIdentityEmail(ctx, pgsqlgen.UserHasIdentityEmailParams(p))
+}
+
 func (pgsqlQuerier) EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error) {
 	return pgsqlgen.New(db).EmailTaken(ctx, email)
 }

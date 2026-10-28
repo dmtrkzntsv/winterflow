@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -356,6 +357,10 @@ type Claim struct {
 	cid  string
 	once sync.Once
 	err  error
+	// sent is set once Dispatch marked the request dispatched: from then
+	// on the ciphertexts may have reached the agent, whatever the send
+	// answered, so Commit never releases it.
+	sent atomic.Bool
 }
 
 // Dispatch renews the claim and marks the request dispatched right before
@@ -371,6 +376,7 @@ func (c *Claim) Dispatch(ctx context.Context) error {
 	if !ok {
 		return errInUse
 	}
+	c.sent.Store(true)
 	return nil
 }
 
@@ -378,10 +384,14 @@ func (c *Claim) Dispatch(ctx context.Context) error {
 // dispatched marks the request used and deletes its ciphertexts, retried
 // a few times on an error (the request stays dispatched either way, so it
 // is never used twice), else it returns to submitted for a retry (the save
-// was refused, or its send failed). A dispatched save whose claim was lost
-// is an error: another save may have used the request too.
+// was refused before Dispatch). After Dispatch the request is never
+// released: a send that answered an error (a bus whose PUBLISH went
+// through but whose reply was lost) may have reached the agent, so
+// Commit(false) then marks it used too. A dispatched save whose claim was
+// lost is an error: another save may have used the request too.
 func (c *Claim) Commit(dispatched bool) error {
 	c.once.Do(func() {
+		dispatched = dispatched || c.sent.Load()
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(c.ctx), commitTimeout)
 		defer cancel()
 		var ok bool

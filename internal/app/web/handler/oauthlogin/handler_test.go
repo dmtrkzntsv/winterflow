@@ -406,6 +406,40 @@ func TestProviderLoginEmailTakenDuringCallback(t *testing.T) {
 	}
 }
 
+// TestProviderLoginVerifiedByUserInfo: an ID token with an email but no
+// email_verified claim is completed from userinfo, which vouches for the
+// same address; without a userinfo endpoint, or when userinfo vouches for
+// another address, the email stays unverified.
+func TestProviderLoginVerifiedByUserInfo(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		noUserInfo bool
+		infoEmail  string
+		want       string
+	}{
+		{"userinfo vouches", false, "", "/"},
+		{"userinfo vouches, other case", false, "USER@example.test", "/"},
+		{"no userinfo endpoint", true, "", "/login?error=email_unverified"},
+		{"userinfo vouches for another address", false, "other@example.test", "/login?error=email_unverified"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, model.ProviderOIDC)
+			h.open = true
+			h.fake.Email = "user@example.test"
+			h.fake.OmitEmailVerifiedInIDToken = true
+			h.fake.NoUserInfo = c.noUserInfo
+			h.fake.UserInfoEmail = c.infoEmail
+			loc, resp := h.flow(h.client(), nil)
+			if loc != c.want {
+				t.Fatalf("redirect = %q, want %q", loc, c.want)
+			}
+			if signed := h.sessionUser(resp) != ""; signed != (c.want == "/") {
+				t.Fatalf("session started = %v", signed)
+			}
+		})
+	}
+}
+
 func TestProviderLoginUnverifiedEmail(t *testing.T) {
 	h := newHarness(t, model.ProviderOIDC)
 	h.open = true

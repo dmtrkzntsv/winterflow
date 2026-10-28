@@ -28,6 +28,15 @@ func sq(id string) url.Values            { return url.Values{"server_id": {id}} 
 func aq(id string) url.Values            { return url.Values{"server_id": {id}, "app_id": {anApp}} }
 func post(path string, body any) call    { return call{Method: http.MethodPost, Path: path, Body: body} }
 func get(path string, q url.Values) call { return call{Method: http.MethodGet, Path: path, Query: q} }
+
+// fromIP sends the call as coming from ip (the last X-Forwarded-For entry,
+// honoured because the test peer is loopback), so a route behind the
+// per-IP AuthLimit does not share the burst the other auth probes spend.
+func fromIP(ip string, c call) call {
+	c.Header = http.Header{"X-Forwarded-For": {ip}}
+	return c
+}
+
 func bad(method, path string) call {
 	if method == http.MethodGet {
 		return call{Method: method, Path: path, Invalid: true}
@@ -177,7 +186,8 @@ var probes = map[string]probe{
 	"POST /api/v1/user/revoke-connected-app":           {malformed: bad("POST", "/api/v1/user/revoke-connected-app")},
 	"POST /api/v1/user/create-token":                   {malformed: post("/api/v1/user/create-token", map[string]any{"name": ""})},
 	"POST /api/v1/user/delete-token":                   {malformed: bad("POST", "/api/v1/user/delete-token")},
-	"POST /api/v1/user/change-password":                {malformed: post("/api/v1/user/change-password", map[string]any{"current_password": "x", "new_password": "1"})},
+	"POST /api/v1/user/change-password":                {malformed: fromIP("192.0.2.11", post("/api/v1/user/change-password", map[string]any{"current_password": "x", "new_password": "1"}))},
+	"POST /api/v1/user/set-password":                   {malformed: fromIP("192.0.2.12", post("/api/v1/user/set-password", map[string]any{"email": "x@example.test", "new_password": "1"}))},
 	"POST /api/v1/alerts/save-channel":                 {malformed: post("/api/v1/alerts/save-channel", map[string]any{"name": "", "url": "ntfy://ntfy.sh/t"})},
 	"POST /api/v1/alerts/delete-channel":               {malformed: post("/api/v1/alerts/delete-channel", map[string]any{"id": ""})},
 	"POST /api/v1/alerts/test-channel":                 {malformed: post("/api/v1/alerts/test-channel", map[string]any{})},

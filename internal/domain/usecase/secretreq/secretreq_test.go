@@ -513,10 +513,12 @@ func TestDispatchedNeverClaimedAgain(t *testing.T) {
 	}
 }
 
-// TestDispatchFailedReleases: a save whose send failed after Dispatch
-// releases the request for a retry.
-func TestDispatchFailedReleases(t *testing.T) {
-	u, _ := setup(t)
+// TestDispatchFailedKeepsUsed: a save whose send answered an error after
+// Dispatch (a bus that may have delivered it anyway) does not release the
+// request: its deferred Commit(false) marks it used, and no save takes it
+// again.
+func TestDispatchFailedKeepsUsed(t *testing.T) {
+	u, c, repo := setupWith(t, nil)
 	ctx := context.Background()
 	req, raw := request(t, u, false, "API_KEY")
 	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
@@ -529,13 +531,36 @@ func TestDispatchFailedReleases(t *testing.T) {
 	if err := claim.Dispatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretUsed {
-		t.Fatalf("dispatched reads %s, want used", r.Status)
+	if err := claim.Commit(false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, orgA, req.ID)
+	if err != nil || got.Status != model.SecretUsed || got.Ciphertexts != nil {
+		t.Fatalf("after a failed send = %+v, %v", got, err)
+	}
+	c.add(secretreq.ClaimTTL + time.Second)
+	if _, _, err := u.Consume(ctx, alice, serverA, "", req.ID); err == nil || !strings.Contains(err.Error(), "used already") {
+		t.Fatalf("consume after a failed send = %v", err)
+	}
+}
+
+// TestRefusedBeforeDispatchReleases: a save refused before Dispatch
+// returns the request to submitted for a retry.
+func TestRefusedBeforeDispatchReleases(t *testing.T) {
+	u, _ := setup(t)
+	ctx := context.Background()
+	req, raw := request(t, u, false, "API_KEY")
+	if err := u.Submit(ctx, alice, raw, map[string]string{"API_KEY": cryptotest.Ciphertext(t, "v")}); err != nil {
+		t.Fatal(err)
+	}
+	_, claim, err := u.Consume(ctx, alice, serverA, "", req.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := claim.Commit(false); err != nil {
 		t.Fatal(err)
 	}
 	if r, _ := u.Get(ctx, alice, req.ID); r.Status != model.SecretSubmitted {
-		t.Fatalf("after a failed send = %s", r.Status)
+		t.Fatalf("after a refused save = %s", r.Status)
 	}
 }

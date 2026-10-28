@@ -41,8 +41,11 @@ type Fake struct {
 	// omits email when OmitEmailInIDToken is true).
 	UserInfoEmail      string
 	OmitEmailInIDToken bool
-	NoUserInfo         bool
-	RequirePKCE        bool
+	// OmitEmailVerifiedInIDToken leaves email_verified out of the ID token
+	// only (userinfo still carries EmailVerified).
+	OmitEmailVerifiedInIDToken bool
+	NoUserInfo                 bool
+	RequirePKCE                bool
 	// DiscoveryIssuer overrides the `issuer` field of the discovery document,
 	// for testing the client's issuer-consistency check.
 	DiscoveryIssuer string
@@ -164,7 +167,7 @@ func (f *Fake) claims(nonce string) map[string]any {
 	}
 	if f.Email != "" && !f.OmitEmailInIDToken {
 		m["email"] = f.Email
-		if f.EmailVerified != nil {
+		if f.EmailVerified != nil && !f.OmitEmailVerifiedInIDToken {
 			m["email_verified"] = f.EmailVerified
 		}
 	}

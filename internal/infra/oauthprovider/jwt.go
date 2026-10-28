@@ -144,5 +144,7 @@ func parseEmailVerified(raw json.RawMessage) bool {
 }
 
 func (c idTokenClaims) toClaims() Claims {
-	return Claims{Subject: c.Sub, Email: c.Email, EmailVerified: parseEmailVerified(c.EmailVerified), Name: c.Name}
+	missing := len(c.EmailVerified) == 0 || string(c.EmailVerified) == "null"
+	return Claims{Subject: c.Sub, Email: c.Email, EmailVerified: parseEmailVerified(c.EmailVerified),
+		EmailVerifiedMissing: missing, Name: c.Name}
 }

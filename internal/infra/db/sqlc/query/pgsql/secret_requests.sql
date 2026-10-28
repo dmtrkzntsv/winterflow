@@ -36,8 +36,10 @@ SET status = 'used', ciphertexts = NULL, used_at = sqlc.arg(used_at), ended_at =
 WHERE id = sqlc.arg(id) AND status = 'dispatched' AND claim_id = sqlc.arg(claim_id);
 
 -- name: ReleaseSecretRequest :execrows
+-- Only a claim that was never dispatched returns to submitted: a dispatched
+-- request's ciphertexts may have reached the agent.
 UPDATE secret_requests SET status = 'submitted', claim_id = NULL, claimed_until = NULL
-WHERE id = sqlc.arg(id) AND status IN ('claimed', 'dispatched') AND claim_id = sqlc.arg(claim_id);
+WHERE id = sqlc.arg(id) AND status = 'claimed' AND claim_id = sqlc.arg(claim_id);
 
 -- name: ExpireSecretRequests :execrows
 UPDATE secret_requests SET status = 'expired', ciphertexts = NULL, ended_at = sqlc.arg(now), claim_id = NULL, claimed_until = NULL

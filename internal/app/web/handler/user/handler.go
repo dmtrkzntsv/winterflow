@@ -5,6 +5,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type ProfileStore interface {
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
 	VerifyLocalCredentials(ctx context.Context, email, password string) (model.User, error)
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
+	AddPassword(ctx context.Context, userID, email, password string) error
 }
 
 type Deps struct {
@@ -134,6 +136,51 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.Success(w, "password changed", nil)
+}
+
+// SetPasswordRequest is the body of POST /api/v1/user/set-password.
+type SetPasswordRequest struct {
+	// Email is the address the password signs in with: one a linked
+	// sign-in provider vouched for (get-identities lists them).
+	Email       string `json:"email"`
+	NewPassword string `json:"new_password"`
+}
+
+// SetPassword gives an account without a password (one created through a
+// sign-in provider) its first one, so it can still sign in when the
+// provider cannot: no current password is asked, as there is none. An
+// account that has a password gets a 409 (change-password changes it).
+func (h *Handler) SetPassword(w http.ResponseWriter, r *http.Request) {
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	req, ok := webutil.DecodeBody[SetPasswordRequest](w, r)
+	if !ok {
+		return
+	}
+	if len(req.NewPassword) < model.MinPasswordLen {
+		webutil.Error(w, "new password must be at least 4 characters", nil)
+		return
+	}
+	if strings.TrimSpace(req.Email) == "" {
+		webutil.Error(w, "email is required", nil)
+		return
+	}
+	err := h.users.AddPassword(r.Context(), userID, req.Email, req.NewPassword)
+	switch {
+	case err == nil:
+		webutil.Success(w, "password set", nil)
+	case errors.Is(err, model.ErrPasswordAlreadySet):
+		webutil.ErrorStatus(w, http.StatusConflict, "the account already has a password: change it instead")
+	case errors.Is(err, model.ErrEmailTaken):
+		webutil.ErrorStatus(w, http.StatusConflict, "another account uses this email address")
+	case errors.Is(err, model.ErrNotIdentityEmail):
+		webutil.Error(w, model.ErrNotIdentityEmail.Error(), nil)
+	default:
+		h.log.Error("SetPassword", "error", err, "user_id", userID)
+		webutil.ErrorStatus(w, http.StatusInternalServerError, "failed to set the password")
+	}
 }
 
 // CreateTokenRequest is the body of POST /api/v1/user/create-token.

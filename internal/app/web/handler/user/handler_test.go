@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -157,6 +158,16 @@ type fakeProfileStore struct {
 	verifyErr  error
 	setCalls   []bool // mustChange flag per SetPassword call
 	setUserIDs []string
+	addErr     error
+	added      []string // "<user>:<email>:<password>" per AddPassword call
+}
+
+func (f *fakeProfileStore) AddPassword(_ context.Context, userID, email, pw string) error {
+	if f.addErr != nil {
+		return f.addErr
+	}
+	f.added = append(f.added, userID+":"+email+":"+pw)
+	return nil
 }
 
 func (f *fakeProfileStore) GetUser(_ context.Context, userID string) (model.User, error) {
@@ -266,6 +277,41 @@ func TestChangePasswordGoogleOnly400(t *testing.T) {
 	h.ChangePassword(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", w.Code)
+	}
+}
+
+func TestSetPassword(t *testing.T) {
+	post := func(f *fakeProfileStore, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		newProfileHandler(f).SetPassword(w, authed(httptest.NewRequest("POST", "/x", strings.NewReader(body))))
+		return w
+	}
+	f := &fakeProfileStore{}
+	if w := post(f, `{"email":"a@b.io","new_password":"long-enough"}`); w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(f.added) != 1 || f.added[0] != "user-1:a@b.io:long-enough" {
+		t.Fatalf("AddPassword calls = %v", f.added)
+	}
+	for _, c := range []struct {
+		name, body string
+		err        error
+		want       int
+	}{
+		{"too short", `{"email":"a@b.io","new_password":"abc"}`, nil, http.StatusBadRequest},
+		{"no email", `{"email":" ","new_password":"long-enough"}`, nil, http.StatusBadRequest},
+		{"has a password", `{"email":"a@b.io","new_password":"long-enough"}`, model.ErrPasswordAlreadySet, http.StatusConflict},
+		{"email of another account", `{"email":"a@b.io","new_password":"long-enough"}`, model.ErrEmailTaken, http.StatusConflict},
+		{"not an identity's email", `{"email":"x@b.io","new_password":"long-enough"}`, model.ErrNotIdentityEmail, http.StatusBadRequest},
+		{"database", `{"email":"a@b.io","new_password":"long-enough"}`, errors.New("disk I/O error"), http.StatusInternalServerError},
+	} {
+		f := &fakeProfileStore{addErr: c.err}
+		if w := post(f, c.body); w.Code != c.want {
+			t.Errorf("%s: code = %d, want %d (%s)", c.name, w.Code, c.want, w.Body.String())
+		}
+		if len(f.added) != 0 {
+			t.Errorf("%s: a password was set", c.name)
+		}
 	}
 }
 

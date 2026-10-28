@@ -208,7 +208,7 @@ func (q *Queries) PruneSecretRequests(ctx context.Context, endedAt *types.DateTi
 
 const releaseSecretRequest = `-- name: ReleaseSecretRequest :execrows
 UPDATE secret_requests SET status = 'submitted', claim_id = NULL, claimed_until = NULL
-WHERE id = $1 AND status IN ('claimed', 'dispatched') AND claim_id = $2
+WHERE id = $1 AND status = 'claimed' AND claim_id = $2
 `
 
 type ReleaseSecretRequestParams struct {
@@ -216,6 +216,8 @@ type ReleaseSecretRequestParams struct {
 	ClaimID *string
 }
 
+// Only a claim that was never dispatched returns to submitted: a dispatched
+// request's ciphertexts may have reached the agent.
 func (q *Queries) ReleaseSecretRequest(ctx context.Context, arg ReleaseSecretRequestParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, releaseSecretRequest, arg.ID, arg.ClaimID)
 	if err != nil {

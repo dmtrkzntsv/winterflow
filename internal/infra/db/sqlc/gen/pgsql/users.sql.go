@@ -49,6 +49,30 @@ func (q *Queries) EmailTaken(ctx context.Context, email string) (bool, error) {
 	return exists, err
 }
 
+const emailTakenByOther = `-- name: EmailTakenByOther :one
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = $1::text
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a
+    WHERE a.provider <> 'local' AND lower(a.email) = $1::text AND a.user_id <> $2
+)
+`
+
+type EmailTakenByOtherParams struct {
+	Email  string
+	UserID string
+}
+
+// EmailTaken for a user adding a password: a password account's email, or
+// the email another user's linked sign-in provider vouched for (the user's
+// own identities do not count).
+func (q *Queries) EmailTakenByOther(ctx context.Context, arg EmailTakenByOtherParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, emailTakenByOther, arg.Email, arg.UserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const getConnectedAccountUserID = `-- name: GetConnectedAccountUserID :one
 SELECT user_id FROM user_connected_accounts WHERE provider = $1 AND external_id = $2
 `
@@ -264,4 +288,25 @@ func (q *Queries) UpdatePassword(ctx context.Context, arg UpdatePasswordParams) 
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const userHasIdentityEmail = `-- name: UserHasIdentityEmail :one
+SELECT EXISTS (
+    SELECT 1 FROM user_connected_accounts
+    WHERE user_id = $1 AND provider <> 'local' AND lower(email) = $2::text
+)
+`
+
+type UserHasIdentityEmailParams struct {
+	UserID string
+	Email  string
+}
+
+// Whether one of the user's linked sign-in providers vouched for this
+// (normalized, lower-case) address.
+func (q *Queries) UserHasIdentityEmail(ctx context.Context, arg UserHasIdentityEmailParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, userHasIdentityEmail, arg.UserID, arg.Email)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

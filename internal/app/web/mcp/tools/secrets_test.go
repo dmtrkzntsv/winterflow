@@ -15,7 +15,9 @@ import (
 	"winterflow/internal/app/web/mcp/tools"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
+	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/domain/usecase/secretreq"
+	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db/dbtest"
 	"winterflow/internal/infra/transport/codec"
 	"winterflow/pkg/crypto/cryptotest"
@@ -390,5 +392,95 @@ func TestSaveAppSecretsFromMarkUsedFails(t *testing.T) {
 	}
 	if n := e.agent.count(command.TypeAppSave); n != 1 {
 		t.Fatalf("the agent received %d saves, want 1", n)
+	}
+}
+
+// lossyDispatch sends an app.save, then answers an error, as a bus whose
+// PUBLISH went through but whose reply was lost.
+type lossyDispatch struct {
+	port.CommandDispatcher
+}
+
+func (l lossyDispatch) Dispatch(ctx context.Context, in port.DispatchInput) (string, error) {
+	if _, err := l.CommandDispatcher.Dispatch(ctx, in); err != nil {
+		return "", err
+	}
+	if in.Type == command.TypeAppSave {
+		return "", errors.New("redis: i/o timeout")
+	}
+	return "", nil
+}
+
+// newLossyEnv is newEnv whose app saves are sent but answer an error.
+func newLossyEnv(t *testing.T) *env {
+	t.Helper()
+	return newEnvCore(t, nil, func(d *tools.Deps, core *bootstrap.Deps) {
+		d.Apps = appuc.NewUseCase(&appuc.Deps{
+			CommandDispatcher: lossyDispatch{core.CommandDispatcher}, AppRepository: core.AppRepository,
+			AppDomainRepository: core.AppDomainRepository, ServerDomainRepository: core.ServerDomainRepository,
+			ServerStorageRepository: core.ServerStorageRepository, Servers: core.ServerRepository, Log: testLog,
+		})
+	})
+}
+
+// TestSaveAppSecretsFromAmbiguousSend: a save whose send answered an error
+// after the request was marked dispatched may have reached the agent: the
+// request is used, never released, so its ciphertexts go out once.
+func TestSaveAppSecretsFromAmbiguousSend(t *testing.T) {
+	e := newLossyEnv(t)
+	alice := e.newUser(t, "alice@example.test")
+	asked, raw := askSecrets(t, e, alice, map[string]any{"names": []string{"API_KEY"}})
+	e.submit(t, alice, raw, map[string]string{"API_KEY": "key-1"})
+	args := map[string]any{"server_id": alice.serverID, "name": "web", "secrets_from": asked.RequestID,
+		"files": []map[string]any{{"name": "compose.yml", "content": secretCompose}}}
+	s := e.session(t, alice)
+	text, isErr := call(t, s, "save_app", args)
+	if !isErr || !strings.Contains(text, "secret request "+asked.RequestID+" is used") {
+		t.Fatalf("save whose send answered an error = %q (isError %v)", text, isErr)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for e.agent.count(command.TypeAppSave) != 1 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 1 {
+		t.Fatalf("the agent received %d saves, want 1", n)
+	}
+	if st := secretStatus(t, e, alice, asked.RequestID); st != "used" {
+		t.Fatalf("status after an ambiguous send = %s, want used", st)
+	}
+	if text, isErr := call(t, s, "save_app", args); !isErr || !strings.Contains(text, "used already") {
+		t.Fatalf("second save = %q (isError %v)", text, isErr)
+	}
+	if n := e.agent.count(command.TypeAppSave); n != 1 {
+		t.Fatalf("the agent received %d saves, want 1", n)
+	}
+}
+
+// TestSaveAppAmbiguousSendNamesTheApp: a create whose send answered an
+// error may have reached the agent, so the error names the id assigned to
+// it, the one the agent got.
+func TestSaveAppAmbiguousSendNamesTheApp(t *testing.T) {
+	e := newLossyEnv(t)
+	alice := e.newUser(t, "alice@example.test")
+	got := make(chan string, 1)
+	e.agent.on(command.TypeAppSave, func(raw json.RawMessage) reply {
+		var in command.SaveAppRequest
+		_ = codec.DecodePayload(raw, &in)
+		got <- in.App.AppID
+		return reply{Payload: command.SaveAppResponse{AppID: in.App.AppID}}
+	})
+	text, isErr := call(t, e.session(t, alice), "save_app", map[string]any{"server_id": alice.serverID, "name": "web",
+		"files": []map[string]any{{"name": "compose.yml", "content": compose}}})
+	if !isErr {
+		t.Fatalf("save whose send answered an error = %q", text)
+	}
+	var appID string
+	select {
+	case appID = <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent received no save")
+	}
+	if appID == "" || !strings.Contains(text, "pass app_id "+appID) {
+		t.Fatalf("error = %q, want it to name app_id %q", text, appID)
 	}
 }

@@ -29,6 +29,12 @@ type UserRepository interface {
 	CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error)
 	// SetPassword replaces the user's password hash and must-change flag.
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
+	// AddPassword gives an account without local credentials (one created
+	// through a sign-in provider) a password for email, which one of its
+	// linked identities must have vouched for. model.ErrPasswordAlreadySet
+	// when it has one, model.ErrNotIdentityEmail for another address,
+	// model.ErrEmailTaken when another account answers to it.
+	AddPassword(ctx context.Context, userID, email, password string) error
 	// GetCredentials returns the non-secret credential info (email,
 	// must-change). model.ErrorUserNotFound for users without local creds.
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)

@@ -4,7 +4,7 @@ import { LogsView, type LogLine } from "@/components/logs-view";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 import { serviceLabels } from "@/lib/app-summary";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -25,7 +25,7 @@ export function AppLogsTab({ appId }: { appId: string }) {
       const url = `${base}/api/v1/app/get-logs?server_id=${encodeURIComponent(
         activeServerId,
       )}&app_id=${encodeURIComponent(appId)}&tail=${tail}`;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await apiFetch(url, { credentials: "include" });
       if (!res.ok) throw await readApiError(res);
       const accepted = (await res.json()) as { data?: { request_id?: string } };
       const ref = accepted.data?.request_id;

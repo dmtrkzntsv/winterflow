@@ -188,7 +188,6 @@ func TestEnvelopeSchemas(t *testing.T) {
 		{"error", "POST", "/api/v1/thing/save-thing", 400, "application/json", `{"success":false,"message":"bad","data":null}`, true},
 		{"error must be unsuccessful", "POST", "/api/v1/thing/save-thing", 400, "application/json", `{"success":true,"message":"bad","data":null}`, false},
 		{"401 json", "GET", "/api/v1/thing/get-thing", 401, "application/json", `{"success":false,"message":"unauthorized","data":null}`, true},
-		{"401 text", "GET", "/api/v1/thing/get-thing", 401, "text/plain", `"Unauthorized\n"`, true},
 		{"403", "GET", "/api/v1/thing/get-thing", 403, "application/json", `{"success":false,"message":"forbidden","data":null}`, true},
 		{"raw body", "POST", "/auth/local/login", 200, "application/json", `{"id":"u1"}`, true},
 		{"library error", "POST", "/auth/local/login", 403, "application/json", `{"error":"incorrect user or password"}`, true},

@@ -3,9 +3,7 @@ package contract_test
 import (
 	"context"
 	"net"
-	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,35 +46,12 @@ type env struct {
 	requests map[string]string // request_id -> "METHOD /path" that dispatched it
 }
 
-// newServerMu guards the go-pkgz/auth jwt package global. token.NewService
-// writes jwt.MarshalSingleStringAsArray on every call (its sync.Once is
-// function-local), while minting a token on login reads it through
-// golang-jwt's ClaimStrings.MarshalJSON. Parallel tests therefore take the
-// write lock around web.NewServer and a read lock around each /auth/ request
-// (see serializeAuth). The only other reader is go-pkgz's refreshExpiredToken
-// path, which re-mints a token that is past its 5-minute TokenDuration; no
-// test env lives that long, so it never runs here. Production builds one
-// server per process, so this is a test-only hazard.
-var newServerMu sync.RWMutex
-
-// serializeAuth holds newServerMu's read lock for the duration of every
-// /auth/ request, the only ones that mint tokens, so no server build can
-// overlap a login. Long-lived requests (SSE) are deliberately not locked.
-func serializeAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/auth/") {
-			newServerMu.RLock()
-			defer newServerMu.RUnlock()
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
 var testLog = logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "contract"})
 
 // newEnv builds the stack the way BootstrapStandalone does (WireCore over an
-// in-memory bus + InProcessBridge), minus Docker, certs and ingress.
-func newEnv(t *testing.T) *env {
+// in-memory bus + InProcessBridge), minus Docker, certs and ingress. opts
+// adjust WireCore (a fake sign-in provider, say).
+func newEnv(t *testing.T, opts ...bootstrap.CoreOption) *env {
 	t.Helper()
 	cfg := config.NewServerConfig("standalone")
 	conn, err := db.Open(testLog, freshDB(t))
@@ -93,9 +68,9 @@ func newEnv(t *testing.T) *env {
 	b := membus.NewBus(testLog)
 	// The fake agent reports every 50 ms, so a rollout step's two healthy
 	// reports need not be 20 s apart, nor polled every 5 s.
-	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, bootstrap.WithRolloutTiming(rollouts.Timing{
+	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, append([]bootstrap.CoreOption{bootstrap.WithRolloutTiming(rollouts.Timing{
 		HealthSettle: 100 * time.Millisecond, HealthPoll: 50 * time.Millisecond,
-	}))
+	})}, opts...)...)
 	// Enrollment is distributed-only in production (BootstrapAPI); the
 	// suite wires it here so its routes are exercised.
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, deps.HubCertRepository, nil)
@@ -114,12 +89,8 @@ func newEnv(t *testing.T) *env {
 	// consumes.
 	bootstrap.StartRollouts(ctx, deps)
 
-	// Exclusive: no /auth/ request in any env may run while NewServer writes
-	// the jwt global (see newServerMu).
-	newServerMu.Lock()
 	handler := web.NewServer(ctx, deps).Handler
-	newServerMu.Unlock()
-	srv := httptest.NewUnstartedServer(serializeAuth(record(handler)))
+	srv := httptest.NewUnstartedServer(record(handler))
 	// SSE handlers observe ctx through BaseContext: cancelling it ends
 	// streams so Close does not wait on them.
 	srv.Config.BaseContext = func(_ net.Listener) context.Context { return ctx }

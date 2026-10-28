@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiBaseUrl } from "@/config";
 import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { useNotifications } from "@/context/use-notifications";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 import type { ProcessList } from "@/lib/processes";
 
 export const PROCESS_POLL_MS = 5000;
@@ -53,7 +53,7 @@ export function useProcesses(serverId: string | null, enabled: boolean) {
     void (async () => {
       while (live) {
         try {
-          const res = await fetch(`${base}/api/v1/server/get-processes?server_id=${encodeURIComponent(serverId)}`, {
+          const res = await apiFetch(`${base}/api/v1/server/get-processes?server_id=${encodeURIComponent(serverId)}`, {
             credentials: "include",
             signal: ctl.signal,
           });

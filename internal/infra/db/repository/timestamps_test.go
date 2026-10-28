@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/backend"
 	"winterflow/internal/infra/db/dbtest"
+	accesstokenrepo "winterflow/internal/infra/db/repository/accesstoken"
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
@@ -28,6 +29,8 @@ import (
 	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	templaterepo "winterflow/internal/infra/db/repository/template"
 	userrepo "winterflow/internal/infra/db/repository/user"
+	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
+	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/util"
 )
 
@@ -68,12 +71,16 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	if _, err := users.CreateMemberUser(ctx, orgID, "Member", "member@example.com", "temporary password"); err != nil {
 		t.Fatal(err)
 	}
+	tokens := must(accesstokenrepo.New(d.Tx, d.Driver))
 	expires := time.Now().In(zone).Add(24 * time.Hour) // future, non-UTC, sub-second
-	_, plaintext, err := users.CreateToken(ctx, admin.ID, "ci", &expires)
-	if err != nil {
+	if err := tokens.Insert(ctx, model.AccessToken{ID: dbtest.ID(701), UserID: admin.ID, Kind: model.TokenSession,
+		Scope: model.ScopeFull, CreatedAt: at, LastUsedAt: at, ExpiresAt: &expires}, "h1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := users.FindByToken(ctx, plaintext); err != nil { // stamps last_used_at
+	if _, err := tokens.Touch(ctx, dbtest.ID(701), at.Add(time.Minute), &expires); err != nil {
+		t.Fatal(err)
+	}
+	if err := tokens.Revoke(ctx, dbtest.ID(701), at.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -212,6 +219,30 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 	if _, err := rollouts.Complete(ctx, dbtest.ID(601), "w", 1); err != nil {
 		t.Fatal(err)
+	}
+
+	// The OAuth tables have no repository yet: write through the generated
+	// queries, which bind types.DateTime like every repository. (Replace
+	// with the repositories' own writes as they land.)
+	q := sqlitegen.New(d.Tx.Querier(ctx))
+	dt := types.DateTime(at)
+	revoked := types.DateTime(at.Add(time.Hour))
+	userID := admin.ID
+	clientID, grantID := dbtest.ID(702), dbtest.ID(703)
+	for _, err := range []error{
+		q.InsertOAuthClient(ctx, sqlitegen.InsertOAuthClientParams{ID: clientID, Name: "c", RedirectUris: "[]", CreatedAt: dt, LastUsedAt: &dt}),
+		q.InsertOAuthCode(ctx, sqlitegen.InsertOAuthCodeParams{CodeHash: "c1", ClientID: clientID, UserID: userID, RedirectUri: "u",
+			CodeChallenge: "x", Resource: "r", CreatedAt: dt, ExpiresAt: dt}),
+		q.InsertOAuthGrant(ctx, sqlitegen.InsertOAuthGrantParams{ID: grantID, UserID: userID, ClientID: clientID, RefreshTokenHash: "r1",
+			RotatedAt: &dt, CreatedAt: dt, LastUsedAt: dt, ExpiresAt: dt, RevokedAt: &revoked}),
+		q.InsertOAuthSpentRefreshHash(ctx, sqlitegen.InsertOAuthSpentRefreshHashParams{TokenHash: "r0", GrantID: grantID, SpentAt: dt}),
+		q.InsertOAuthLoginState(ctx, sqlitegen.InsertOAuthLoginStateParams{StateHash: "s1", Provider: "google", Nonce: "n", Intent: "login",
+			CreatedAt: dt, ExpiresAt: dt}),
+		q.InsertIdentity(ctx, sqlitegen.InsertIdentityParams{Provider: "google", ExternalID: "sub", UserID: userID, CreatedAt: dt}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	columns := timestampColumns(t, d)

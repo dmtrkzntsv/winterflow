@@ -4,9 +4,9 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -92,22 +92,22 @@ func (c *ServerConfig) GetAllowedOrigins() string {
 	return v
 }
 
-// IsAuthSupported reports whether an OPTIONAL auth provider is configured.
-// The local email+password provider is always on and never consulted here.
+// IsAuthSupported reports whether an OPTIONAL sign-in provider ("google",
+// "apple", "oidc") has every variable it needs, in either topology. The
+// local email+password provider is always on and never consulted here.
 func (c *ServerConfig) IsAuthSupported(a string) bool {
-	result := false
 	switch a {
 	case "google":
-		if !c.IsStandalone() {
-			gcid, gcs := c.GetGoogleAuth()
-			if gcid == "" || gcs == "" {
-				result = false
-			} else {
-				result = true
-			}
-		}
+		gcid, gcs := c.GetGoogleAuth()
+		return gcid != "" && gcs != ""
+	case "apple":
+		a := c.GetAppleAuth()
+		return a.ClientID != "" && a.TeamID != "" && a.KeyID != "" && a.PrivateKeyPath != ""
+	case "oidc":
+		o := c.GetOIDCAuth()
+		return o.Issuer != "" && o.ClientID != "" && o.ClientSecret != ""
 	}
-	return result
+	return false
 }
 
 // IsRegistrationEnabled reports whether self-signup is open. Default on;
@@ -126,20 +126,104 @@ func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }
 
-func (c *ServerConfig) GetJwtSecret() string {
-	return os.Getenv("JWT_SECRET")
+// AppleAuth is Sign in with Apple's configuration: the Services ID
+// (ClientID), the team and key ids, and the path of the .p8 key that signs
+// the client secret.
+type AppleAuth struct {
+	ClientID, TeamID, KeyID, PrivateKeyPath string
 }
 
-func (c *ServerConfig) GetAvatarsStoragePath() string {
-	v := os.Getenv("AVATARS_STORAGE_PATH")
-	if v == "" {
-		dir, _ := os.Getwd()
-		v = filepath.Join(dir, "data/avatars")
-		if _, err := os.Stat(v); os.IsNotExist(err) {
-			_ = os.MkdirAll(v, os.ModePerm)
-		}
+// GetAppleAuth reads AUTH_APPLE_CLIENT_ID, AUTH_APPLE_TEAM_ID,
+// AUTH_APPLE_KEY_ID and AUTH_APPLE_PRIVATE_KEY_PATH.
+func (c *ServerConfig) GetAppleAuth() AppleAuth {
+	return AppleAuth{
+		ClientID:       strings.TrimSpace(os.Getenv("AUTH_APPLE_CLIENT_ID")),
+		TeamID:         strings.TrimSpace(os.Getenv("AUTH_APPLE_TEAM_ID")),
+		KeyID:          strings.TrimSpace(os.Getenv("AUTH_APPLE_KEY_ID")),
+		PrivateKeyPath: strings.TrimSpace(os.Getenv("AUTH_APPLE_PRIVATE_KEY_PATH")),
 	}
-	return v
+}
+
+// OIDCAuth is a generic OpenID Connect provider's configuration; Name is
+// its button label.
+type OIDCAuth struct {
+	Issuer, ClientID, ClientSecret, Name string
+}
+
+// GetOIDCAuth reads AUTH_OIDC_ISSUER, AUTH_OIDC_CLIENT_ID,
+// AUTH_OIDC_CLIENT_SECRET and AUTH_OIDC_NAME (default "SSO").
+func (c *ServerConfig) GetOIDCAuth() OIDCAuth {
+	name := strings.TrimSpace(os.Getenv("AUTH_OIDC_NAME"))
+	if name == "" {
+		name = "SSO"
+	}
+	return OIDCAuth{
+		Issuer:       strings.TrimSpace(os.Getenv("AUTH_OIDC_ISSUER")),
+		ClientID:     strings.TrimSpace(os.Getenv("AUTH_OIDC_CLIENT_ID")),
+		ClientSecret: os.Getenv("AUTH_OIDC_CLIENT_SECRET"),
+		Name:         name,
+	}
+}
+
+// GetPublicOrigin is WEB_URL as the instance's public origin
+// ("scheme://host[:port]", host lower-cased), for redirect URIs registered
+// with a provider and as the OAuth authorization server's issuer. ok is
+// false unless WEB_URL is an https origin with no path, query or fragment
+// (a trailing "/" is allowed), or the same over plain http on a loopback
+// host (local development).
+func (c *ServerConfig) GetPublicOrigin() (origin string, ok bool) {
+	u, err := url.Parse(strings.TrimSpace(os.Getenv("WEB_URL")))
+	if err != nil || u.Hostname() == "" || strings.HasSuffix(u.Host, ":") || u.User != nil || u.RawQuery != "" ||
+		u.ForceQuery || u.Fragment != "" || u.Opaque != "" || (u.Path != "" && u.Path != "/") {
+		return "", false
+	}
+	switch u.Scheme {
+	case "https":
+	case "http":
+		host := u.Hostname()
+		if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return "", false
+		}
+	default:
+		return "", false
+	}
+	return u.Scheme + "://" + strings.ToLower(u.Host), true
+}
+
+// EncryptionKeyEnv names the secret alert notification channel URLs are
+// encrypted with at rest.
+const EncryptionKeyEnv = "ENCRYPTION_KEY"
+
+// LegacyEncryptionKeyEnv is the variable ENCRYPTION_KEY was called before
+// sessions became opaque tokens. It is still read when ENCRYPTION_KEY is
+// unset, so an upgraded install keeps decrypting what it stored.
+const LegacyEncryptionKeyEnv = "JWT_SECRET"
+
+// EncryptionKey is the resolved ENCRYPTION_KEY.
+type EncryptionKey struct {
+	// Value is the key; empty when neither variable is set.
+	Value string
+	// FromLegacy is set when Value came from JWT_SECRET (ENCRYPTION_KEY
+	// unset): the caller should warn that the name is deprecated.
+	FromLegacy bool
+	// LegacyIgnored is set when both are set to different values: JWT_SECRET
+	// is ignored, and the caller should say so.
+	LegacyIgnored bool
+}
+
+// GetEncryptionKey is ENCRYPTION_KEY, the secret alert notification channel
+// URLs are encrypted with at rest. When it is unset it falls back to the
+// legacy JWT_SECRET: the key derivation is the same, so channels stored
+// before the rename still open.
+func (c *ServerConfig) GetEncryptionKey() EncryptionKey {
+	key, legacy := os.Getenv(EncryptionKeyEnv), os.Getenv(LegacyEncryptionKeyEnv)
+	switch {
+	case key != "":
+		return EncryptionKey{Value: key, LegacyIgnored: legacy != "" && legacy != key}
+	case legacy != "":
+		return EncryptionKey{Value: legacy, FromLegacy: true}
+	}
+	return EncryptionKey{}
 }
 
 func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {

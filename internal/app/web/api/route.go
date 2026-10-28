@@ -21,7 +21,8 @@ type Auth int
 const (
 	// Public routes run without the auth middleware.
 	Public Auth = iota
-	// User routes run behind authMW (PAT bearer, else the JWT session).
+	// User routes run behind authMW (Bearer or Basic token, else the
+	// session cookie).
 	User
 )
 
@@ -43,6 +44,13 @@ type Guards struct {
 	// EnrollStartLimit is the tighter per-IP limiter of the enrollment start
 	// route, the one that stores a row.
 	EnrollStartLimit Middleware
+	// OAuthRegisterLimit is the per-IP limiter of the OAuth server's open
+	// dynamic client registration, which stores a row per call; its 429 is
+	// an RFC 7591 JSON error readable from any origin.
+	OAuthRegisterLimit Middleware
+	// OAuthTokenLimit is AuthLimit's bucket for the OAuth token endpoint,
+	// answering its 429 as an RFC 6749 JSON error readable from any origin.
+	OAuthTokenLimit Middleware
 }
 
 // Route describes one endpoint: how to serve it and how to document it.
@@ -79,15 +87,21 @@ type Route struct {
 	// Binary answers its 200 with image bytes, while errors retain the
 	// ordinary API error envelope. ContentType documents the image media type.
 	Binary bool
+	// Redirect is the 3xx status a browser route answers on success, with a
+	// Location header and no body; such a route has no 200.
+	Redirect int
 	// ContentType is a Raw or Binary route's response media type (default JSON).
 	ContentType string
+	// Status is a Raw route's success status (default 200).
+	Status int
 	// Form is an application/x-www-form-urlencoded alternative to Request.
 	Form any
 	// Errors lists documented error statuses besides the automatic 401 on
-	// User routes (e.g. 400, 403, 429).
+	// User routes and 403 on state-changing User routes (the CSRF check),
+	// e.g. 400, 403, 429.
 	Errors []int
-	// Mounted routes are served by a library mounted elsewhere (go-pkgz
-	// /auth, /avatar). They are documented but Register skips them.
+	// Mounted routes are served by a library mounted elsewhere. They are
+	// documented but Register skips them.
 	Mounted bool
 }
 

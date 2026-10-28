@@ -1,21 +1,27 @@
 import { createContext } from "react"
 
 export type LoginPayload = {
-  username: string
+  email: string
   password: string
 }
 
 export type AuthContextValue = {
   isAuthenticated: boolean
-  // True once the initial /auth/status probe has resolved. Until then the
-  // auth state is unknown and route guards must not redirect.
+  // True once the initial session probe (GET /api/v1/user/get-profile)
+  // has resolved. Until then the auth state is unknown and route guards
+  // must not redirect.
   checked: boolean
   login: (payload: LoginPayload) => Promise<void>
-  logout: () => void
+  // signedIn records a session the server set some other way (register).
+  signedIn: () => void
+  // logout ends this browser's session; logoutAll every session of the
+  // account (tokens and connected apps keep working).
+  logout: () => Promise<void>
+  logoutAll: () => Promise<void>
 }
 
 // LoginError is a sign-in the server refused; status is its HTTP status
-// (400, 401 or 403: the email or password is wrong).
+// (400 or 401: the email or password is wrong).
 export class LoginError extends Error {
   status: number
   constructor(status: number) {

@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label";
 import { apiBaseUrl } from "@/config";
 import { useProfile } from "@/context/use-profile";
 import { useConfirmTarget } from "@/hooks/use-confirm-target";
-import { readApiError } from "@/lib/api";
+import { apiFetch, readApiError } from "@/lib/api";
 import { returnFocusTo } from "@/lib/focus";
 import { initials } from "@/lib/members";
 
@@ -39,7 +39,7 @@ const DEFAULT_COLOR = "#64748b";
 const errorText = (e: unknown) => (e instanceof Error ? e.message : undefined);
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBaseUrl}${path}`, { credentials: "include", ...init });
+  const res = await apiFetch(`${apiBaseUrl}${path}`, { credentials: "include", ...init });
   if (!res.ok) throw await readApiError(res);
   return ((await res.json()) as { data: T }).data;
 }

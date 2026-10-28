@@ -32,9 +32,16 @@ func (q *Queries) DeleteUser(ctx context.Context, userID string) error {
 }
 
 const emailTaken = `-- name: EmailTaken :one
-SELECT EXISTS (SELECT 1 FROM user_credentials WHERE email = $1)
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = $1::text
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND lower(a.email) = $1::text
+)
 `
 
+// Whether an account already answers to this (normalized, lower-case)
+// address: a password account's email, or the email a linked sign-in
+// provider vouched for. Compared case-insensitively.
 func (q *Queries) EmailTaken(ctx context.Context, email string) (bool, error) {
 	row := q.db.QueryRowContext(ctx, emailTaken, email)
 	var exists bool
@@ -187,6 +194,50 @@ func (q *Queries) InsertUser(ctx context.Context, arg InsertUserParams) error {
 		arg.LastSeen,
 	)
 	return err
+}
+
+const lockUserCreation = `-- name: LockUserCreation :exec
+SELECT pg_advisory_xact_lock(hashtext('winterflow'), hashtext('user-creation'))
+`
+
+// LockUserCreation serializes account creation on Postgres: a
+// transaction-scoped advisory lock on one fixed key, taken first by every
+// transaction that creates a user, so the first-user (owner) decision and
+// the email-in-use check each see every account committed before the
+// insert (under READ COMMITTED two creators would otherwise miss each
+// other's uncommitted rows). The two-int4 form keeps the key out of the
+// single-key space the other advisory locks use.
+func (q *Queries) LockUserCreation(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, lockUserCreation)
+	return err
+}
+
+const rehashPassword = `-- name: RehashPassword :execrows
+UPDATE user_credentials
+SET password_hash = $1, updated_at = $2
+WHERE user_id = $3 AND password_hash = $4
+`
+
+type RehashPasswordParams struct {
+	PasswordHash string
+	UpdatedAt    types.DateTime
+	UserID       string
+	OldHash      string
+}
+
+// Replaces a verified legacy hash only while it is still the stored one, so a
+// password changed meanwhile is never overwritten with the old one.
+func (q *Queries) RehashPassword(ctx context.Context, arg RehashPasswordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rehashPassword,
+		arg.PasswordHash,
+		arg.UpdatedAt,
+		arg.UserID,
+		arg.OldHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updatePassword = `-- name: UpdatePassword :execrows

@@ -41,7 +41,6 @@ func TestSimpleEnvGetters(t *testing.T) {
 		{"GetLogLevel", "LOG_LEVEL", c.GetLogLevel},
 		{"GetApiPort", "API_PORT", c.GetApiPort},
 		{"GetWebURL", "WEB_URL", c.GetWebURL},
-		{"GetJwtSecret", "JWT_SECRET", c.GetJwtSecret},
 		{"GetHubHost", "HUB_HOST", c.GetHubHost},
 		{"GetHubPort", "HUB_PORT", c.GetHubPort},
 		{"GetHubCertDir", "HUB_CERT_DIR", c.GetHubCertDir},
@@ -222,11 +221,11 @@ func TestIsAuthSupported(t *testing.T) {
 		want     bool
 	}{
 		{
-			name:     "google disabled in standalone even with credentials",
+			name:     "google enabled in standalone with credentials",
 			mode:     "standalone",
 			provider: "google",
 			env:      map[string]string{"AUTH_GOOGLE_CLIENT_ID": "id", "AUTH_GOOGLE_CLIENT_SECRET": "sec"},
-			want:     false,
+			want:     true,
 		},
 		{
 			name:     "google enabled in distributed with credentials",
@@ -243,6 +242,35 @@ func TestIsAuthSupported(t *testing.T) {
 			want:     false,
 		},
 		{
+			name:     "apple needs all four variables",
+			mode:     "standalone",
+			provider: "apple",
+			env:      map[string]string{"AUTH_APPLE_CLIENT_ID": "id", "AUTH_APPLE_TEAM_ID": "t", "AUTH_APPLE_KEY_ID": "k"},
+			want:     false,
+		},
+		{
+			name:     "apple enabled",
+			mode:     "standalone",
+			provider: "apple",
+			env: map[string]string{"AUTH_APPLE_CLIENT_ID": "id", "AUTH_APPLE_TEAM_ID": "t", "AUTH_APPLE_KEY_ID": "k",
+				"AUTH_APPLE_PRIVATE_KEY_PATH": "/k.p8"},
+			want: true,
+		},
+		{
+			name:     "oidc needs a secret",
+			mode:     "distributed",
+			provider: "oidc",
+			env:      map[string]string{"AUTH_OIDC_ISSUER": "https://idp", "AUTH_OIDC_CLIENT_ID": "id"},
+			want:     false,
+		},
+		{
+			name:     "oidc enabled",
+			mode:     "distributed",
+			provider: "oidc",
+			env:      map[string]string{"AUTH_OIDC_ISSUER": "https://idp", "AUTH_OIDC_CLIENT_ID": "id", "AUTH_OIDC_CLIENT_SECRET": "s"},
+			want:     true,
+		},
+		{
 			name:     "env provider no longer exists",
 			mode:     "standalone",
 			provider: "env",
@@ -256,7 +284,9 @@ func TestIsAuthSupported(t *testing.T) {
 			want:     false,
 		},
 	}
-	authVars := []string{"AUTH_GOOGLE_CLIENT_ID", "AUTH_GOOGLE_CLIENT_SECRET", "AUTH_ENV_USERNAME", "AUTH_ENV_PASSWORD"}
+	authVars := []string{"AUTH_GOOGLE_CLIENT_ID", "AUTH_GOOGLE_CLIENT_SECRET", "AUTH_ENV_USERNAME", "AUTH_ENV_PASSWORD",
+		"AUTH_APPLE_CLIENT_ID", "AUTH_APPLE_TEAM_ID", "AUTH_APPLE_KEY_ID", "AUTH_APPLE_PRIVATE_KEY_PATH",
+		"AUTH_OIDC_ISSUER", "AUTH_OIDC_CLIENT_ID", "AUTH_OIDC_CLIENT_SECRET"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, k := range authVars {
@@ -282,30 +312,47 @@ func TestGetAuthCredentialPairs(t *testing.T) {
 	}
 }
 
-func TestGetAvatarsStoragePath(t *testing.T) {
+func TestGetOIDCAuthNameDefault(t *testing.T) {
 	c := NewServerConfig("standalone")
+	unsetenv(t, "AUTH_OIDC_NAME")
+	if got := c.GetOIDCAuth().Name; got != "SSO" {
+		t.Fatalf("default AUTH_OIDC_NAME = %q, want SSO", got)
+	}
+	t.Setenv("AUTH_OIDC_NAME", " Keycloak ")
+	if got := c.GetOIDCAuth().Name; got != "Keycloak" {
+		t.Fatalf("AUTH_OIDC_NAME = %q, want Keycloak", got)
+	}
+}
 
-	// Explicit env value is returned verbatim, no directory creation.
-	t.Setenv("AVATARS_STORAGE_PATH", "/does/not/exist/avatars")
-	if got := c.GetAvatarsStoragePath(); got != "/does/not/exist/avatars" {
-		t.Fatalf("GetAvatarsStoragePath() = %q, want the env value", got)
+func TestGetPublicOrigin(t *testing.T) {
+	c := NewServerConfig("standalone")
+	cases := []struct {
+		web, origin string
+		ok          bool
+	}{
+		{"https://wf.example.com", "https://wf.example.com", true},
+		{"https://wf.example.com/", "https://wf.example.com", true},
+		{"https://wf.example.com:8443", "https://wf.example.com:8443", true},
+		{"http://localhost:8080", "http://localhost:8080", true},
+		{"http://127.0.0.1:8080/", "http://127.0.0.1:8080", true},
+		{"http://[::1]:8080", "http://[::1]:8080", true},
+		{"http://wf.example.com", "", false},
+		{"https://wf.example.com/app", "", false},
+		{"https://wf.example.com/?x=1", "", false},
+		{"https://user@wf.example.com", "", false},
+		{"ftp://wf.example.com", "", false},
+		{"", "", false},
+		{"HTTPS://WF.Example.COM/", "https://wf.example.com", true},
+		{"https://wf.example.com:/", "", false},
+		{"https://wf.example.com/?", "", false},
+		{"https://:8443", "", false},
 	}
-
-	// Default: data/avatars under the working directory, created on demand.
-	// Run from a temp dir so the repo tree is untouched.
-	unsetenv(t, "AVATARS_STORAGE_PATH")
-	t.Chdir(t.TempDir())
-	got := c.GetAvatarsStoragePath()
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd: %v", err)
-	}
-	want := filepath.Join(cwd, "data/avatars")
-	if got != want {
-		t.Fatalf("default GetAvatarsStoragePath() = %q, want %q", got, want)
-	}
-	if fi, err := os.Stat(got); err != nil || !fi.IsDir() {
-		t.Fatalf("default avatars dir %q was not created: %v", got, err)
+	for _, tc := range cases {
+		t.Setenv("WEB_URL", tc.web)
+		origin, ok := c.GetPublicOrigin()
+		if origin != tc.origin || ok != tc.ok {
+			t.Errorf("WEB_URL=%q: GetPublicOrigin() = (%q, %v), want (%q, %v)", tc.web, origin, ok, tc.origin, tc.ok)
+		}
 	}
 }
 
@@ -721,5 +768,34 @@ func TestGetRedisUsername(t *testing.T) {
 	t.Setenv("REDIS_USERNAME", "hub:hub-01.winterflow.dev")
 	if got := NewServerConfig("distributed").GetRedisUsername(); got != "hub:hub-01.winterflow.dev" {
 		t.Fatalf("GetRedisUsername() = %q", got)
+	}
+}
+
+func TestGetEncryptionKey(t *testing.T) {
+	c := NewServerConfig("standalone")
+	tests := []struct {
+		name, key, legacy string
+		want              EncryptionKey
+	}{
+		{"neither", "", "", EncryptionKey{}},
+		{"encryption key", "new", "", EncryptionKey{Value: "new"}},
+		{"legacy fallback", "", "old", EncryptionKey{Value: "old", FromLegacy: true}},
+		{"both equal", "same", "same", EncryptionKey{Value: "same"}},
+		{"both differ: legacy ignored", "new", "old", EncryptionKey{Value: "new", LegacyIgnored: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unsetenv(t, EncryptionKeyEnv)
+			unsetenv(t, LegacyEncryptionKeyEnv)
+			if tt.key != "" {
+				t.Setenv(EncryptionKeyEnv, tt.key)
+			}
+			if tt.legacy != "" {
+				t.Setenv(LegacyEncryptionKeyEnv, tt.legacy)
+			}
+			if got := c.GetEncryptionKey(); got != tt.want {
+				t.Fatalf("GetEncryptionKey() = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }

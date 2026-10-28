@@ -29,6 +29,7 @@ import {
   type Server,
   type ServerLiveness,
 } from "./servers-context-base";
+import { apiFetch } from "@/lib/api";
 
 type ServerResponse = {
   id: string;
@@ -109,7 +110,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const response = await fetch(serversEndpoint, {
+      const response = await apiFetch(serversEndpoint, {
         credentials: "include",
       });
       if (!response.ok) {
@@ -151,7 +152,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
-    fetch(statusEndpoint, { credentials: "include" })
+    apiFetch(statusEndpoint, { credentials: "include" })
       .then((r) => (r.ok ? (r.json() as Promise<GetServersStatusResponse>) : null))
       .then((body) => {
         if (cancelled || !body) return;

@@ -10,8 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
@@ -72,7 +71,7 @@ func newHandler(t *testing.T) (*Handler, *fakeDispatcher, *status.Cache) {
 // authed attaches an authenticated user to the request, mirroring what the
 // auth middleware does in production.
 func authed(r *http.Request) *http.Request {
-	return token.SetUserInfo(r, token.User{ID: "provider_u1", Attributes: map[string]any{"user_id": "u1"}})
+	return webutil.WithPrincipal(r, model.Principal{UserID: "u1", Kind: model.TokenSession})
 }
 
 func do(h http.HandlerFunc, r *http.Request) *httptest.ResponseRecorder {

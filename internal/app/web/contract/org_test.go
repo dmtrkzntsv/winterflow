@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"winterflow/internal/app/web/handler/org"
+	"winterflow/internal/app/web/handler/user"
 	"winterflow/internal/domain/model"
 )
 
@@ -53,11 +54,19 @@ func TestOrgRoutes(t *testing.T) {
 		expect(t, http.StatusOK).data(t, &reset)
 	e.anon().login(t, m.email, reset.TempPassword)
 
+	// A removed member's personal access tokens stop working with them.
+	var tok user.CreateTokenResponse
+	m.post(t, "/api/v1/user/create-token", user.CreateTokenRequest{Name: "m"}).expect(t, http.StatusOK).data(t, &tok)
+	mPAT := e.newClient()
+	mPAT.bearer = tok.Token
+	mPAT.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusOK)
+
 	owner.post(t, "/api/v1/org/remove-member", org.MemberRequest{UserID: m.userID}).expect(t, http.StatusOK)
 	owner.get(t, "/api/v1/org/get-members", nil).expect(t, http.StatusOK).data(t, &members)
 	if len(members) != 1 {
 		t.Fatalf("members after remove = %+v", members)
 	}
+	mPAT.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusUnauthorized)
 	t.Run("cannot remove yourself", func(t *testing.T) {
 		owner.post(t, "/api/v1/org/remove-member", org.MemberRequest{UserID: owner.userID}).expect(t, http.StatusBadRequest)
 	})
@@ -71,9 +80,7 @@ func TestOrgRoutes(t *testing.T) {
 			t.Fatalf("members after removing the creator = %+v", members)
 		}
 		// The creator's account is gone: their password no longer logs in.
-		e.anon().do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
-			"user": owner.email, "passwd": ownerPassword, "aud": "contract",
-		}}).expect(t, http.StatusForbidden)
+		e.anon().tryLogin(t, owner.email, ownerPassword).expect(t, http.StatusUnauthorized)
 	})
 }
 
@@ -91,9 +98,7 @@ func TestOrgMemberRoutesRefuseOtherOrgUsers(t *testing.T) {
 	}
 	stillLogsIn := func(t *testing.T) {
 		t.Helper()
-		e.anon().do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
-			"user": otherEmail, "passwd": otherPassword, "aud": "contract",
-		}}).expect(t, http.StatusOK)
+		e.anon().login(t, otherEmail, otherPassword)
 	}
 
 	t.Run("remove-member", func(t *testing.T) {

@@ -27,15 +27,24 @@ type Querier interface {
 	// looks again).
 	CompleteRollout(ctx context.Context, arg CompleteRolloutParams) (int64, error)
 	ConsumeHubJoinToken(ctx context.Context, arg ConsumeHubJoinTokenParams) (int64, error)
+	// Single use: the DELETE is the read, so two concurrent exchanges of one code
+	// cannot both get a row.
+	ConsumeOAuthCode(ctx context.Context, codeHash string) (OauthCode, error)
+	// Single use: the DELETE is the read, so two callbacks presenting one state
+	// cannot both get the row.
+	ConsumeOAuthLoginState(ctx context.Context, stateHash string) (OauthLoginState, error)
 	CountActiveHubCertificatesByHub(ctx context.Context, hubID string) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountHubCertificatesByHub(ctx context.Context, hubID string) (int64, error)
+	CountIdentitiesByUser(ctx context.Context, userID string) (int64, error)
 	CountPendingEnrollments(ctx context.Context) (int64, error)
 	CountPendingEnrollmentsByIP(ctx context.Context, clientIp string) (int64, error)
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
 	// How many servers each hub carries (the hub picker's assigned counts).
 	CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error)
+	CountUnusedOAuthClients(ctx context.Context) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
+	DeleteAccessToken(ctx context.Context, id string) error
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
 	DeleteAlertEventsByApp(ctx context.Context, appID string) error
 	DeleteAlertEventsUpTo(ctx context.Context, arg DeleteAlertEventsUpToParams) (int64, error)
@@ -48,9 +57,15 @@ type Querier interface {
 	DeleteApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByServer(ctx context.Context, serverID string) error
+	DeleteDeadAccessTokens(ctx context.Context, arg DeleteDeadAccessTokensParams) (int64, error)
+	DeleteDeadOAuthGrants(ctx context.Context, arg DeleteDeadOAuthGrantsParams) (int64, error)
+	DeleteExpiredOAuthLoginStates(ctx context.Context, expiresAt types.DateTime) (int64, error)
+	DeleteIdentityByUserProvider(ctx context.Context, arg DeleteIdentityByUserProviderParams) (int64, error)
 	DeleteMetricSamplesBefore(ctx context.Context, arg DeleteMetricSamplesBeforeParams) (int64, error)
 	DeleteMetricSamplesByApp(ctx context.Context, appID string) error
 	DeleteNotificationChannel(ctx context.Context, arg DeleteNotificationChannelParams) (int64, error)
+	DeleteOAuthLoginState(ctx context.Context, stateHash string) (int64, error)
+	DeleteOAuthLoginStatesByLinkUser(ctx context.Context, linkUserID *string) (int64, error)
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
 	// app_domains carries no foreign key to servers.
@@ -72,8 +87,10 @@ type Querier interface {
 	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
 	// A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
-	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
+	// Whether an account already answers to this (normalized, lower-case)
+	// address: a password account's email, or the email a linked sign-in
+	// provider vouched for. Compared case-insensitively.
 	EmailTaken(ctx context.Context, email string) (bool, error)
 	// Optimistic: 0 rows when the scope moved on (another extension), the
 	// rollout ended or a stop was requested (it would end stopped, losing the
@@ -85,6 +102,8 @@ type Querier interface {
 	// the row count says whether this call made the transition (several API
 	// replicas evaluate the same events).
 	FireAlertState(ctx context.Context, arg FireAlertStateParams) (int64, error)
+	GetAccessTokenByHash(ctx context.Context, tokenHash string) (AccessToken, error)
+	GetAccessTokenByID(ctx context.Context, id string) (AccessToken, error)
 	GetActiveRollout(ctx context.Context, arg GetActiveRolloutParams) (Rollout, error)
 	// The newest active certificate of a server (no row: none).
 	GetActiveServerCertificate(ctx context.Context, serverID string) (string, error)
@@ -106,12 +125,21 @@ type Querier interface {
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetHubCertificate(ctx context.Context, fingerprint string) (GetHubCertificateRow, error)
+	// Sign-in with a provider: linked identities (user_connected_accounts),
+	// in-flight states.
+	GetIdentityByProviderSubject(ctx context.Context, arg GetIdentityByProviderSubjectParams) (UserConnectedAccount, error)
+	GetIdentityByUserProvider(ctx context.Context, arg GetIdentityByUserProviderParams) (UserConnectedAccount, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
 	GetLiveTemplateInstance(ctx context.Context, arg GetLiveTemplateInstanceParams) (TemplateInstance, error)
 	// The pending or created instance an app is, with its template's name
 	// ('' when the template is gone).
 	GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (string, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
+	GetOAuthClient(ctx context.Context, id string) (OauthClient, error)
+	GetOAuthGrant(ctx context.Context, id string) (OauthGrant, error)
+	GetOAuthGrantByRefreshHash(ctx context.Context, refreshTokenHash string) (OauthGrant, error)
+	GetOAuthGrantBySpentRefreshHash(ctx context.Context, tokenHash string) (OauthGrant, error)
+	GetOAuthLoginState(ctx context.Context, stateHash string) (OauthLoginState, error)
 	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
@@ -127,10 +155,13 @@ type Querier interface {
 	GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNameParams) (string, error)
 	GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error)
 	GetTemplateRevision(ctx context.Context, arg GetTemplateRevisionParams) (TemplateRevision, error)
-	GetTokenByHash(ctx context.Context, tokenHash string) (UserToken, error)
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
 	HasAnyServer(ctx context.Context) (bool, error)
+	// Access tokens (access_tokens): login sessions, personal access tokens
+	// (kind pat) and OAuth server tokens (kind oauth), hashed at rest. Liveness
+	// (revoked/expired) is evaluated in Go, not SQL, so list/get return raw rows.
+	InsertAccessToken(ctx context.Context, arg InsertAccessTokenParams) error
 	InsertAlertEvent(ctx context.Context, arg InsertAlertEventParams) error
 	InsertAlertRule(ctx context.Context, arg InsertAlertRuleParams) error
 	InsertAppDomain(ctx context.Context, arg InsertAppDomainParams) error
@@ -143,9 +174,18 @@ type Querier interface {
 	InsertHubCertificate(ctx context.Context, arg InsertHubCertificateParams) error
 	// One-time hub join tokens (hashed at rest).
 	InsertHubJoinToken(ctx context.Context, arg InsertHubJoinTokenParams) error
+	InsertIdentity(ctx context.Context, arg InsertIdentityParams) error
+	// 0 rows: the provider account is already linked (to anyone).
+	InsertIdentityIfAbsent(ctx context.Context, arg InsertIdentityIfAbsentParams) (int64, error)
 	// metric_samples: monitoring time series (see migration 0010).
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	InsertNotificationChannel(ctx context.Context, arg InsertNotificationChannelParams) error
+	// OAuth authorization server (MCP clients): clients, codes, grants.
+	InsertOAuthClient(ctx context.Context, arg InsertOAuthClientParams) error
+	InsertOAuthCode(ctx context.Context, arg InsertOAuthCodeParams) error
+	InsertOAuthGrant(ctx context.Context, arg InsertOAuthGrantParams) error
+	InsertOAuthLoginState(ctx context.Context, arg InsertOAuthLoginStateParams) error
+	InsertOAuthSpentRefreshHash(ctx context.Context, arg InsertOAuthSpentRefreshHashParams) error
 	// Organizations and memberships.
 	InsertOrganization(ctx context.Context, arg InsertOrganizationParams) error
 	InsertOrganizationUser(ctx context.Context, arg InsertOrganizationUserParams) error
@@ -170,10 +210,9 @@ type Querier interface {
 	// the race to another replica).
 	InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error)
 	InsertTemplateRevision(ctx context.Context, arg InsertTemplateRevisionParams) error
-	// Personal access tokens (hashed at rest).
-	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
 	IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error)
+	ListAccessTokensByUser(ctx context.Context, arg ListAccessTokensByUserParams) ([]AccessToken, error)
 	ListActiveHubCertificates(ctx context.Context) ([]string, error)
 	ListAlertDirectoryApps(ctx context.Context) ([]ListAlertDirectoryAppsRow, error)
 	ListAlertDirectoryServers(ctx context.Context) ([]ListAlertDirectoryServersRow, error)
@@ -199,6 +238,9 @@ type Querier interface {
 	ListClaimableRollouts(ctx context.Context, leaseUntil *types.DateTime) ([]string, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
+	// The 'local' rows are the email+password accounts' own marker, not a
+	// linked provider: the identity lists and counts leave them out.
+	ListIdentitiesByUser(ctx context.Context, userID string) ([]UserConnectedAccount, error)
 	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
@@ -240,7 +282,7 @@ type Querier interface {
 	// live instances: instances counts them, behind those on a revision older
 	// than the latest.
 	ListTemplates(ctx context.Context, arg ListTemplatesParams) ([]ListTemplatesRow, error)
-	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
+	ListUnrevokedOAuthGrants(ctx context.Context, userID string) ([]ListUnrevokedOAuthGrantsRow, error)
 	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
 	// The org's created instances of a template below a revision on the org's
@@ -255,19 +297,47 @@ type Querier interface {
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// LockUserCreation serializes account creation on Postgres: a
+	// transaction-scoped advisory lock on one fixed key, taken first by every
+	// transaction that creates a user, so the first-user (owner) decision and
+	// the email-in-use check each see every account committed before the
+	// insert (under READ COMMITTED two creators would otherwise miss each
+	// other's uncommitted rows). The two-int4 form keeps the key out of the
+	// single-key space the other advisory locks use.
+	LockUserCreation(ctx context.Context) error
+	// LockUserIdentities row-locks the user inside an identity write's
+	// transaction, so a link and an unlink (or two unlinks) of one user run
+	// one after the other.
+	LockUserIdentities(ctx context.Context, userID string) (string, error)
+	// LockUserOAuthGrants row-locks the user inside a code exchange's
+	// transaction before its grant is inserted, so two exchanges for one user
+	// run one after the other and the later one's RevokeOtherOAuthGrants sees
+	// the earlier one's committed grant (under READ COMMITTED it would
+	// otherwise see neither, leaving both live). FOR NO KEY UPDATE leaves
+	// inserts that only reference the user (KEY SHARE) unblocked.
+	LockUserOAuthGrants(ctx context.Context, userID string) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
 	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
+	MarkOAuthClientUsed(ctx context.Context, arg MarkOAuthClientUsedParams) error
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
 	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
 	PruneEnrollments(ctx context.Context, arg PruneEnrollmentsParams) error
 	PruneHubJoinTokens(ctx context.Context, arg PruneHubJoinTokensParams) error
 	// Keeps the newest ended rollouts of a scope.
 	PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error
+	PurgeExpiredOAuthCodes(ctx context.Context, expiresAt types.DateTime) error
+	PurgeUnusedOAuthClients(ctx context.Context, createdAt types.DateTime) (int64, error)
 	// Lifts vars_revision past an agent-reported revision the API never issued
 	// (the API database was restored); never lowers it.
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
+	// Replaces a verified legacy hash only while it is still the stored one, so a
+	// password changed meanwhile is never overwritten with the old one.
+	RehashPassword(ctx context.Context, arg RehashPasswordParams) (int64, error)
+	// Moves a legacy row (Google accounts linked by the previous auth library
+	// were keyed by the SHA-1 of the subject) to the subject itself.
+	RekeyIdentity(ctx context.Context, arg RekeyIdentityParams) (int64, error)
 	// Gives the lease back: lease_until NULL (a graceful shutdown) is claimable
 	// at once; a time parks a rollout that waits on a server until the next poll
 	// is due, so the claimable list (LIMIT) does not fill with waiting ones.
@@ -283,6 +353,22 @@ type Querier interface {
 	// The app was deleted outside the instance routes: its instance's key
 	// stays retired.
 	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error
+	RevokeAccessToken(ctx context.Context, arg RevokeAccessTokenParams) error
+	RevokeAccessTokensByGrant(ctx context.Context, arg RevokeAccessTokensByGrantParams) error
+	RevokeOAuthGrant(ctx context.Context, arg RevokeOAuthGrantParams) (int64, error)
+	// Re-authorizing a client replaces the user's earlier connection to it: every
+	// other unrevoked grant for the same (user, client) goes, returning the ids so
+	// their access tokens can be revoked too.
+	RevokeOtherOAuthGrants(ctx context.Context, arg RevokeOtherOAuthGrantsParams) ([]string, error)
+	// One of the user's live tokens of a kind; zero rows when it is another
+	// user's, another kind, unknown or already revoked.
+	RevokeUserAccessToken(ctx context.Context, arg RevokeUserAccessTokenParams) (int64, error)
+	// Set-based: one statement revokes the user's live tokens of a kind.
+	RevokeUserAccessTokens(ctx context.Context, arg RevokeUserAccessTokensParams) error
+	RevokeUserOAuthGrants(ctx context.Context, arg RevokeUserOAuthGrantsParams) (int64, error)
+	// Conditional on the hash being rotated away, so of two concurrent refreshes
+	// presenting the same token exactly one rotates.
+	RotateOAuthGrant(ctx context.Context, arg RotateOAuthGrantParams) (int64, error)
 	// Whether the server belongs to the organization (instance routes act for
 	// the caller's primary organization only).
 	ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error)
@@ -294,6 +380,10 @@ type Querier interface {
 	SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
+	// Whether an account already answers to this address: a password
+	// account's email, or the email a linked provider vouched for; the same
+	// rule as users.sql's EmailTaken (the address arrives lower-cased).
+	SignInEmailInUse(ctx context.Context, address string) (bool, error)
 	// The feed every catalog template now reflects: a later sync of an older
 	// feed is refused as a whole.
 	StampCatalogTemplates(ctx context.Context, feedAt *types.DateTime) error
@@ -302,12 +392,15 @@ type Querier interface {
 	// expired) as stopped. 0 rows: someone holds a live lease (stop_requested
 	// takes over) or it is not the org's / not active.
 	StopUnleasedRollout(ctx context.Context, arg StopUnleasedRolloutParams) (int64, error)
+	// The sliding-expiry touch never writes revoked_at and never touches a revoked
+	// row, so a request that read the row before a revoke cannot undo it.
+	TouchAccessToken(ctx context.Context, arg TouchAccessTokenParams) (int64, error)
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
-	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)
 	// A catalog template's name and metadata in place, withdrawn_at cleared:
 	// 0 rows when a newer feed wrote it.
 	UpdateCatalogTemplate(ctx context.Context, arg UpdateCatalogTemplateParams) (int64, error)
+	UpdateIdentityEmail(ctx context.Context, arg UpdateIdentityEmailParams) (int64, error)
 	UpdateNotificationChannel(ctx context.Context, arg UpdateNotificationChannelParams) (int64, error)
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) (int64, error)
@@ -319,6 +412,7 @@ type Querier interface {
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
+	UserHasPassword(ctx context.Context, userID string) (bool, error)
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 	// A catalog template the feed no longer lists: 0 rows when it is withdrawn
 	// already or a newer feed wrote it.

@@ -1,6 +1,5 @@
 // Package user implements port.UserRepository: users, their organizations
-// and memberships, connected accounts, local credentials and personal
-// access tokens.
+// and memberships, connected accounts and local credentials.
 package user
 
 import (
@@ -9,34 +8,29 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
-
-	"golang.org/x/crypto/bcrypt"
 
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/auth/password"
 	"winterflow/internal/infra/db/backend"
 	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
 	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/logger"
-	"winterflow/pkg/pat"
 	"winterflow/pkg/util"
 )
 
 type (
 	userRow           = sqlitegen.User
 	credentialsRow    = sqlitegen.UserCredential
-	tokenRow          = sqlitegen.UserToken
 	organizationRow   = sqlitegen.Organization
 	insertUserParams  = sqlitegen.InsertUserParams
 	accountParams     = sqlitegen.InsertConnectedAccountParams
 	accountKeyParams  = sqlitegen.GetConnectedAccountUserIDParams
+	identityParams    = sqlitegen.InsertIdentityParams
 	credentialsParams = sqlitegen.InsertCredentialsParams
 	passwordParams    = sqlitegen.UpdatePasswordParams
-	insertTokenParams = sqlitegen.InsertTokenParams
-	touchTokenParams  = sqlitegen.TouchTokenLastUsedParams
-	deleteTokenParams = sqlitegen.DeleteTokenParams
+	rehashParams      = sqlitegen.RehashPasswordParams
 	insertOrgParams   = sqlitegen.InsertOrganizationParams
 	updateOrgParams   = sqlitegen.UpdateOrganizationParams
 	membershipParams  = sqlitegen.InsertOrganizationUserParams
@@ -52,18 +46,15 @@ type querier interface {
 	DeleteUser(ctx context.Context, db backend.DBTX, userID string) error
 	GetConnectedAccountUserID(ctx context.Context, db backend.DBTX, p accountKeyParams) (string, error)
 	InsertConnectedAccount(ctx context.Context, db backend.DBTX, p accountParams) error
+	InsertIdentity(ctx context.Context, db backend.DBTX, p identityParams) error
 	GetFirstConnectedAccountProvider(ctx context.Context, db backend.DBTX, userID string) (string, error)
 	InsertCredentials(ctx context.Context, db backend.DBTX, p credentialsParams) error
 	GetCredentialsByEmail(ctx context.Context, db backend.DBTX, email string) (credentialsRow, error)
 	GetCredentialsByUser(ctx context.Context, db backend.DBTX, userID string) (credentialsRow, error)
 	EmailTaken(ctx context.Context, db backend.DBTX, email string) (bool, error)
+	LockUserCreation(ctx context.Context, db backend.DBTX) error
 	UpdatePassword(ctx context.Context, db backend.DBTX, p passwordParams) (int64, error)
-	// tokens.sql
-	InsertToken(ctx context.Context, db backend.DBTX, p insertTokenParams) error
-	GetTokenByHash(ctx context.Context, db backend.DBTX, tokenHash string) (tokenRow, error)
-	TouchTokenLastUsed(ctx context.Context, db backend.DBTX, p touchTokenParams) error
-	ListTokensByUser(ctx context.Context, db backend.DBTX, userID string) ([]tokenRow, error)
-	DeleteToken(ctx context.Context, db backend.DBTX, p deleteTokenParams) (int64, error)
+	RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error)
 	// organizations.sql
 	InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error
 	GetOrganization(ctx context.Context, db backend.DBTX, organizationID string) (organizationRow, error)
@@ -132,6 +123,9 @@ func (r *Repo) CreateUser(ctx context.Context, d dto.UserDTO) (model.User, error
 		LastSeen:  now,
 	}
 	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
+		if err := r.beginCreate(ctx, ""); err != nil {
+			return err
+		}
 		db := r.tx.Querier(ctx)
 		if err := r.q.InsertOrganization(ctx, db, insertOrgParams{OrganizationID: orgID, Name: strings.ToLower(d.Name) + "'s org", CreatedAt: now}); err != nil {
 			return err
@@ -200,103 +194,6 @@ func (r *Repo) PrimaryOrganizationID(ctx context.Context, userID string) (string
 	return id, nil
 }
 
-// lastUsedWriteInterval throttles last_used_at updates so a busy API client
-// costs at most one write per minute, not one per request.
-const lastUsedWriteInterval = time.Minute
-
-// FindByToken resolves a PAT to its user, enforcing expiry, and stamps
-// last_used_at at most once a minute (a failed stamp is only logged).
-func (r *Repo) FindByToken(ctx context.Context, plaintext string) (model.User, error) {
-	t, err := r.q.GetTokenByHash(ctx, r.tx.Querier(ctx), pat.Hash(plaintext))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return model.User{}, model.ErrInvalidToken
-		}
-		return model.User{}, err
-	}
-	if t.ExpiresAt != nil && time.Now().After(t.ExpiresAt.Time()) {
-		return model.User{}, model.ErrInvalidToken
-	}
-	if t.LastUsedAt == nil || time.Since(t.LastUsedAt.Time()) > lastUsedWriteInterval {
-		now := types.NewDateTime()
-		if err := r.q.TouchTokenLastUsed(ctx, r.tx.Querier(ctx), touchTokenParams{LastUsedAt: &now, TokenID: t.TokenID}); err != nil {
-			r.log.Error("FindByToken: stamp last_used_at", "error", err)
-		}
-	}
-	return r.GetUser(ctx, t.UserID)
-}
-
-// CreateToken mints a PAT. Only its hash is stored; the plaintext is
-// returned once.
-func (r *Repo) CreateToken(ctx context.Context, userID, name string, expiresAt *time.Time) (model.UserToken, string, error) {
-	plaintext, hash, prefix, err := pat.Generate()
-	if err != nil {
-		return model.UserToken{}, "", err
-	}
-	row := insertTokenParams{
-		TokenID:     util.GenerateID(),
-		UserID:      userID,
-		Name:        name,
-		TokenPrefix: prefix,
-		TokenHash:   hash,
-		TokenType:   "pat",
-		CreatedAt:   types.NewDateTime(),
-	}
-	if expiresAt != nil {
-		dt := types.DateTime(*expiresAt)
-		row.ExpiresAt = &dt
-	}
-	if err := r.q.InsertToken(ctx, r.tx.Querier(ctx), row); err != nil {
-		return model.UserToken{}, "", err
-	}
-	return toDomainToken(tokenRow(row)), plaintext, nil
-}
-
-// ListTokens returns the user's tokens, newest first.
-func (r *Repo) ListTokens(ctx context.Context, userID string) ([]model.UserToken, error) {
-	rows, err := r.q.ListTokensByUser(ctx, r.tx.Querier(ctx), userID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.UserToken, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, toDomainToken(row))
-	}
-	return out, nil
-}
-
-// DeleteToken removes the user's token; model.ErrTokenNotFound when the id
-// does not exist or belongs to someone else.
-func (r *Repo) DeleteToken(ctx context.Context, userID, tokenID string) error {
-	n, err := r.q.DeleteToken(ctx, r.tx.Querier(ctx), deleteTokenParams{TokenID: tokenID, UserID: userID})
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return model.ErrTokenNotFound
-	}
-	return nil
-}
-
-func toDomainToken(t tokenRow) model.UserToken {
-	out := model.UserToken{
-		ID:        t.TokenID,
-		UserID:    t.UserID,
-		Name:      t.Name,
-		Prefix:    t.TokenPrefix,
-		CreatedAt: t.CreatedAt.Time(),
-	}
-	if t.ExpiresAt != nil {
-		x := t.ExpiresAt.Time()
-		out.ExpiresAt = &x
-	}
-	if t.LastUsedAt != nil {
-		x := t.LastUsedAt.Time()
-		out.LastUsedAt = &x
-	}
-	return out
-}
-
 // --- local credentials & org membership -------------------------------------
 
 // localProvider is the connected-account provider of email+password accounts.
@@ -308,15 +205,36 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func hashPassword(password string) (string, error) {
-	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(h), err
-}
-
 // CountUsers reports how many users exist.
 func (r *Repo) CountUsers(ctx context.Context) (int, error) {
 	n, err := r.q.CountUsers(ctx, r.tx.Querier(ctx))
 	return int(n), err
+}
+
+// beginCreate opens every user-creating transaction: it takes the
+// instance-wide user-creation lock (a transaction-scoped advisory lock on
+// Postgres; SQLite serializes transactions already), so "the first user
+// becomes the owner" and "an email answers to one account" are decided
+// against every account committed before this one, never against a
+// snapshot a concurrent creator is about to change. When email is not empty
+// it is refused with model.ErrEmailTaken while any account answers to it: a
+// password account's email or a provider identity's (case-insensitive).
+func (r *Repo) beginCreate(ctx context.Context, email string) error {
+	db := r.tx.Querier(ctx)
+	if err := r.q.LockUserCreation(ctx, db); err != nil {
+		return fmt.Errorf("lock user creation: %w", err)
+	}
+	if email == "" {
+		return nil
+	}
+	taken, err := r.q.EmailTaken(ctx, db, normalizeEmail(email))
+	if err != nil {
+		return err
+	}
+	if taken {
+		return model.ErrEmailTaken
+	}
+	return nil
 }
 
 // localAccount inserts the rows every local (email + password) account has:
@@ -349,10 +267,11 @@ func created(u insertUserParams) model.User {
 // BootstrapLocalAdmin creates the very first account of an instance from the
 // first login's email+password: user + personal org (owner) + local connected
 // account + credentials. Refuses when any user already exists: the count is
-// re-checked inside the transaction so a racing double-submit has one winner.
-func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, password string) (model.User, error) {
+// re-checked inside the transaction, under the user-creation lock, so a
+// racing double-submit (or a racing first provider sign-in) has one winner.
+func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := hashPassword(password)
+	hash, err := password.Hash(ctx, pw)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -366,6 +285,9 @@ func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, password st
 	orgID := util.GenerateID()
 	user := newUser(name)
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
+		if err := r.beginCreate(ctx, ""); err != nil {
+			return err
+		}
 		n, err := r.q.CountUsers(ctx, r.tx.Querier(ctx))
 		if err != nil {
 			return err
@@ -386,18 +308,46 @@ func (r *Repo) BootstrapLocalAdmin(ctx context.Context, name, email, password st
 
 // VerifyLocalCredentials checks an email+password pair;
 // model.ErrInvalidCredentials on any mismatch.
-func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, password string) (model.User, error) {
+func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, pw string) (model.User, error) {
 	creds, err := r.q.GetCredentialsByEmail(ctx, r.tx.Querier(ctx), normalizeEmail(email))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// Spend what a real verify costs, so an unknown email answers
+			// as slowly as a wrong password (no account-existence oracle).
+			if err := password.VerifyDummy(ctx, pw); err != nil {
+				return model.User{}, err
+			}
 			return model.User{}, model.ErrInvalidCredentials
 		}
 		return model.User{}, err
 	}
-	if bcrypt.CompareHashAndPassword([]byte(creds.PasswordHash), []byte(password)) != nil {
+	ok, needsRehash, err := password.Verify(ctx, creds.PasswordHash, pw)
+	if err != nil {
+		return model.User{}, err
+	}
+	if !ok {
 		return model.User{}, model.ErrInvalidCredentials
 	}
+	if needsRehash {
+		r.rehash(ctx, creds.UserID, pw, creds.PasswordHash)
+	}
 	return r.GetUser(ctx, creds.UserID)
+}
+
+// rehash upgrades a verified legacy hash to the current scheme, only while
+// oldHash is still the stored one: a password changed or reset since the
+// verify is never overwritten with the old password. A failure is logged and
+// never fails the login: the old hash still works next time.
+func (r *Repo) rehash(ctx context.Context, userID, pw, oldHash string) {
+	hash, err := password.Hash(ctx, pw)
+	if err == nil {
+		_, err = r.q.RehashPassword(ctx, r.tx.Querier(ctx), rehashParams{
+			PasswordHash: hash, UpdatedAt: types.NewDateTime(), UserID: userID, OldHash: oldHash,
+		})
+	}
+	if err != nil {
+		r.log.Error("rehash password", "error", err)
+	}
 }
 
 // CreateMemberUser creates an account inside an existing organization:
@@ -405,18 +355,14 @@ func (r *Repo) VerifyLocalCredentials(ctx context.Context, email, password strin
 // membership. No personal org. The stored role is model.RoleAdmin.
 func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := hashPassword(tempPassword)
+	hash, err := password.Hash(ctx, tempPassword)
 	if err != nil {
 		return model.User{}, err
 	}
 	user := newUser(name)
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
-		taken, err := r.q.EmailTaken(ctx, r.tx.Querier(ctx), email)
-		if err != nil {
+		if err := r.beginCreate(ctx, email); err != nil {
 			return err
-		}
-		if taken {
-			return model.ErrEmailTaken
 		}
 		return r.localAccount(ctx, orgID, model.RoleAdmin.Value(), user, email, hash, true)
 	})
@@ -428,8 +374,8 @@ func (r *Repo) CreateMemberUser(ctx context.Context, orgID, name, email, tempPas
 
 // SetPassword replaces the hash and must-change flag;
 // model.ErrorUserNotFound for a user without local credentials.
-func (r *Repo) SetPassword(ctx context.Context, userID, password string, mustChange bool) error {
-	hash, err := hashPassword(password)
+func (r *Repo) SetPassword(ctx context.Context, userID, pw string, mustChange bool) error {
+	hash, err := password.Hash(ctx, pw)
 	if err != nil {
 		return err
 	}
@@ -492,7 +438,8 @@ func (r *Repo) ListMembers(ctx context.Context, orgID string) ([]model.Member, e
 }
 
 // RemoveMember deletes the member's user row outright (memberships,
-// credentials, connected accounts, and PATs go with it via FK cascade).
+// credentials, connected accounts and access tokens go with it via FK
+// cascade).
 // Only a member of orgID can be removed: anyone else is
 // model.ErrorUserNotFound and stays untouched.
 //
@@ -523,26 +470,67 @@ func (r *Repo) RemoveMember(ctx context.Context, orgID, callerID, userID string)
 
 // RegisterLocalUser is open self-signup (distributed topology): user + their
 // OWN organization (owner) + credentials + local connected account.
-func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, password string) (model.User, error) {
+func (r *Repo) RegisterLocalUser(ctx context.Context, name, email, pw string) (model.User, error) {
 	email = normalizeEmail(email)
-	hash, err := hashPassword(password)
+	hash, err := password.Hash(ctx, pw)
 	if err != nil {
 		return model.User{}, err
 	}
 	orgID := util.GenerateID()
 	user := newUser(name)
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
-		taken, err := r.q.EmailTaken(ctx, r.tx.Querier(ctx), email)
-		if err != nil {
+		if err := r.beginCreate(ctx, email); err != nil {
 			return err
-		}
-		if taken {
-			return model.ErrEmailTaken
 		}
 		if err := r.q.InsertOrganization(ctx, r.tx.Querier(ctx), insertOrgParams{OrganizationID: orgID, Name: name + "'s org", CreatedAt: types.NewDateTime()}); err != nil {
 			return err
 		}
 		return r.localAccount(ctx, orgID, model.RoleOwner.Value(), user, email, hash, false)
+	})
+	if err != nil {
+		return model.User{}, err
+	}
+	return created(user), nil
+}
+
+// CreateProviderUser is a sign-in provider's registration: a passwordless
+// user named name, their own organization (owner) and the linked identity
+// id (its UserID is filled in), in one transaction. firstOnly makes it the
+// instance's claim step instead: refused with model.ErrNotBootstrap unless
+// there are no users yet, re-checked inside the transaction under the
+// user-creation lock so two racing first sign-ins have one winner. An
+// identity email any account already answers to is model.ErrEmailTaken.
+func (r *Repo) CreateProviderUser(ctx context.Context, name string, id model.Identity, firstOnly bool) (model.User, error) {
+	orgID := util.GenerateID()
+	user := newUser(name)
+	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
+		if err := r.beginCreate(ctx, id.Email); err != nil {
+			return err
+		}
+		db := r.tx.Querier(ctx)
+		if firstOnly {
+			n, err := r.q.CountUsers(ctx, db)
+			if err != nil {
+				return err
+			}
+			if n > 0 {
+				return model.ErrNotBootstrap
+			}
+		}
+		now := types.NewDateTime()
+		if err := r.q.InsertOrganization(ctx, db, insertOrgParams{OrganizationID: orgID, Name: name + "'s org", CreatedAt: now}); err != nil {
+			return err
+		}
+		if err := r.q.InsertUser(ctx, db, user); err != nil {
+			return err
+		}
+		if err := r.q.InsertOrganizationUser(ctx, db, membershipParams{OrganizationID: orgID, UserID: user.UserID, Role: model.RoleOwner.Value(), CreatedAt: now}); err != nil {
+			return err
+		}
+		return r.q.InsertIdentity(ctx, db, identityParams{
+			Provider: id.Provider, ExternalID: id.Subject, UserID: user.UserID,
+			Email: util.RefString(id.Email), CreatedAt: types.DateTime(id.CreatedAt), Issuer: util.RefString(id.Issuer),
+		})
 	})
 	if err != nil {
 		return model.User{}, err

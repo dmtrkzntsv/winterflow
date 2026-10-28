@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"slices"
 	"winterflow/internal/app/web/spa"
@@ -8,23 +9,24 @@ import (
 	webdist "winterflow/web"
 
 	"winterflow/internal/app/web/api"
-	authprvd "winterflow/internal/app/web/auth"
 	hagenthub "winterflow/internal/app/web/handler/agenthub"
 	halerts "winterflow/internal/app/web/handler/alerts"
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
+	hauthserver "winterflow/internal/app/web/handler/authserver"
 	hdocker "winterflow/internal/app/web/handler/docker"
 	henroll "winterflow/internal/app/web/handler/enroll"
 	hhubjoin "winterflow/internal/app/web/handler/hubjoin"
 	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
+	hoauthlogin "winterflow/internal/app/web/handler/oauthlogin"
 	horg "winterflow/internal/app/web/handler/org"
 	hrollouts "winterflow/internal/app/web/handler/rollouts"
 	"winterflow/internal/app/web/handler/server"
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
 	huser "winterflow/internal/app/web/handler/user"
-	"winterflow/internal/app/web/middleware/patauth"
+	"winterflow/internal/app/web/middleware/authn"
 	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/util"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
@@ -32,26 +34,29 @@ import (
 )
 
 func (s *Server) registerRoutes() {
-	// Auth endpoints are the API's only bcrypt-priced requests — throttle them
-	// per client IP so credential floods answer 429 instead of burning CPU.
-	// One limiter is shared by the go-pkgz /auth mount and /api/v1/auth/register.
+	// Login and register are the API's only password-priced requests —
+	// throttle them per client IP so credential floods answer 429 instead of
+	// burning CPU. One limiter is shared by both.
 	authLimiter := ratelimit.New(5, 10)
 
-	authRoutes, avaRoutes := s.Auth.Handlers()
-	s.Router.With(authLimiter.Middleware).Mount("/auth", authRoutes) // add auth handlers
-	s.Router.Mount("/avatar", avaRoutes)                             // add avatar handler
-
-	amw := s.Auth.Middleware()
-	// authMW = PAT bearer first, JWT session otherwise. Every User route
-	// uses this so tokens work everywhere a browser session does.
-	authMW := patauth.Middleware(s.Deps.UserService, amw.Auth)
+	// authMW resolves Bearer, Basic (token as password) or the session
+	// cookie; OAuth tokens are refused here (they are for /mcp only).
+	authMW := authn.Middleware(s.Deps.Authn, authn.Options{})
 	// No role guard: every org member may do everything; server-addressed
 	// handlers still check the caller's org owns the server.
 	enrollLimiter := ratelimit.New(5, 30)
 	// Starting an enrollment stores a row: about 3 a minute per IP, burst 5.
 	enrollStartLimiter := ratelimit.New(0.05, 5)
+	// OAuth client registration is open and stores a row: one every 5 s
+	// per IP, burst 10.
+	oauthRegisterLimiter := ratelimit.New(0.2, 10)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
-		EnrollStartLimit: enrollStartLimiter.Middleware}
+		EnrollStartLimit: enrollStartLimiter.Middleware,
+		// The OAuth endpoints' clients read JSON errors cross-origin, so
+		// their limiters answer in that format (the token endpoint shares
+		// the auth bucket).
+		OAuthRegisterLimit: oauthRegisterLimiter.MiddlewareWith(hauthserver.TooManyRegistrations),
+		OAuthTokenLimit:    authLimiter.MiddlewareWith(hauthserver.TooManyTokenRequests)}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to
@@ -86,15 +91,45 @@ func APIRoutes() []api.Route {
 	return routeTable(&bootstrap.Deps{}, api.Guards{})
 }
 
-// routeTable collects every handler package's routes, plus the health probe
-// and the go-pkgz mounts (documented only). The NotificationManager is shared
+// routeTable collects every handler package's routes, plus the health probe.
+// The NotificationManager is shared
 // across handlers: the SSE stream subscribes to it and the usecases publish
 // to it, so every handler MUST receive the same instance from d.
 func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
-	authAPI := hauth.NewHandler(&hauth.Deps{Logger: d.Log, Cfg: d.Cfg, Users: d.UserService})
+	var afterSignIn func(context.Context, string)
+	if d.Cfg != nil && d.Cfg.IsStandalone() {
+		// The embedded agent self-registered at boot with a pairing code but
+		// belongs to no org: claim it into the signing-in user's org, so the
+		// server "just appears".
+		afterSignIn = func(ctx context.Context, userID string) { autoClaimStandaloneServer(ctx, d, userID) }
+	}
+	// Typed nils must not become non-nil interfaces: the spec-only route
+	// table has no sign-in usecase.
+	var (
+		signIns   hoauthlogin.SignIns
+		providers hauth.ProviderLister
+	)
+	if d.SignIns != nil {
+		signIns, providers = d.SignIns, d.SignIns
+	}
+	authAPI := hauth.NewHandler(&hauth.Deps{
+		Logger: d.Log, Cfg: d.Cfg, Users: d.UserService, Sessions: d.Authn, AfterSignIn: afterSignIn,
+		Providers: providers, OAuthServer: d.AuthServer.Enabled(),
+	})
+	authServerAPI := hauthserver.NewHandler(&hauthserver.Deps{Logger: d.Log, Server: d.AuthServer})
+	var sessionAuth authn.Authenticator
+	if d.Authn != nil {
+		sessionAuth = d.Authn
+	}
+	oauthLoginAPI := hoauthlogin.NewHandler(&hoauthlogin.Deps{
+		Logger: d.Log, SignIns: signIns, Sessions: authAPI, Auth: sessionAuth,
+		Registration:  func(ctx context.Context) (bool, bool) { return registrationOpen(ctx, d) },
+		SecureCookies: d.Cfg != nil && d.Cfg.GetSecureCookies(),
+	})
 	notificationAPI := notification.NewHandler(&notification.Deps{
 		Logger:              d.Log,
 		NotificationManager: d.NotificationManager,
+		Auth:                sessionAuth,
 	})
 	appsAPI := happ.NewHandler(&happ.Deps{
 		Logger:                  d.Log,
@@ -155,7 +190,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Disabled:    !d.Cfg.IsMetricsEnabled(),
 		Alerts:      d.AlertRepository,
 	})
-	// Typed nils must not become non-nil interfaces: without JWT_SECRET
+	// Typed nils must not become non-nil interfaces: without ENCRYPTION_KEY
 	// there is no box, and the spec-only route table has no notifier.
 	var box halerts.Sealer
 	if d.ChannelBox != nil {
@@ -174,8 +209,11 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Box:     box,
 		Tester:  tester,
 	})
-	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
-	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
+	usersAPI := huser.NewHandler(&huser.Deps{
+		Logger: d.Log, Tokens: d.Authn, Users: d.UserService,
+		SecureCookies: d.Cfg != nil && d.Cfg.GetSecureCookies(),
+	})
+	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService, Tokens: d.Authn})
 	// A nil rollout queue (the spec-only route table) must not become a
 	// non-nil interface in any of its consumers.
 	var (
@@ -223,6 +261,8 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		hubJoinAPI.Routes(g),
 		agentHubAPI.Routes(g),
 		authAPI.Routes(g),
+		oauthLoginAPI.Routes(g),
+		authServerAPI.Routes(g),
 		notificationAPI.Routes(g),
 		appsAPI.Routes(g),
 		dockerAPI.Routes(g),
@@ -234,7 +274,6 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
 		rolloutsAPI.Routes(g),
-		authprvd.Routes(),
 	} {
 		routes = append(routes, table...)
 	}

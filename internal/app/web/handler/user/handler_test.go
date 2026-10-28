@@ -8,28 +8,34 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/go-pkgz/auth/v2/token"
+	"winterflow/internal/app/web/middleware/authn"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/logger"
 )
 
 type fakeTokens struct {
-	created  []model.UserToken
-	deleted  []string
-	deleteBy string
+	created         []model.AccessToken
+	deleted         []string
+	deleteBy        string
+	sessionsRevoked []string
 }
 
-func (f *fakeTokens) CreateToken(_ context.Context, userID, name string, expiresAt *time.Time) (model.UserToken, string, error) {
-	rec := model.UserToken{ID: "tok-1", UserID: userID, Name: name, Prefix: "wfp_abcd1234", ExpiresAt: expiresAt, CreatedAt: time.Now()}
+func (f *fakeTokens) RevokeSessions(_ context.Context, userID string) error {
+	f.sessionsRevoked = append(f.sessionsRevoked, userID)
+	return nil
+}
+
+func (f *fakeTokens) CreatePAT(_ context.Context, userID, name string, expiresAt *time.Time) (model.AccessToken, string, error) {
+	rec := model.AccessToken{ID: "tok-1", UserID: userID, Kind: model.TokenPAT, Name: name, Prefix: "wfp_abcd1234", ExpiresAt: expiresAt, CreatedAt: time.Now()}
 	f.created = append(f.created, rec)
 	return rec, "wfp_abcd1234SECRETSECRETSECRETSECRETSECRET", nil
 }
-func (f *fakeTokens) ListTokens(_ context.Context, userID string) ([]model.UserToken, error) {
+func (f *fakeTokens) ListPATs(_ context.Context, userID string) ([]model.AccessToken, error) {
 	return f.created, nil
 }
-func (f *fakeTokens) DeleteToken(_ context.Context, userID, tokenID string) error {
+func (f *fakeTokens) DeletePAT(_ context.Context, userID, tokenID string) error {
 	f.deleteBy = userID
 	if tokenID != "tok-1" {
 		return model.ErrTokenNotFound
@@ -39,9 +45,7 @@ func (f *fakeTokens) DeleteToken(_ context.Context, userID, tokenID string) erro
 }
 
 func authed(r *http.Request) *http.Request {
-	u := token.User{ID: "user-1"}
-	u.SetStrAttr("user_id", "user-1")
-	return token.SetUserInfo(r, u)
+	return webutil.WithPrincipal(r, model.Principal{UserID: "user-1", Kind: model.TokenSession})
 }
 
 func newHandler() (*Handler, *fakeTokens) {
@@ -93,7 +97,9 @@ func TestCreateTokenRequiresName(t *testing.T) {
 
 func TestGetTokensListsWithoutPlaintext(t *testing.T) {
 	h, f := newHandler()
-	_, _, _ = f.CreateToken(context.Background(), "user-1", "ci", nil)
+	_, _, _ = f.CreatePAT(context.Background(), "user-1", "ci", nil)
+	used := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	f.created = append(f.created, model.AccessToken{ID: "tok-2", Kind: model.TokenPAT, Name: "used", LastUsedAt: used})
 	r := authed(httptest.NewRequest("GET", "/x", nil))
 	w := httptest.NewRecorder()
 	h.GetTokens(w, r)
@@ -102,6 +108,21 @@ func TestGetTokensListsWithoutPlaintext(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "SECRET") {
 		t.Error("list response leaks plaintext")
+	}
+	var resp struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 2 || resp.Data[0]["token_id"] != "tok-1" || resp.Data[0]["prefix"] != "wfp_abcd1234" {
+		t.Fatalf("data = %v", resp.Data)
+	}
+	if resp.Data[0]["last_used_at"] != nil {
+		t.Errorf("never-used token: last_used_at = %v, want null", resp.Data[0]["last_used_at"])
+	}
+	if resp.Data[1]["last_used_at"] != "2026-10-01T12:00:00Z" {
+		t.Errorf("used token: last_used_at = %v", resp.Data[1]["last_used_at"])
 	}
 }
 
@@ -245,5 +266,37 @@ func TestChangePasswordGoogleOnly400(t *testing.T) {
 	h.ChangePassword(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", w.Code)
+	}
+}
+
+func TestLogoutAll(t *testing.T) {
+	h, f := newHandler()
+	w := httptest.NewRecorder()
+	h.LogoutAll(w, authed(httptest.NewRequest("POST", "/api/v1/user/logout-all", nil)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body)
+	}
+	if len(f.sessionsRevoked) != 1 || f.sessionsRevoked[0] != "user-1" {
+		t.Fatalf("RevokeSessions calls = %v", f.sessionsRevoked)
+	}
+	// PATs are untouched.
+	if len(f.deleted) != 0 {
+		t.Fatalf("deleted PATs = %v", f.deleted)
+	}
+	var cleared *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		if c.Name == authn.CookieName {
+			cleared = c
+		}
+	}
+	if cleared == nil || cleared.MaxAge >= 0 || cleared.Value != "" {
+		t.Fatalf("cookie = %+v, want cleared", cleared)
+	}
+
+	// Unauthenticated: 401, nothing revoked.
+	w = httptest.NewRecorder()
+	h.LogoutAll(w, httptest.NewRequest("POST", "/api/v1/user/logout-all", nil))
+	if w.Code != http.StatusUnauthorized || len(f.sessionsRevoked) != 1 {
+		t.Fatalf("anonymous: code %d, calls %v", w.Code, f.sessionsRevoked)
 	}
 }

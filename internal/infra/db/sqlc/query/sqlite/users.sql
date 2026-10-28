@@ -37,9 +37,28 @@ SELECT * FROM user_credentials WHERE email = ?;
 SELECT * FROM user_credentials WHERE user_id = ?;
 
 -- name: EmailTaken :one
-SELECT EXISTS (SELECT 1 FROM user_credentials WHERE email = ?);
+-- Whether an account already answers to this (normalized, lower-case)
+-- address: a password account's email, or the email a linked sign-in
+-- provider vouched for. Compared case-insensitively.
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = CAST(sqlc.arg(email) AS TEXT)
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND lower(a.email) = CAST(sqlc.arg(email) AS TEXT)
+);
+
+-- LockUserCreation serializes account creation on Postgres; SQLite has
+-- one connection and serializes transactions already, so this is a no-op.
+-- name: LockUserCreation :exec
+SELECT 1;
 
 -- name: UpdatePassword :execrows
 UPDATE user_credentials
 SET password_hash = ?, must_change_password = ?, updated_at = ?
 WHERE user_id = ?;
+
+-- name: RehashPassword :execrows
+-- Replaces a verified legacy hash only while it is still the stored one, so a
+-- password changed meanwhile is never overwritten with the old one.
+UPDATE user_credentials
+SET password_hash = ?, updated_at = ?
+WHERE user_id = ? AND password_hash = sqlc.arg(old_hash);

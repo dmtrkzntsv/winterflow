@@ -7,7 +7,15 @@ import { serverPath } from "@/lib/server-paths";
 export type NewAppSource = "template" | "compose" | "git";
 export type AppTab = "overview" | "logs" | "configuration" | "backups" | "metrics" | "settings";
 export type ServerSettingsSection = "general" | "domains" | "storages" | "docker";
-export type OrgSettingsSection = "organization" | "members" | "variables" | "notifications" | "password" | "tokens";
+export type OrgSettingsSection =
+  | "organization"
+  | "members"
+  | "variables"
+  | "notifications"
+  | "password"
+  | "tokens"
+  | "identities"
+  | "connected-apps";
 
 export const INBOX_PATH = "/inbox";
 export const TEMPLATES_PATH = "/templates";

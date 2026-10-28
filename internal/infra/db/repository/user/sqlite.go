@@ -31,6 +31,10 @@ func (sqliteQuerier) GetConnectedAccountUserID(ctx context.Context, db backend.D
 	return sqlitegen.New(db).GetConnectedAccountUserID(ctx, p)
 }
 
+func (sqliteQuerier) InsertIdentity(ctx context.Context, db backend.DBTX, p identityParams) error {
+	return sqlitegen.New(db).InsertIdentity(ctx, p)
+}
+
 func (sqliteQuerier) InsertConnectedAccount(ctx context.Context, db backend.DBTX, p accountParams) error {
 	return sqlitegen.New(db).InsertConnectedAccount(ctx, p)
 }
@@ -59,24 +63,8 @@ func (sqliteQuerier) UpdatePassword(ctx context.Context, db backend.DBTX, p pass
 	return sqlitegen.New(db).UpdatePassword(ctx, p)
 }
 
-func (sqliteQuerier) InsertToken(ctx context.Context, db backend.DBTX, p insertTokenParams) error {
-	return sqlitegen.New(db).InsertToken(ctx, p)
-}
-
-func (sqliteQuerier) GetTokenByHash(ctx context.Context, db backend.DBTX, tokenHash string) (tokenRow, error) {
-	return sqlitegen.New(db).GetTokenByHash(ctx, tokenHash)
-}
-
-func (sqliteQuerier) TouchTokenLastUsed(ctx context.Context, db backend.DBTX, p touchTokenParams) error {
-	return sqlitegen.New(db).TouchTokenLastUsed(ctx, p)
-}
-
-func (sqliteQuerier) ListTokensByUser(ctx context.Context, db backend.DBTX, userID string) ([]tokenRow, error) {
-	return sqlitegen.New(db).ListTokensByUser(ctx, userID)
-}
-
-func (sqliteQuerier) DeleteToken(ctx context.Context, db backend.DBTX, p deleteTokenParams) (int64, error) {
-	return sqlitegen.New(db).DeleteToken(ctx, p)
+func (sqliteQuerier) RehashPassword(ctx context.Context, db backend.DBTX, p rehashParams) (int64, error) {
+	return sqlitegen.New(db).RehashPassword(ctx, p)
 }
 
 func (sqliteQuerier) InsertOrganization(ctx context.Context, db backend.DBTX, p insertOrgParams) error {
@@ -109,4 +97,8 @@ func (sqliteQuerier) IsOrganizationMember(ctx context.Context, db backend.DBTX, 
 
 func (sqliteQuerier) ListOrganizationMembers(ctx context.Context, db backend.DBTX, organizationID string) ([]userRow, error) {
 	return sqlitegen.New(db).ListOrganizationMembers(ctx, organizationID)
+}
+
+func (sqliteQuerier) LockUserCreation(ctx context.Context, db backend.DBTX) error {
+	return sqlitegen.New(db).LockUserCreation(ctx)
 }

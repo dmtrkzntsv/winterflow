@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiBaseUrl } from "@/config";
 import { useServers } from "@/context/use-servers";
 import type { RegisteredDomain } from "@/lib/domains";
+import { apiFetch } from "@/lib/api";
 
 const NONE: RegisteredDomain[] = [];
 
@@ -19,7 +20,7 @@ export function useRegistrations(serverId: string, enabled = true) {
     if (!enabled) return;
     const ctrl = new AbortController();
     const qs = new URLSearchParams({ server_id: serverId });
-    fetch(`${apiBaseUrl}/api/v1/domain/get-domains?${qs}`, {
+    apiFetch(`${apiBaseUrl}/api/v1/domain/get-domains?${qs}`, {
       credentials: "include",
       signal: ctrl.signal,
     })

@@ -47,3 +47,15 @@ describe("settingsSections", () => {
     expect(sections[1].items.map((i) => i.label)).toEqual(["API tokens"]);
   });
 });
+
+describe("settingsSections, account", () => {
+  it("adds Sign-in methods with providers and Connected apps with the OAuth server", () => {
+    const sections = settingsSections({ server: null, hasPassword: true, hasProviders: true, oauthServer: true });
+    expect(sections[1].items.map((i) => [i.label, i.to])).toEqual([
+      ["Password", "/settings/password"],
+      ["Sign-in methods", "/settings/identities"],
+      ["API tokens", "/settings/tokens"],
+      ["Connected apps", "/settings/connected-apps"],
+    ]);
+  });
+});

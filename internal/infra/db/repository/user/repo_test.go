@@ -11,7 +11,8 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
-	"winterflow/pkg/pat"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func newRepo(t *testing.T) (*Repo, *db.DB) {
@@ -67,15 +68,6 @@ func mustRegister(t *testing.T, r *Repo, name, email, password string) model.Use
 		t.Fatal(err)
 	}
 	return u
-}
-
-func mustToken(t *testing.T, r *Repo, userID, name string, expiresAt *time.Time) (model.UserToken, string) {
-	t.Helper()
-	rec, plaintext, err := r.CreateToken(dbtest.Ctx(t), userID, name, expiresAt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rec, plaintext
 }
 
 func mustMembers(t *testing.T, r *Repo, orgID string) []model.Member {
@@ -144,92 +136,6 @@ func TestUserLookupsReturnNotFound(t *testing.T) {
 	}
 	if _, err := repo.PrimaryOrganizationID(ctx, dbtest.ID(404)); !errors.Is(err, model.ErrorUserNotFound) {
 		t.Fatalf("PrimaryOrganizationID err = %v", err)
-	}
-}
-
-func TestCreateTokenAndFindByToken(t *testing.T) {
-	repo, d := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	u := mustCreateUser(t, repo, dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g1"})
-
-	rec, plaintext := mustToken(t, repo, u.ID, "ci deploy", nil)
-	if rec.Name != "ci deploy" || rec.Prefix == "" || rec.ID == "" {
-		t.Fatalf("record = %+v", rec)
-	}
-	if !strings.HasPrefix(plaintext, "wfp_") || !strings.HasPrefix(plaintext, rec.Prefix) {
-		t.Fatalf("plaintext %q / prefix %q mismatch", plaintext, rec.Prefix)
-	}
-
-	got, err := repo.FindByToken(ctx, plaintext)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.ID != u.ID {
-		t.Errorf("resolved user %q, want %q", got.ID, u.ID)
-	}
-
-	// The DB must not contain the plaintext anywhere.
-	stored := dbtest.QueryString(t, d, `SELECT token_hash FROM user_tokens WHERE token_id = ?`, rec.ID)
-	if stored == plaintext || stored != pat.Hash(plaintext) {
-		t.Error("token stored in plaintext or not as its hash")
-	}
-}
-
-func TestFindByTokenRejectsUnknownAndExpired(t *testing.T) {
-	repo, _ := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	u := mustCreateUser(t, repo, dto.UserDTO{Name: "A", Provider: "google", AccountID: "g2"})
-
-	if _, err := repo.FindByToken(ctx, "wfp_nope"); !errors.Is(err, model.ErrInvalidToken) {
-		t.Errorf("unknown token: err = %v, want ErrInvalidToken", err)
-	}
-
-	past := time.Now().Add(-time.Hour)
-	_, expired := mustToken(t, repo, u.ID, "old", &past)
-	if _, err := repo.FindByToken(ctx, expired); !errors.Is(err, model.ErrInvalidToken) {
-		t.Errorf("expired token: err = %v, want ErrInvalidToken", err)
-	}
-}
-
-func TestFindByTokenStampsLastUsed(t *testing.T) {
-	repo, _ := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	u := mustCreateUser(t, repo, dto.UserDTO{Name: "A", Provider: "google", AccountID: "g3"})
-	rec, plaintext := mustToken(t, repo, u.ID, "t", nil)
-
-	if _, err := repo.FindByToken(ctx, plaintext); err != nil {
-		t.Fatal(err)
-	}
-	list, err := repo.ListTokens(ctx, u.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(list) != 1 || list[0].ID != rec.ID {
-		t.Fatalf("list = %+v", list)
-	}
-	if list[0].LastUsedAt == nil {
-		t.Error("last_used_at not stamped on use")
-	}
-}
-
-func TestDeleteTokenScopedToUser(t *testing.T) {
-	repo, _ := newRepo(t)
-	ctx := dbtest.Ctx(t)
-	owner := mustCreateUser(t, repo, dto.UserDTO{Name: "O", Provider: "google", AccountID: "g4"})
-	other := mustCreateUser(t, repo, dto.UserDTO{Name: "X", Provider: "google", AccountID: "g5"})
-	rec, plaintext := mustToken(t, repo, owner.ID, "mine", nil)
-
-	if err := repo.DeleteToken(ctx, other.ID, rec.ID); !errors.Is(err, model.ErrTokenNotFound) {
-		t.Errorf("cross-user delete: err = %v, want ErrTokenNotFound", err)
-	}
-	if err := repo.DeleteToken(ctx, owner.ID, rec.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.FindByToken(ctx, plaintext); !errors.Is(err, model.ErrInvalidToken) {
-		t.Error("token still resolves after delete")
-	}
-	if err := repo.DeleteToken(ctx, owner.ID, rec.ID); !errors.Is(err, model.ErrTokenNotFound) {
-		t.Errorf("double delete: err = %v, want ErrTokenNotFound", err)
 	}
 }
 
@@ -419,12 +325,13 @@ func TestRemoveMemberRefusesRemovedCaller(t *testing.T) {
 }
 
 func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
-	repo, _ := newRepo(t)
+	repo, d := newRepo(t)
 	ctx := dbtest.Ctx(t)
 	admin := mustBootstrap(t, repo, "", "boss@w.io", "bootpass-123")
 	orgID := mustPrimaryOrg(t, repo, admin.ID)
 	m := mustMember(t, repo, orgID, "M", "m@w.io", "temp-password1")
-	_, patPlain := mustToken(t, repo, m.ID, "m's token", nil)
+	dbtest.Exec(t, d, `INSERT INTO access_tokens (id, user_id, kind, token_hash, scope, created_at)
+		VALUES (?, ?, 'pat', 'hash-m', 'full', '2026-01-01 00:00:00')`, dbtest.ID(55), m.ID)
 
 	if err := repo.RemoveMember(ctx, orgID, admin.ID, m.ID); err != nil {
 		t.Fatal(err)
@@ -432,8 +339,8 @@ func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 	if _, err := repo.VerifyLocalCredentials(ctx, "m@w.io", "temp-password1"); !errors.Is(err, model.ErrInvalidCredentials) {
 		t.Error("removed member can still log in")
 	}
-	if _, err := repo.FindByToken(ctx, patPlain); !errors.Is(err, model.ErrInvalidToken) {
-		t.Error("removed member's PAT still resolves")
+	if n := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM access_tokens WHERE user_id = ?`, m.ID); n != "0" {
+		t.Errorf("removed member keeps %s access tokens", n)
 	}
 	if members := mustMembers(t, repo, orgID); len(members) != 1 {
 		t.Errorf("members after removal = %d, want 1", len(members))
@@ -610,5 +517,222 @@ func TestCreateMemberUserIsAtomic(t *testing.T) {
 	}
 	if _, err := repo.VerifyLocalCredentials(ctx, "ghost@x.io", "temp-password1"); !errors.Is(err, model.ErrInvalidCredentials) {
 		t.Fatalf("credentials survived: %v", err)
+	}
+}
+
+func TestVerifyLocalCredentialsRehashes(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	u := mustBootstrap(t, repo, "Bcrypt User", "legacy@x.io", "legacy-pass-1")
+	legacy, err := bcrypt.GenerateFromPassword([]byte("legacy-pass-1"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `UPDATE user_credentials SET password_hash = ? WHERE user_id = ?`), string(legacy), u.ID)
+
+	if _, err := repo.VerifyLocalCredentials(ctx, "legacy@x.io", "legacy-pass-1"); err != nil {
+		t.Fatal(err)
+	}
+	got := dbtest.QueryString(t, d, `SELECT password_hash FROM user_credentials WHERE user_id = '`+u.ID+`'`)
+	if !strings.HasPrefix(got, "$argon2id$") {
+		t.Fatalf("stored hash = %q, want argon2id", got)
+	}
+	if _, err := repo.VerifyLocalCredentials(ctx, "legacy@x.io", "legacy-pass-1"); err != nil {
+		t.Fatalf("login after rehash: %v", err)
+	}
+}
+
+// A rehash racing a password change must not write the old password back: the
+// UPDATE applies only while the verified hash is still the stored one.
+func TestRehashSkipsChangedPassword(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	u := mustBootstrap(t, repo, "Race User", "race@x.io", "old-pass-1")
+	legacy, err := bcrypt.GenerateFromPassword([]byte("old-pass-1"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The login verified this legacy hash; the reset then lands first.
+	if err := repo.SetPassword(ctx, u.ID, "new-pass-1", false); err != nil {
+		t.Fatal(err)
+	}
+	repo.rehash(ctx, u.ID, "old-pass-1", string(legacy))
+	if _, err := repo.VerifyLocalCredentials(ctx, "race@x.io", "old-pass-1"); !errors.Is(err, model.ErrInvalidCredentials) {
+		t.Fatalf("old password works after the reset: %v", err)
+	}
+	if _, err := repo.VerifyLocalCredentials(ctx, "race@x.io", "new-pass-1"); err != nil {
+		t.Fatalf("new password lost: %v", err)
+	}
+}
+
+func TestVerifyUnknownEmailIsInvalid(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	if _, err := repo.VerifyLocalCredentials(ctx, "nobody@x.io", "pw"); !errors.Is(err, model.ErrInvalidCredentials) {
+		t.Fatalf("unknown email = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestCreateProviderUser(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	id := model.Identity{Provider: "oidc", Subject: "sub-1", Email: "ida@example.test", CreatedAt: at}
+
+	u, err := r.CreateProviderUser(ctx, "Ida", id, true)
+	if err != nil {
+		t.Fatalf("first user, firstOnly: %v", err)
+	}
+	if u.Name != "Ida" {
+		t.Fatalf("name = %q", u.Name)
+	}
+	org := mustPrimaryOrg(t, r, u.ID)
+	if m := mustMembers(t, r, org); len(m) != 1 || m[0].ID != u.ID || m[0].Provider != "oidc" {
+		t.Fatalf("members = %+v", m)
+	}
+	if got, err := r.GetByConnectedAccount(ctx, "oidc", "sub-1"); err != nil || got.ID != u.ID {
+		t.Fatalf("identity owner = %+v, %v", got, err)
+	}
+	if _, err := r.GetCredentials(ctx, u.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Fatalf("a provider account has no password, got %v", err)
+	}
+
+	id2 := model.Identity{Provider: "oidc", Subject: "sub-2", CreatedAt: at}
+	if _, err := r.CreateProviderUser(ctx, "Late", id2, true); !errors.Is(err, model.ErrNotBootstrap) {
+		t.Fatalf("firstOnly with a user = %v, want ErrNotBootstrap", err)
+	}
+	u2, err := r.CreateProviderUser(ctx, "Second", id2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mustPrimaryOrg(t, r, u2.ID) == org {
+		t.Fatal("a provider sign-up shares the first user's org")
+	}
+	if _, err := r.CreateProviderUser(ctx, "Dup", id2, false); err == nil {
+		t.Fatal("a second user for one provider account must fail")
+	}
+}
+
+// An email a provider account answers to is in use for every way an account
+// is created: password registration and member creation are refused, and a
+// provider account is refused an email a password account (or another
+// provider account) holds, case-insensitively.
+func TestEmailInUseAcrossPasswordAndProviderAccounts(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	prov, err := r.CreateProviderUser(ctx, "Ida", model.Identity{Provider: "oidc", Subject: "sub-1", Email: "ida@example.test", CreatedAt: at}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org := mustPrimaryOrg(t, r, prov.ID)
+
+	if _, err := r.RegisterLocalUser(ctx, "Ida", "IDA@Example.test", "password-123"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("password registration with a provider account's email = %v, want ErrEmailTaken", err)
+	}
+	if _, err := r.CreateMemberUser(ctx, org, "Ida", " ida@example.TEST ", "temp-password1"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("member creation with a provider account's email = %v, want ErrEmailTaken", err)
+	}
+	if _, err := r.CreateProviderUser(ctx, "Ida2", model.Identity{Provider: "github", Subject: "gh-1", Email: "ida@example.test", CreatedAt: at}, false); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("second provider account with the same email = %v, want ErrEmailTaken", err)
+	}
+
+	pat := mustRegister(t, r, "Pat", "pat@example.test", "password-123")
+	if _, err := r.CreateProviderUser(ctx, "Pat", model.Identity{Provider: "oidc", Subject: "sub-2", Email: "pat@example.test", CreatedAt: at}, false); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("provider account with a password account's email = %v, want ErrEmailTaken", err)
+	}
+	// An identity email stored with another case (written before the
+	// callback lower-cased it) still counts.
+	dbtest.Exec(t, d, dbtest.Rebind(d.Driver, `UPDATE user_connected_accounts SET email = ? WHERE provider = ? AND external_id = ?`), "Mixed@Example.test", "oidc", "sub-1")
+	if _, err := r.RegisterLocalUser(ctx, "M", "mixed@example.test", "password-123"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Fatalf("registration against a mixed-case identity email = %v, want ErrEmailTaken", err)
+	}
+	// The "local" connected account (external id = the email) is the
+	// password account itself, not a second claim on the address: the
+	// refusals above leave exactly the two accounts.
+	if n, err := r.CountUsers(ctx); err != nil || n != 2 {
+		t.Fatalf("users = %d, %v; want 2 (%s, %s)", n, err, prov.ID, pat.ID)
+	}
+}
+
+// Concurrent first accounts have one owner: of racing first provider
+// sign-ins (firstOnly) and a racing password bootstrap, exactly one
+// succeeds and the rest are refused with ErrNotBootstrap. On Postgres this
+// holds only because each creating transaction takes the user-creation
+// lock before it counts (READ COMMITTED would let every one see zero).
+func TestConcurrentFirstUsersHaveOneOwner(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	const providers = 6
+	var wg sync.WaitGroup
+	errs := make([]error, providers+1)
+	start := make(chan struct{})
+	for i := range providers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			id := model.Identity{Provider: "oidc", Subject: "race-" + string(rune('a'+i)), Email: string(rune('a'+i)) + "@race.test", CreatedAt: at}
+			_, errs[i] = r.CreateProviderUser(ctx, "Racer", id, true)
+		}(i)
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		_, errs[providers] = r.BootstrapLocalAdmin(ctx, "Boot", "boot@race.test", "bootpass-123")
+	}()
+	close(start)
+	wg.Wait()
+	ok := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, model.ErrNotBootstrap):
+			t.Errorf("creator %d: %v, want nil or ErrNotBootstrap", i, err)
+		}
+	}
+	if n, err := r.CountUsers(ctx); err != nil || ok != 1 || n != 1 {
+		t.Fatalf("successes = %d, users = %d (%v); want exactly one first user (%v)", ok, n, err, errs)
+	}
+}
+
+// Concurrent registrations of one address (any case, password or provider)
+// create one account.
+func TestConcurrentSameEmailCreatesOneAccount(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	var wg sync.WaitGroup
+	errs := make([]error, 6)
+	start := make(chan struct{})
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			if i%2 == 0 {
+				_, errs[i] = r.RegisterLocalUser(ctx, "Pat", []string{"same@race.test", "SAME@race.test", "Same@Race.Test"}[i/2], "password-123")
+				return
+			}
+			id := model.Identity{Provider: "oidc", Subject: "same-" + string(rune('a'+i)), Email: "same@race.test", CreatedAt: at}
+			_, errs[i] = r.CreateProviderUser(ctx, "Pat", id, false)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	ok := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, model.ErrEmailTaken):
+			t.Errorf("creator %d: %v, want nil or ErrEmailTaken", i, err)
+		}
+	}
+	if n, err := r.CountUsers(ctx); err != nil || ok != 1 || n != 1 {
+		t.Fatalf("successes = %d, users = %d (%v); want exactly one account (%v)", ok, n, err, errs)
 	}
 }

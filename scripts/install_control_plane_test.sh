@@ -108,6 +108,15 @@ assert_not_contains "downloads_from_r2_with_sigv4: secret never printed" "$out" 
 assert_not_contains "secret not on the curl command line" "$src" 'SECRET_ACCESS_KEY" "'
 out_ver="$(dry --version 260101.1 --r2-bucket other-bucket)"
 assert_contains "--version picks the channel" "$out_ver" "/other-bucket/winterflow/v260101.1/winterflow-api-linux-"
+# Releases before the rename sign sessions with JWT_SECRET (an empty one is
+# accepted): a pinned install writes it into the API env too, same value.
+compat_comment="# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+api_ver="$(section "$out_ver" /etc/winterflow/control-plane-api.env)"
+assert_contains "pinned: api env keeps ENCRYPTION_KEY" "$api_ver" "ENCRYPTION_KEY=<generated>"
+assert_contains "pinned: api env gets the compat JWT_SECRET" "$api_ver" "$(printf '%s\nJWT_SECRET=<generated>' "$compat_comment")"
+assert_not_contains "pinned: hub env never gets JWT_SECRET" "$(section "$out_ver" /etc/winterflow/control-plane-hub.env)" "JWT_SECRET"
+assert_not_contains "pinned: state file has no JWT_SECRET" "$(section "$out_ver" /etc/winterflow/control-plane.env)" "JWT_SECRET"
+assert_not_contains "unpinned: api env has no compat line" "$(section "$(dry)" /etc/winterflow/control-plane-api.env)" "$compat_comment"
 assert_contains "checksums verified in the script" "$src" "sha256sum -c"
 
 assert_contains "caddy snippet sets the client address" "$out" "header_up X-Forwarded-For {client_ip}"
@@ -127,7 +136,8 @@ assert_contains "units_and_env: api port" "$api_env" "API_PORT=8090"
 assert_contains "units_and_env: api listens on loopback only" "$api_env" "API_LISTEN_ADDR=127.0.0.1"
 assert_contains "units_and_env: api web url" "$api_env" "WEB_URL=https://flow.example.com"
 assert_contains "units_and_env: api cors origin" "$api_env" "CORS_ALLOW_ORIGINS=https://flow.example.com"
-assert_contains "units_and_env: api jwt secret" "$api_env" "JWT_SECRET="
+assert_contains "units_and_env: api encryption key" "$api_env" "ENCRYPTION_KEY="
+assert_not_contains "units_and_env: api has no JWT_SECRET" "$api_env" "JWT_SECRET"
 assert_contains "units_and_env: api signs with the pki dir" "$api_env" "HUB_CERT_DIR=/var/lib/winterflow-control/pki"
 assert_contains "units_and_env: api unit" "$api_unit" "ExecStart=/usr/local/bin/winterflow-api"
 assert_contains "units_and_env: api user" "$api_unit" "User=winterflow-api"
@@ -142,7 +152,7 @@ assert_contains "units_and_env: hub cert dir" "$hub_env" "HUB_CERT_DIR=/var/lib/
 assert_not_contains "units_and_env: hub has no CA key" "$hub_env" "ca.key"
 assert_not_contains "units_and_env: hub not on the pki dir" "$hub_env" "/var/lib/winterflow-control/pki"
 assert_not_contains "units_and_env: hub has no db" "$hub_env" "DATABASE_URL"
-assert_not_contains "units_and_env: hub has no jwt" "$hub_env" "JWT_SECRET"
+assert_not_contains "units_and_env: hub has no encryption key" "$hub_env" "ENCRYPTION_KEY"
 assert_contains "units_and_env: hub unit" "$hub_unit" "ExecStart=/usr/local/bin/winterflow-hub"
 assert_contains "units_and_env: hub user" "$hub_unit" "User=winterflow-hub"
 assert_contains "units_and_env: hub env file" "$hub_unit" "EnvironmentFile=/etc/winterflow/control-plane-hub.env"
@@ -234,7 +244,7 @@ mkdir -p "$rerun/etc/winterflow"
 cat > "$rerun/etc/winterflow/control-plane.env" <<'EOF'
 POSTGRES_PASSWORD=aaaa1111bbbb2222
 REDIS_PASSWORD=cccc3333dddd4444
-JWT_SECRET=eeee5555ffff6666
+ENCRYPTION_KEY=eeee5555ffff6666
 WEB_URL=https://kept.example.com
 API_PORT=8181
 HUB_PUBLIC_ADDR=hub-kept.example.com:50052
@@ -246,14 +256,14 @@ out_rerun="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" || fail "r
 out_rerun="${out_rerun//$rerun/}"
 # Dry-run shows kept secrets only as a sha256 fingerprint (first 8 hex).
 fp() { printf '<kept sha256:%s>' "$(printf '%s' "$1" | sha256sum | cut -c1-8)"; }
-pg_fp="$(fp aaaa1111bbbb2222)"; redis_fp="$(fp cccc3333dddd4444)"; jwt_fp="$(fp eeee5555ffff6666)"
+pg_fp="$(fp aaaa1111bbbb2222)"; redis_fp="$(fp cccc3333dddd4444)"; key_fp="$(fp eeee5555ffff6666)"
 assert_contains "rerun_keeps_password: postgres" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "postgres://winterflow:${pg_fp}@"
 assert_contains "rerun_keeps_password: redis api" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "REDIS_PASSWORD=${redis_fp}"
 assert_not_contains "rerun: hub env never has the admin password" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=${redis_fp}"
 assert_contains "rerun: hub env user follows the kept hub" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_USERNAME=hub:hub-kept.example.com"
 assert_contains "rerun_keeps_password: redis conf" "$(section "$out_rerun" "/etc/redis/redis-winterflow.conf")" "requirepass ${redis_fp}"
 assert_contains "rerun_keeps_password: state file" "$(section "$out_rerun" "/etc/winterflow/control-plane.env")" "POSTGRES_PASSWORD=${pg_fp}"
-assert_contains "rerun keeps the jwt secret" "$out_rerun" "JWT_SECRET=${jwt_fp}"
+assert_contains "rerun keeps the encryption key" "$out_rerun" "ENCRYPTION_KEY=${key_fp}"
 for raw in aaaa1111bbbb2222 cccc3333dddd4444 eeee5555ffff6666; do
     assert_not_contains "dry-run masks kept secret ${raw:0:4}..." "$out_rerun" "$raw"
 done
@@ -265,6 +275,48 @@ assert_not_contains "rerun generates nothing new" "$out_rerun" "<generated>"
 out_flag="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --capacity 7 2>&1)"
 assert_contains "rerun: a flag overrides a kept setting" "$out_flag" "HUB_CAPACITY=7"
 assert_contains "fresh install generates passwords" "$out" "<generated>"
+
+# A state file from before the rename keeps its JWT_SECRET under the new
+# name: the same value (a new key would make stored channels unreadable),
+# in the state file and the API env, and no JWT_SECRET line is written back.
+legacy="$(new_root legacy debian)"
+mkdir -p "$legacy/etc/winterflow"
+sed 's/^ENCRYPTION_KEY=/JWT_SECRET=/' "$rerun/etc/winterflow/control-plane.env" > "$legacy/etc/winterflow/control-plane.env"
+out_legacy="$(WF_INSTALL_ROOT="$legacy" bash "$SCRIPT" --dry-run 2>&1)" || fail "legacy rerun dry-run exits 0" "exit $?: $out_legacy"
+out_legacy="${out_legacy//$legacy/}"
+assert_contains "legacy rerun: state file renames JWT_SECRET" "$(section "$out_legacy" "/etc/winterflow/control-plane.env")" "ENCRYPTION_KEY=${key_fp}"
+assert_contains "legacy rerun: api env gets the same key" "$(section "$out_legacy" "/etc/winterflow/control-plane-api.env")" "ENCRYPTION_KEY=${key_fp}"
+assert_not_contains "legacy rerun: no JWT_SECRET line written" "$(section "$out_legacy" "/etc/winterflow/control-plane.env")$(section "$out_legacy" "/etc/winterflow/control-plane-api.env")" "JWT_SECRET="
+assert_not_contains "legacy rerun: no new key generated" "$out_legacy" "<generated>"
+assert_contains "legacy rerun: says it renamed the key" "$out_legacy" "The kept JWT_SECRET becomes ENCRYPTION_KEY"
+printf 'JWT_SECRET=not-hex!\n' > "$legacy/etc/winterflow/control-plane.env"
+out_legacy_bad="$(WF_INSTALL_ROOT="$legacy" bash "$SCRIPT" --dry-run 2>&1)" \
+    && fail "legacy rerun: a bad JWT_SECRET is refused" "exit 0" \
+    || assert_contains "legacy rerun: a bad JWT_SECRET is refused" "$out_legacy_bad" "JWT_SECRET is not a hex string"
+
+# A pinned rerun writes the compat line with the kept key's value.
+out_legacy_pin="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --version v260101.1 2>&1)"
+out_legacy_pin="${out_legacy_pin//$rerun/}"
+assert_contains "pinned rerun: compat JWT_SECRET is the kept key" "$(section "$out_legacy_pin" /etc/winterflow/control-plane-api.env)" "JWT_SECRET=${key_fp}"
+
+# A state file without the key recovers it from the API env file (either
+# name) instead of generating one stored channels could not use.
+for name in ENCRYPTION_KEY JWT_SECRET; do
+    rec="$(new_root "recover-$name" debian)"
+    mkdir -p "$rec/etc/winterflow"
+    grep -v '^ENCRYPTION_KEY=' "$rerun/etc/winterflow/control-plane.env" > "$rec/etc/winterflow/control-plane.env"
+    printf 'LOG_LEVEL=info\n%s=eeee5555ffff6666\n' "$name" > "$rec/etc/winterflow/control-plane-api.env"
+    out_rec="$(WF_INSTALL_ROOT="$rec" bash "$SCRIPT" --dry-run 2>&1)" || fail "recover $name: dry-run exits 0" "exit $?: $out_rec"
+    out_rec="${out_rec//$rec/}"
+    assert_contains "recover $name: state file gets the api env's key" "$(section "$out_rec" /etc/winterflow/control-plane.env)" "ENCRYPTION_KEY=${key_fp}"
+    assert_contains "recover $name: api env keeps it" "$(section "$out_rec" /etc/winterflow/control-plane-api.env)" "ENCRYPTION_KEY=${key_fp}"
+    assert_not_contains "recover $name: nothing generated" "$out_rec" "<generated>"
+    assert_contains "recover $name: says so" "$out_rec" "Recovered ENCRYPTION_KEY from ${name}"
+done
+printf 'ENCRYPTION_KEY=not-hex!\n' > "$rec/etc/winterflow/control-plane-api.env"
+out_rec_bad="$(WF_INSTALL_ROOT="$rec" bash "$SCRIPT" --dry-run 2>&1)" \
+    && fail "recover: a bad api env key is refused" "exit 0" \
+    || assert_contains "recover: a bad api env key is refused" "$out_rec_bad" "control-plane-api.env: ENCRYPTION_KEY is not a hex string"
 
 # A tampered state file is refused rather than written into units/env.
 bad="$(new_root bad debian)"; mkdir -p "$bad/etc/winterflow"
@@ -398,9 +450,9 @@ STUB
     r1="$tmp/real1"; mkdir -p "$r1"; make_stubs "$r1"
     run_cp "$r1" --redis-host cp.tail.ts.net
     [ "$RUN_STATUS" -eq 0 ] && pass "real run: installer succeeds" || fail "real run: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
-    pg_pw="$(kept "$r1" POSTGRES_PASSWORD)"; redis_pw="$(kept "$r1" REDIS_PASSWORD)"; jwt="$(kept "$r1" JWT_SECRET)"
-    grep -qE '^[0-9a-f]{64}$' <<<"$pg_pw" && grep -qE '^[0-9a-f]{64}$' <<<"$redis_pw" && grep -qE '^[0-9a-f]{64}$' <<<"$jwt" \
-        && pass "real run: secrets generated" || fail "real run: secrets generated" "pg=$pg_pw redis=$redis_pw jwt=$jwt"
+    pg_pw="$(kept "$r1" POSTGRES_PASSWORD)"; redis_pw="$(kept "$r1" REDIS_PASSWORD)"; enc="$(kept "$r1" ENCRYPTION_KEY)"
+    grep -qE '^[0-9a-f]{64}$' <<<"$pg_pw" && grep -qE '^[0-9a-f]{64}$' <<<"$redis_pw" && grep -qE '^[0-9a-f]{64}$' <<<"$enc" \
+        && pass "real run: secrets generated" || fail "real run: secrets generated" "pg=$pg_pw redis=$redis_pw enc=$enc"
     [ "$pg_pw" != "$redis_pw" ] && pass "real run: distinct secrets" || fail "real run: distinct secrets" "same"
     [ "$(stat -c %a "$r1/etc/winterflow/control-plane.env")" = 600 ] && pass "real run: state file 0600" || fail "real run: state file 0600" "$(stat -c %a "$r1/etc/winterflow/control-plane.env")"
     assert_contains "real run: role created with the kept password" "$(cat "$r1/calls")" "CREATE ROLE winterflow LOGIN PASSWORD '${pg_pw}'"
@@ -419,7 +471,7 @@ STUB
         && pass "real run: aclfile holds the admin user" || fail "real run: aclfile holds the admin user" "$(cat "$acl" 2>/dev/null)"
     [ "$(stat -c %a "$acl")" = 600 ] && pass "real run: aclfile 0600" || fail "real run: aclfile 0600" "$(stat -c %a "$acl")"
     assert_contains "real run: redis conf names the aclfile" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "aclfile $acl"
-    [ -z "$(ls -A "$r1/var/lib/winterflow-control/api")" ] || [ "$(ls -A "$r1/var/lib/winterflow-control/api")" = avatars ] \
+    [ -z "$(ls -A "$r1/var/lib/winterflow-control/api")" ] \
         && pass "real run: hub-trust's temp file removed" || fail "real run: hub-trust's temp file removed" "$(ls -A "$r1/var/lib/winterflow-control/api")"
     assert_not_contains "real run: secret never on curl's command line" "$(cat "$r1/curl-args")" "$SECRET"
     assert_contains "real run: secret passed on curl's stdin" "$(cat "$r1/curl-stdin")" "$SECRET"
@@ -463,8 +515,9 @@ STUB
     : > "$r1/calls"; : > "$r1/db"
     run_cp "$r1"
     [ "$RUN_STATUS" -eq 0 ] && pass "rerun: installer succeeds" || fail "rerun: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
-    [ "$(kept "$r1" POSTGRES_PASSWORD)" = "$pg_pw" ] && [ "$(kept "$r1" REDIS_PASSWORD)" = "$redis_pw" ] && [ "$(kept "$r1" JWT_SECRET)" = "$jwt" ] \
+    [ "$(kept "$r1" POSTGRES_PASSWORD)" = "$pg_pw" ] && [ "$(kept "$r1" REDIS_PASSWORD)" = "$redis_pw" ] && [ "$(kept "$r1" ENCRYPTION_KEY)" = "$enc" ] \
         && pass "rerun_keeps_password: real rerun" || fail "rerun_keeps_password: real rerun" "secrets changed"
+    assert_contains "real run: api env has the encryption key" "$(cat "$r1/etc/winterflow/control-plane-api.env")" "ENCRYPTION_KEY=${enc}"
     assert_not_contains "rerun: role not created again" "$(cat "$r1/calls")" "CREATE ROLE"
     assert_not_contains "rerun: database not created again" "$(cat "$r1/calls")" "createdb"
     assert_contains "rerun: redis names kept" "$(kept "$r1" REDIS_HOSTS)" "cp.tail.ts.net"
@@ -564,6 +617,17 @@ STUB
     assert_not_contains "moved back again: current id never retired" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "--hub hub-third.example.com"
     assert_contains "moved back again: old id retired" "$(cat "$cpd/hub-retire-calls" 2>/dev/null)" "--hub cp.example.com"
     run_cp "$r1" --hub-addr cp.example.com:50051
+
+    # A real rerun over a state file from before the rename: its JWT_SECRET
+    # becomes ENCRYPTION_KEY with the same value, in the state and API env.
+    sed -i 's/^ENCRYPTION_KEY=/JWT_SECRET=/' "$r1/etc/winterflow/control-plane.env"
+    run_cp "$r1"
+    [ "$RUN_STATUS" -eq 0 ] && pass "legacy real rerun: succeeds" || fail "legacy real rerun: succeeds" "status $RUN_STATUS: $RUN_OUT"
+    [ "$(kept "$r1" ENCRYPTION_KEY)" = "$enc" ] && ! grep -q '^JWT_SECRET=' "$r1/etc/winterflow/control-plane.env" \
+        && pass "legacy real rerun: state renamed, value kept" || fail "legacy real rerun: state renamed, value kept" "$(grep -E '^(JWT_SECRET|ENCRYPTION_KEY)=' "$r1/etc/winterflow/control-plane.env")"
+    api_env_legacy="$(cat "$r1/etc/winterflow/control-plane-api.env")"
+    assert_contains "legacy real rerun: api env has the same key" "$api_env_legacy" "ENCRYPTION_KEY=${enc}"
+    assert_not_contains "legacy real rerun: api env has no JWT_SECRET" "$api_env_legacy" "JWT_SECRET"
 
     # Real uninstall: units and binaries go, data and config stay.
     : > "$r1/calls"

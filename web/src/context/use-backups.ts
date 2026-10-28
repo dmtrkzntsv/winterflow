@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { forgetAppDetail } from "@/hooks/use-app-detail";
-import { dispatchCommand, readApiError } from "@/lib/api";
+import { apiFetch, dispatchCommand, readApiError } from "@/lib/api";
 import {
   AgentError,
   type BackupConfig,
@@ -147,7 +147,7 @@ export function useBackups() {
   // (no agent round-trip): the storage picker's choices.
   const serverStorages = useCallback(async (): Promise<string[]> => {
     if (!serverId) throw new Error("No active server");
-    const res = await fetch(`${base}/api/v1/storage/get-storages?server_id=${encodeURIComponent(serverId)}`, {
+    const res = await apiFetch(`${base}/api/v1/storage/get-storages?server_id=${encodeURIComponent(serverId)}`, {
       credentials: "include",
     });
     if (!res.ok) throw await readApiError(res);

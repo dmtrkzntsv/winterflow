@@ -1,53 +1,38 @@
-import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import { AuthScreen } from "@/components/auth-screen";
 import { LoginForm } from "@/components/login-form";
-import { apiBaseUrl } from "@/config";
 import { LoginError } from "@/context/auth-context-base";
 import { useAuth } from "@/context/use-auth";
-import { fetchAuthState } from "@/lib/auth-state";
+import { fetchAuthState, type SignInProvider } from "@/lib/auth-state";
+import { returnTarget, type ReturnFrom } from "@/lib/return-path";
+import { signInErrorText } from "@/lib/sign-in";
 
-type LoginState = { from?: { pathname?: string; search?: string; hash?: string }; email?: string } | undefined;
-
-// returnPath is where a successful sign-in goes: the page the person was
-// headed for (query and hash included), or home unless that is a
-// same-origin path — one leading "/" not followed by another "/" or a "\"
-// (either makes a protocol-relative URL that leaves the site), and no
-// control characters (URL parsers drop tabs and newlines, so "/\t/x" would
-// read as "//x"). The query must start with "?" and the hash with "#" (or
-// be empty), and the joined string is checked again: "/" with a query of
-// "/evil.example" would otherwise join into "//evil.example".
-function returnPath(from: NonNullable<LoginState>["from"]): string {
-  const pathname = from?.pathname;
-  const search = from?.search ?? "";
-  const hash = from?.hash ?? "";
-  if (typeof pathname !== "string" || typeof search !== "string" || typeof hash !== "string") return "/";
-  if ((search !== "" && !search.startsWith("?")) || (hash !== "" && !hash.startsWith("#"))) return "/";
-  const path = `${pathname}${search}${hash}`;
-  // eslint-disable-next-line no-control-regex
-  if (!/^\/(?![/\\])/.test(pathname) || !/^\/(?![/\\])/.test(path) || /[\u0000-\u001f\u007f]/.test(path)) return "/";
-  return path;
-}
+type LoginState = { from?: ReturnFrom; email?: string } | undefined;
 
 // LoginPage is /login. A fresh (unclaimed) instance has no account to log
 // in to, so it goes to the setup screen (/register) instead; when the
-// instance's state can't be read the form stays (and offers no sign-up).
+// instance's state can't be read the form stays (and offers no sign-up and
+// no providers). A sign-in, with the password or a provider, goes on to
+// ?next= (a same-origin path; the guard sets it), else home. A provider
+// sign-in that failed comes back with ?error=<code>.
 export default function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [search] = useSearchParams();
   const { t } = useTranslation();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [providers, setProviders] = useState<string[]>([]);
-  const [providersLoading, setProvidersLoading] = useState(true);
+  const [error, setError] = useState<string | null>(() => {
+    const code = search.get("error");
+    return code ? signInErrorText(code) : null;
+  });
+  const [providers, setProviders] = useState<SignInProvider[]>([]);
   const [registerEnabled, setRegisterEnabled] = useState(false);
   const state = location.state as LoginState;
-  // Back to where the person was headed, query and hash included (an
-  // alert e-mail's ?tab=metrics link keeps its tab).
-  const redirectTo = returnPath(state?.from);
+  const redirectTo = returnTarget(search, state?.from);
 
   useEffect(() => {
     const ctl = new AbortController();
@@ -58,6 +43,7 @@ export default function LoginPage() {
           return;
         }
         setRegisterEnabled(s.registrationEnabled);
+        setProviders(s.providers);
       },
       () => {
         // Unknown state: keep the form, without a sign-up link.
@@ -67,37 +53,10 @@ export default function LoginPage() {
   }, [navigate]);
 
   useEffect(() => {
-    let cancelled = false;
-    const fetchProviders = async () => {
-      try {
-        const response = await fetch(`${apiBaseUrl}/auth/list`);
-        if (!response.ok) {
-          throw new Error(`Failed to load providers: ${response.status}`);
-        }
-        const data = (await response.json()) as unknown;
-        if (!Array.isArray(data)) {
-          throw new Error("Invalid provider response");
-        }
-        const parsed = data.filter((provider): provider is string => typeof provider === "string");
-        if (!cancelled) setProviders(parsed);
-      } catch (fetchError) {
-        console.error("Failed to fetch providers", fetchError);
-        if (!cancelled) setProviders(["local"]);
-      } finally {
-        if (!cancelled) setProvidersLoading(false);
-      }
-    };
-    void fetchProviders();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (isAuthenticated) navigate(redirectTo, { replace: true });
   }, [isAuthenticated, navigate, redirectTo]);
 
-  const handleSubmit = async (values: { username: string; password: string }) => {
+  const handleSubmit = async (values: { email: string; password: string }) => {
     setIsSubmitting(true);
     setError(null);
     try {
@@ -105,14 +64,12 @@ export default function LoginPage() {
       navigate(redirectTo, { replace: true });
     } catch (err) {
       console.error("login failed", err);
-      const refused = err instanceof LoginError && [400, 401, 403].includes(err.status);
+      const refused = err instanceof LoginError && [400, 401].includes(err.status);
       setError(t(refused ? "login.errorCredentials" : "login.errorGeneric"));
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const effectiveProviders = useMemo(() => (providers.length === 0 ? ["local"] : providers), [providers]);
 
   return (
     <AuthScreen>
@@ -120,8 +77,8 @@ export default function LoginPage() {
         onSubmitCredentials={handleSubmit}
         isSubmitting={isSubmitting}
         error={error}
-        availableProviders={effectiveProviders}
-        providersLoading={providersLoading}
+        providers={providers}
+        returnTo={redirectTo}
         registerEnabled={registerEnabled}
         defaultEmail={state?.email ?? ""}
       />

@@ -1,54 +1,15 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { apiBase } from "@/config";
 import { useAuth } from "@/context/use-auth";
+import { apiFetch, readApiError } from "@/lib/api";
 
-import { UserContext, type UserProfile } from "./user-context-base";
-import { apiBaseUrl } from "@/config";
+import { UserContext } from "./user-context-base";
+import type { UserProfile } from "./user-context-base";
 
-type UserResponse = {
-  id: string;
-  name: string;
-  picture: string;
-  aud?: string;
-  attrs?: {
-    provider?: string;
-    [key: string]: unknown;
-  };
-};
+const userEndpoint = `${apiBase}/api/v1/user/get-profile`;
 
-const resolveUserEndpoint = () => {
-  const baseUrl = apiBaseUrl.endsWith("/")
-    ? apiBaseUrl.slice(0, -1)
-    : apiBaseUrl;
-  return `${baseUrl}/auth/user`;
-};
-
-const userEndpoint = resolveUserEndpoint();
-
-const resolvePictureUrl = (picture?: string) => {
-  if (!picture) {
-    return "";
-  }
-  if (picture.startsWith("http://") || picture.startsWith("https://")) {
-    return picture;
-  }
-  const baseUrl = apiBaseUrl.endsWith("/")
-    ? apiBaseUrl.slice(0, -1)
-    : apiBaseUrl;
-  try {
-    return new URL(picture, baseUrl).toString();
-  } catch {
-    return picture;
-  }
-};
-
+// UserProvider is who is signed in, for the account menu.
 export function UserProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -72,45 +33,24 @@ export function UserProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
-
     if (isMountedRef.current) {
       setLoading(true);
       setError(null);
     }
-
     try {
-      const response = await fetch(userEndpoint, {
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error(`Failed to load user: ${response.status}`);
-      }
-
-      const data = (await response.json()) as UserResponse;
-      if (!isMountedRef.current) {
-        return;
-      }
-      setUser({
-        id: data.id,
-        name: data.name,
-        picture: resolvePictureUrl(data.picture),
-        provider: data.attrs?.provider,
-      });
+      const res = await apiFetch(userEndpoint);
+      if (!res.ok) throw await readApiError(res);
+      const body = (await res.json()) as { data?: { user_id?: string; name?: string } };
+      if (!isMountedRef.current) return;
+      // Avatars are not served: the menu shows initials.
+      setUser({ id: body.data?.user_id ?? "", name: body.data?.name ?? "", picture: "" });
     } catch (fetchError) {
       console.error("Failed to load current user", fetchError);
-      if (!isMountedRef.current) {
-        return;
-      }
+      if (!isMountedRef.current) return;
       setUser(null);
-      setError(
-        fetchError instanceof Error
-          ? fetchError.message
-          : "Failed to load current user",
-      );
+      setError(fetchError instanceof Error ? fetchError.message : "Failed to load current user");
     } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-      }
+      if (isMountedRef.current) setLoading(false);
     }
   }, [isAuthenticated]);
 
@@ -119,12 +59,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
   }, [fetchUser]);
 
   const value = useMemo(
-    () => ({
-      user,
-      loading,
-      error,
-      refresh: fetchUser,
-    }),
+    () => ({ user, loading, error, refresh: fetchUser }),
     [user, loading, error, fetchUser],
   );
 

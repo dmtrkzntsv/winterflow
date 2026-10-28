@@ -16,7 +16,7 @@ const indexFile = "index.html"
 
 // Handler returns an http.Handler that serves static files from fsys, falling
 // back to index.html for unknown paths (SPA history mode). Requests under the
-// server-side route groups (/api, /auth, /avatar, /_) are never rewritten to
+// server-side route groups (/api, /auth, /.well-known, /_) are never rewritten to
 // index.html — if they reach here they 404 honestly rather than masquerade as
 // the SPA shell.
 func Handler(fsys fs.FS) http.Handler {
@@ -58,6 +58,9 @@ func Handler(fsys fs.FS) http.Handler {
 		}
 
 		if fileExists(fsys, name) {
+			if name == indexFile {
+				denyFraming(w)
+			}
 			setCacheControl(w, cleaned)
 			fileServer.ServeHTTP(w, r)
 			return
@@ -74,9 +77,19 @@ func Handler(fsys fs.FS) http.Handler {
 		}
 
 		// SPA fallback: serve index.html for client-side routes.
+		denyFraming(w)
 		setCacheControl(w, "/"+indexFile)
 		http.ServeFileFS(w, r, fsys, indexFile)
 	})
+}
+
+// denyFraming forbids every other site to frame the shell: a framed
+// page (the /oauth/authorize consent screen above all) could be clicked
+// through by a signed-in user who does not see it (clickjacking). No page of
+// the UI has a reason to be framed.
+func denyFraming(w http.ResponseWriter) {
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 }
 
 // setCacheControl picks the caching policy by path. Vite-fingerprinted files
@@ -93,10 +106,10 @@ func setCacheControl(w http.ResponseWriter, cleaned string) {
 }
 
 // isReservedPath reports whether the path belongs to a server-side route
-// group (API, auth, avatars, internal) that must never be served the SPA
+// group (API, auth, discovery documents, internal) that must never be served the SPA
 // shell.
 func isReservedPath(p string) bool {
-	for _, prefix := range []string{"/api", "/auth", "/avatar", "/_"} {
+	for _, prefix := range []string{"/api", "/auth", "/.well-known", "/_"} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return true
 		}

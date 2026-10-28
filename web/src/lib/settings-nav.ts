@@ -7,6 +7,8 @@ import {
   HardDrive,
   KeyRound,
   LockKeyhole,
+  LogIn,
+  Plug,
   Server,
   Users,
   type LucideIcon,
@@ -19,14 +21,19 @@ export type SettingsSection = { title: string; items: SettingsItem[] };
 
 // settingsSections is the Settings sub-menu (spec §6): the active server's
 // sections (Domains only with ingress), the organization's, and the
-// account's (Password only for accounts with local credentials). The
-// layout and the ⌘K palette both read it.
+// account's (Password only for accounts with local credentials, Sign-in
+// methods only when a sign-in provider is configured, Connected apps only
+// when MCP clients can connect). The layout and the ⌘K palette both read it.
 export function settingsSections({
   server,
   hasPassword,
+  hasProviders = false,
+  oauthServer = false,
 }: {
   server: { id: string; name: string; hasIngress: boolean } | null;
   hasPassword: boolean;
+  hasProviders?: boolean;
+  oauthServer?: boolean;
 }): SettingsSection[] {
   const sections: SettingsSection[] = [];
   if (server) {
@@ -49,7 +56,9 @@ export function settingsSections({
   });
   const account: SettingsItem[] = [];
   if (hasPassword) account.push({ label: "Password", to: settingsPath("password"), icon: LockKeyhole });
+  if (hasProviders) account.push({ label: "Sign-in methods", to: settingsPath("identities"), icon: LogIn });
   account.push({ label: "API tokens", to: settingsPath("tokens"), icon: KeyRound });
+  if (oauthServer) account.push({ label: "Connected apps", to: settingsPath("connected-apps"), icon: Plug });
   sections.push({ title: "Account", items: account });
   return sections;
 }

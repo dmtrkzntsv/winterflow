@@ -10,8 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
@@ -91,7 +90,7 @@ func newEnv(t *testing.T) (h *Handler, userID, serverID string, cache *status.Ca
 func authedAs(t *testing.T, r *http.Request, userID string) *http.Request {
 	t.Helper()
 	r = r.WithContext(dbtest.Ctx(t))
-	return token.SetUserInfo(r, token.User{ID: "p_" + userID, Attributes: map[string]any{"user_id": userID}})
+	return webutil.WithPrincipal(r, model.Principal{UserID: userID, Kind: model.TokenSession})
 }
 
 func TestGetServersReturnsClaimedServerWithCapabilities(t *testing.T) {

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"winterflow/internal/domain/usecase/oauthlogin"
 
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
@@ -26,6 +27,15 @@ type CoreOption func(*coreOptions)
 type coreOptions struct {
 	rolloutTiming rollouts.Timing
 	hubRegistry   port.HubRegistry
+	// signInSet replaces the configured sign-in providers
+	// (WithSignInProviders).
+	signInSet       bool
+	signInOrigin    string
+	signInProviders []oauthlogin.Provider
+	// authServerSet replaces the authorization server's issuer
+	// (WithAuthServerIssuer).
+	authServerSet    bool
+	authServerIssuer string
 }
 
 // WithHubRegistry wires the distributed API's hubs: commands are routed to

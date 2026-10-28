@@ -1,99 +1,61 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { apiBaseUrl, appBaseUrl } from "@/config";
+import { apiBase } from "@/config";
+import { apiFetch, jsonPost, readApiError } from "@/lib/api";
 import { AuthContext, LoginError, type LoginPayload } from "./auth-context-base";
 
+// AuthProvider knows whether this browser has a session (the wf_session
+// cookie, HttpOnly: it is probed, never read) and signs in and out.
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [checked, setChecked] = useState(false);
 
-  const login = useCallback(async ({ username, password }: LoginPayload) => {
-    const loginEndpoint = `${apiBaseUrl}/auth/local/login?session=1`;
-    const origin =
-      typeof window !== "undefined" ? window.location.origin : appBaseUrl;
-    let audienceHost = origin;
-    try {
-      audienceHost = new URL(origin).hostname;
-    } catch {
-      try {
-        audienceHost = new URL(appBaseUrl).hostname;
-      } catch {
-        audienceHost = origin;
-      }
-    }
-
-    const body = new URLSearchParams({
-      user: username,
-      passwd: password,
-      aud: audienceHost,
-    });
-
-    const response = await fetch(loginEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
-      credentials: "include",
-    });
-    if (!response.ok) {
-      throw new LoginError(response.status);
-    }
+  const login = useCallback(async ({ email, password }: LoginPayload) => {
+    const res = await apiFetch(`${apiBase}/api/v1/auth/login`, jsonPost({ email, password }));
+    if (!res.ok) throw new LoginError(res.status);
     setIsAuthenticated(true);
   }, []);
 
-  const logout = useCallback(async () => {
+  const signedIn = useCallback(() => setIsAuthenticated(true), []);
+
+  // signOut posts to path; the browser is signed out here whatever the
+  // answer (a session the server no longer knows is gone anyway).
+  const signOut = useCallback(async (path: string) => {
     try {
-      const response = await fetch(`${apiBaseUrl}/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!response.ok) {
-        throw new Error("Failed to logout");
-      }
+      const res = await apiFetch(`${apiBase}${path}`, { method: "POST" });
+      if (!res.ok) throw await readApiError(res);
     } catch (error) {
-      console.error("Failed to logout", error);
+      console.error("Failed to sign out", error);
     } finally {
       setIsAuthenticated(false);
     }
   }, []);
+  const logout = useCallback(() => signOut("/api/v1/auth/logout"), [signOut]);
+  const logoutAll = useCallback(() => signOut("/api/v1/user/logout-all"), [signOut]);
 
   useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        const response = await fetch(`${apiBaseUrl}/auth/status`, {
-          credentials: "include",
-        });
-        if (!response.ok) {
-          throw new Error("Failed to fetch auth status");
-        }
-        const data = (await response.json()) as { status?: string };
-        setIsAuthenticated(data.status === "logged in");
-      } catch (error) {
-        console.error("Failed to fetch auth status", error);
-        setIsAuthenticated(false);
-      } finally {
-        setChecked(true);
-      }
+    let cancelled = false;
+    apiFetch(`${apiBase}/api/v1/user/get-profile`)
+      .then(
+        (res) => {
+          if (!cancelled) setIsAuthenticated(res.ok);
+        },
+        (error: unknown) => {
+          console.error("Failed to check the session", error);
+          if (!cancelled) setIsAuthenticated(false);
+        },
+      )
+      .finally(() => {
+        if (!cancelled) setChecked(true);
+      });
+    return () => {
+      cancelled = true;
     };
-
-    void fetchStatus();
   }, []);
 
   const value = useMemo(
-    () => ({
-      isAuthenticated,
-      checked,
-      login,
-      logout,
-    }),
-    [isAuthenticated, checked, login, logout],
+    () => ({ isAuthenticated, checked, login, signedIn, logout, logoutAll }),
+    [isAuthenticated, checked, login, signedIn, logout, logoutAll],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

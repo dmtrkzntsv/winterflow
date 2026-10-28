@@ -10,8 +10,7 @@ import (
 	"slices"
 	"testing"
 	"time"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/app/web/api"
 	"winterflow/internal/domain/command"
@@ -84,7 +83,7 @@ func newHandler(repo *fakeRepo, servers fakeServers) (*Handler, *status.Cache, *
 func get(h http.HandlerFunc, url, userID string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(http.MethodGet, url, nil)
 	if userID != "" {
-		r = token.SetUserInfo(r, token.User{ID: "p_" + userID, Attributes: map[string]any{"user_id": userID}})
+		r = webutil.WithPrincipal(r, model.Principal{UserID: userID, Kind: model.TokenSession})
 	}
 	w := httptest.NewRecorder()
 	h(w, r)

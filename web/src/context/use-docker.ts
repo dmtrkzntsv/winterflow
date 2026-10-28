@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
-import { dispatchCommand } from "@/lib/api";
+import { apiFetch, dispatchCommand } from "@/lib/api";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { Domain, DomainTLS } from "@/lib/domains";
 import {
@@ -38,7 +38,7 @@ export type DomainCreated = { domain: Domain; warnings: string[] };
 
 // fetchPublicKey reads a server's ECIES public key.
 async function fetchPublicKey(serverId: string): Promise<string> {
-  const res = await fetch(
+  const res = await apiFetch(
     `${base}/api/v1/server/get-public-key?server_id=${encodeURIComponent(serverId)}`,
     { credentials: "include" },
   );

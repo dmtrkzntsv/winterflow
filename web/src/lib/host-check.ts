@@ -1,6 +1,7 @@
 import type { HostCheck, Issue } from "@/components/host-hints";
 import { apiBaseUrl } from "@/config";
 import type { RegisteredDomain } from "@/lib/domains";
+import { apiFetch } from "@/lib/api";
 
 // checkHostname asks the API what it thinks of a hostname on this server:
 // whether another app claims it, and which registration covers it. null
@@ -13,7 +14,7 @@ export async function checkHostname(
 ): Promise<HostCheck | null> {
   const qs = new URLSearchParams({ server_id: serverId, domain: host });
   if (appId) qs.set("app_id", appId);
-  const res = await fetch(`${apiBaseUrl}/api/v1/domains/check?${qs}`, {
+  const res = await apiFetch(`${apiBaseUrl}/api/v1/domains/check?${qs}`, {
     credentials: "include",
     signal,
   });

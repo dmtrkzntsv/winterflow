@@ -7,8 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/go-pkgz/auth/v2/token"
+	webutil "winterflow/internal/app/web/util"
 
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/logger"
@@ -23,6 +22,12 @@ type fakeOrgStore struct {
 	removedBy  []string
 	resetPw    []string
 	takenEmail string
+	revoked    []string
+}
+
+func (f *fakeOrgStore) RevokeAllForUser(_ context.Context, userID string) error {
+	f.revoked = append(f.revoked, userID)
+	return nil
 }
 
 func (f *fakeOrgStore) PrimaryOrganizationID(context.Context, string) (string, error) {
@@ -65,9 +70,7 @@ func (f *fakeOrgStore) GetCredentials(_ context.Context, userID string) (model.C
 }
 
 func authed(r *http.Request) *http.Request {
-	u := token.User{ID: "admin-1"}
-	u.SetStrAttr("user_id", "admin-1")
-	return token.SetUserInfo(r, u)
+	return webutil.WithPrincipal(r, model.Principal{UserID: "admin-1", Kind: model.TokenSession})
 }
 
 func newHandler() (*Handler, *fakeOrgStore) {
@@ -75,6 +78,7 @@ func newHandler() (*Handler, *fakeOrgStore) {
 	return NewHandler(&Deps{
 		Logger: logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
 		Users:  f,
+		Tokens: f,
 	}), f
 }
 
@@ -167,6 +171,10 @@ func TestRemoveMember(t *testing.T) {
 	// The caller is handed to the store so it can re-verify them under lock.
 	if len(f.removedBy) != 1 || f.removedBy[0] != "admin-1" {
 		t.Errorf("removedBy = %v, want [admin-1]", f.removedBy)
+	}
+	// Only the member actually removed loses their tokens.
+	if len(f.revoked) != 1 || f.revoked[0] != "m-1" {
+		t.Errorf("revoked = %v, want [m-1]", f.revoked)
 	}
 }
 

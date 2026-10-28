@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { apiBaseUrl } from "@/config";
 import { useAuth } from "@/context/use-auth";
 import { ProfileContext, type Profile } from "./profile-context-base";
+import { apiFetch } from "@/lib/api";
 
 const profileEndpoint = `${apiBaseUrl}/api/v1/user/get-profile`;
 
@@ -19,7 +20,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
     }
     setLoading(true);
     try {
-      const res = await fetch(profileEndpoint, { credentials: "include" });
+      const res = await apiFetch(profileEndpoint, { credentials: "include" });
       const body = await res.json().catch(() => null);
       if (res.ok && body?.success) {
         setProfile(body.data as Profile);

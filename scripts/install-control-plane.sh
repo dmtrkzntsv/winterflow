@@ -26,7 +26,7 @@
 # global Postgres/Redis configuration. Terminate TLS for the web UI in your
 # own proxy; the installer prints the address to proxy to.
 #
-# Generated passwords and the JWT secret are kept in
+# Generated passwords and the encryption key are kept in
 # /etc/winterflow/control-plane.env (root only, back it up) and reused on
 # every rerun, as are the CA and the data. A rerun updates the binaries and
 # units and restarts the services.
@@ -133,7 +133,7 @@ REDIS_BIND_SET=0
 REDIS_HOSTS_SET=0
 POSTGRES_PASSWORD=""
 REDIS_PASSWORD=""
-JWT_SECRET=""
+ENCRYPTION_KEY=""
 POSTGRES_PASSWORD_KEPT=0
 # The local hub's own Redis user, from winterflow-api hub-trust
 # --redis-env-out (reset on every run; never the admin password).
@@ -325,7 +325,26 @@ is_debian_like() {
     return 1
 }
 
+# --- shared: legacy-jwt-secret ---
+# Releases before the ENCRYPTION_KEY rename read the same secret as
+# JWT_SECRET, and also sign sessions with it, accepting an empty one. A
+# pinned (--version) install may run such a release, so it writes this line
+# too, with the same value.
+LEGACY_JWT_COMMENT="# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+render_legacy_jwt_secret() {
+    # render_legacy_jwt_secret VALUE -> the comment and JWT_SECRET=VALUE.
+    printf '%s\nJWT_SECRET=%s\n' "$LEGACY_JWT_COMMENT" "$1"
+}
+# --- end shared ---
+
 # --- Kept state (/etc/winterflow/control-plane.env) ---------------------------
+
+env_file_value() {
+    # env_file_value FILE KEY -> KEY's value in FILE (last one wins), empty
+    # when absent. Parsed, never sourced.
+    [ -f "$1" ] || return 0
+    sed -n "s/^$2=//p" "$1" | tail -n 1
+}
 
 state_value() {
     # state_value KEY -> the kept value (last one wins), empty when absent.
@@ -335,7 +354,7 @@ state_value() {
 }
 
 load_state() {
-    local v w
+    local v w src
     if [ -f "$STATE_FILE" ] && [ ! -r "$STATE_FILE" ]; then
         die "cannot read ${STATE_FILE} (run as root)"
     fi
@@ -349,10 +368,22 @@ load_state() {
         valid_secret "$v" || die "${STATE_FILE}: REDIS_PASSWORD is not a hex string; fix or remove the line"
         REDIS_PASSWORD="$v"
     fi
-    v="$(state_value JWT_SECRET)"
+    # ENCRYPTION_KEY was kept as JWT_SECRET before; the old line is read once
+    # and the state file is rewritten under the new name (same value). A
+    # state file without either (lost or hand-edited) recovers the key from
+    # the API env file rather than generating one stored channels cannot use.
+    src="$STATE_FILE"; w=ENCRYPTION_KEY; v="$(state_value ENCRYPTION_KEY)"
+    [ -n "$v" ] || { w=JWT_SECRET; v="$(state_value JWT_SECRET)"; }
+    [ -n "$v" ] || { src="$API_ENV_FILE"; w=ENCRYPTION_KEY; v="$(env_file_value "$API_ENV_FILE" ENCRYPTION_KEY)"; }
+    [ -n "$v" ] || { w=JWT_SECRET; v="$(env_file_value "$API_ENV_FILE" JWT_SECRET)"; }
     if [ -n "$v" ]; then
-        valid_secret "$v" || die "${STATE_FILE}: JWT_SECRET is not a hex string; fix or remove the line"
-        JWT_SECRET="$v"
+        valid_secret "$v" || die "${src}: ${w} is not a hex string; fix or remove the line"
+        ENCRYPTION_KEY="$v"
+        if [ "$src" != "$STATE_FILE" ]; then
+            log "Recovered ENCRYPTION_KEY from ${w} in ${src} (same value)"
+        elif [ "$w" != ENCRYPTION_KEY ]; then
+            log "The kept JWT_SECRET becomes ENCRYPTION_KEY (same value)"
+        fi
     fi
     if [ "$WEB_URL_SET" -eq 0 ]; then
         v="$(state_value WEB_URL)"; [ -z "$v" ] || WEB_URL="$v"
@@ -529,11 +560,11 @@ shown() {
 render_state() {
     cat <<EOF
 # WinterFlow control plane, kept by install-control-plane.sh and reused on
-# every rerun. Root only: holds the database and Redis passwords and the JWT
-# secret. Back it up with the database and ${PKI_DIR}.
+# every rerun. Root only: holds the database and Redis passwords and the
+# encryption key. Back it up with the database and ${PKI_DIR}.
 POSTGRES_PASSWORD=$(shown "$POSTGRES_PASSWORD")
 REDIS_PASSWORD=$(shown "$REDIS_PASSWORD")
-JWT_SECRET=$(shown "$JWT_SECRET")
+ENCRYPTION_KEY=$(shown "$ENCRYPTION_KEY")
 WEB_URL=${WEB_URL}
 API_PORT=${API_PORT}
 HUB_PUBLIC_ADDR=${HUB_PUBLIC_ADDR}
@@ -545,6 +576,8 @@ EOF
 }
 
 render_api_env() {
+    local compat="" nl=$'\n'
+    [ -z "$RELEASE_VERSION" ] || compat="$(render_legacy_jwt_secret "$(shown "$ENCRYPTION_KEY")")"
     cat <<EOF
 # WinterFlow API (written by install-control-plane.sh from
 # ${STATE_FILE}; a rerun rewrites it). See .env.example in the repo.
@@ -555,7 +588,7 @@ API_LISTEN_ADDR=127.0.0.1
 API_PORT=${API_PORT}
 WEB_URL=${WEB_URL}
 CORS_ALLOW_ORIGINS=$(url_origin "$WEB_URL")
-JWT_SECRET=$(shown "$JWT_SECRET")
+ENCRYPTION_KEY=$(shown "$ENCRYPTION_KEY")${compat:+${nl}${compat}}
 DATABASE_URL=postgres://${DB_USER}:$(shown "$POSTGRES_PASSWORD")@127.0.0.1:${PG_PORT:-5432}/${DB_NAME}?sslmode=disable
 REDIS_ADDR=127.0.0.1:${REDIS_PORT}
 REDIS_PASSWORD=$(shown "$REDIS_PASSWORD")
@@ -563,7 +596,6 @@ REDIS_TLS=true
 REDIS_CA_CERT_PATH=${PKI_DIR}/ca.crt
 # The CA pair (ca.crt, ca.key) the API signs agent certificates with.
 HUB_CERT_DIR=${PKI_DIR}
-AVATARS_STORAGE_PATH=${API_HOME}/avatars
 EOF
 }
 
@@ -1355,7 +1387,7 @@ main() {
     # never loses a password a database role already has.
     [ -n "$POSTGRES_PASSWORD" ] || POSTGRES_PASSWORD="$(random_hex)"
     [ -n "$REDIS_PASSWORD" ] || REDIS_PASSWORD="$(random_hex)"
-    [ -n "$JWT_SECRET" ] || JWT_SECRET="$(random_hex)"
+    [ -n "$ENCRYPTION_KEY" ] || ENCRYPTION_KEY="$(random_hex)"
     note_hub_change
     [ -d "$CONFIG_DIR" ] || install -d -m 755 -o root -g root "$CONFIG_DIR"
     put_file "$STATE_FILE" 600 root root < <(render_state)
@@ -1366,7 +1398,7 @@ main() {
     install -d -m 755 -o root -g root "$DATA_DIR"
     ensure_system_user "$API_USER" "$API_HOME"
     ensure_system_user "$HUB_USER" "$HUB_HOME"
-    install -d -m 750 -o "$API_USER" -g "$API_USER" "$API_HOME" "$API_HOME/avatars"
+    install -d -m 750 -o "$API_USER" -g "$API_USER" "$API_HOME"
     install -d -m 750 -o "$HUB_USER" -g "$HUB_USER" "$HUB_HOME"
 
     log "Installing ${API_DEST} and ${HUB_DEST}"

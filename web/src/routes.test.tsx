@@ -66,6 +66,11 @@ vi.mock("@/pages/settings-notifications", () => ({ default: () => <p>notificatio
 vi.mock("@/pages/settings-shared-variables", () => ({ default: () => <p>shared variables page</p> }));
 vi.mock("@/pages/user-password", () => ({ default: () => <p>password page</p> }));
 vi.mock("@/pages/user-tokens", () => ({ default: () => <p>tokens page</p> }));
+vi.mock("@/pages/user-identities", () => ({ default: () => <p>identities page</p> }));
+vi.mock("@/pages/user-connected-apps", () => ({ default: () => <p>connected apps page</p> }));
+vi.mock("@/lib/auth-state", () => ({
+  loadAuthState: async () => ({ bootstrap: false, registrationEnabled: false, providers: [], oauthServer: false }),
+}));
 
 let visited: string[] = [];
 
@@ -129,6 +134,8 @@ describe("route table", () => {
     ["/settings/notifications", "notifications page"],
     ["/settings/password", "password page"],
     ["/settings/tokens", "tokens page"],
+    ["/settings/identities", "identities page"],
+    ["/settings/connected-apps", "connected apps page"],
   ])("opens %s", async (url, page) => {
     renderAt(url);
     expect(await screen.findByText(page)).toBeInTheDocument();
@@ -166,6 +173,8 @@ describe("route table", () => {
     ["/org/templates/t1#versions", "/templates/t1#versions", "template page t1"],
     ["/user/password", "/settings/password", "password page"],
     ["/user/tokens", "/settings/tokens", "tokens page"],
+    ["/user/identities", "/settings/identities", "identities page"],
+    ["/user/connected-apps", "/settings/connected-apps", "connected apps page"],
   ])("sends %s to %s", async (from, to, page) => {
     renderAt(from);
     expect(await screen.findByText(page)).toBeInTheDocument();

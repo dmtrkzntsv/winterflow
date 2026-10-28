@@ -6,9 +6,12 @@ import (
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/domain/usecase/agenthub"
+	"winterflow/internal/domain/usecase/authn"
+	"winterflow/internal/domain/usecase/authserver"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
+	"winterflow/internal/domain/usecase/oauthlogin"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
@@ -27,7 +30,16 @@ type Deps struct {
 	Log *logger.Logger
 	Cfg *config.ServerConfig
 
-	UserService         port.UserService
+	UserService port.UserService
+	// Authn issues, authenticates and revokes access tokens (sessions,
+	// PATs, OAuth access tokens).
+	Authn *authn.UseCase
+	// SignIns runs sign-in with Google, Apple or an OIDC provider and the
+	// linked identities.
+	SignIns *oauthlogin.Service
+	// AuthServer is the OAuth authorization server MCP clients sign in
+	// to; disabled (Enabled false) unless WEB_URL is a usable origin.
+	AuthServer          *authserver.UseCase
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	AppDomainRepository port.AppDomainRepository
@@ -61,7 +73,7 @@ type Deps struct {
 	// history; AlertNotifier sends (the Test button uses it directly).
 	AlertRepository port.AlertRepository
 	AlertNotifier   *alerting.Notifier
-	// ChannelBox encrypts channel URLs; nil when JWT_SECRET is unset
+	// ChannelBox encrypts channel URLs; nil when ENCRYPTION_KEY is unset
 	// (saving or testing a channel then answers 400).
 	ChannelBox *secretbox.Box
 	// HubPicker assigns an enrolling server its hub from the live hub list;

@@ -38,6 +38,7 @@ func TestHandler(t *testing.T) {
 		{"root serves shell", "GET", "/", 200, "shell", "no-cache"},
 		{"client route falls back to shell", "GET", "/apps/some-id", 200, "shell", "no-cache"},
 		{"register route falls back", "GET", "/register", 200, "shell", ""},
+		{"oauth consent page falls back", "GET", "/oauth/authorize?client_id=x&state=y", 200, "shell", ""},
 		{"real asset served immutable", "GET", "/assets/app-abc.js", 200, "js", "public, max-age=31536000, immutable"},
 		{"real top-level file served", "GET", "/favicon.svg", 200, "<svg/>", "no-cache"},
 		{"missing asset-like path 404s", "GET", "/assets/gone.js", 404, "", ""},
@@ -45,7 +46,7 @@ func TestHandler(t *testing.T) {
 		{"api path never gets shell", "GET", "/api/v1/nope", 404, "", ""},
 		{"api root reserved", "GET", "/api", 404, "", ""},
 		{"auth path reserved", "GET", "/auth/google/login", 404, "", ""},
-		{"avatar path reserved", "GET", "/avatar/x", 404, "", ""},
+		{"well-known path reserved", "GET", "/.well-known/oauth-authorization-server", 404, "", ""},
 		{"internal path reserved", "GET", "/_/nope", 404, "", ""},
 		// http.ServeFileFS itself rejects raw ".." URL paths with 400.
 		{"traversal rejected by stdlib", "GET", "/../../etc/passwd", 400, "", ""},
@@ -78,5 +79,33 @@ func TestHandler_ExtensionHeuristic(t *testing.T) {
 	h := Handler(testFS())
 	if w := get(t, h, "GET", "/apps/v1.2"); w.Code != 404 {
 		t.Fatalf("dotted path served %d, want 404", w.Code)
+	}
+}
+
+// TestHandler_ShellDeniesFraming: every shell answer (the consent page, an
+// ordinary route, the root) forbids framing (clickjacking).
+func TestHandler_ShellDeniesFraming(t *testing.T) {
+	h := Handler(testFS())
+	for _, p := range []string{"/oauth/authorize?client_id=x&state=y", "/server/s1/app/a1", "/", "/index.html"} {
+		w := get(t, h, "GET", p)
+		if p == "/index.html" {
+			// The file server redirects it to "/"; follow that.
+			if w.Code != http.StatusMovedPermanently {
+				t.Fatalf("%s: status = %d", p, w.Code)
+			}
+			continue
+		}
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "shell") {
+			t.Fatalf("%s: status = %d body %q", p, w.Code, w.Body.String())
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", p, got)
+		}
+		if got := w.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+			t.Errorf("%s: Content-Security-Policy = %q", p, got)
+		}
+		if got := w.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%s: Cache-Control = %q, want no-cache", p, got)
+		}
 	}
 }

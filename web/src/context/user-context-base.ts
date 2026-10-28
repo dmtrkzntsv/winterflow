@@ -4,7 +4,6 @@ export type UserProfile = {
   id: string;
   name: string;
   picture: string;
-  provider?: string;
 };
 
 export type UserContextValue = {

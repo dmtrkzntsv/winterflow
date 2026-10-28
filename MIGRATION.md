@@ -340,8 +340,9 @@ registry/network/volume mutations (the rbac middleware and
 
 Personal access tokens (post-migration): `wfp_`-prefixed, SHA-256-hashed at
 rest (plaintext shown once at creation), sent as `Authorization: Bearer
-wfp_…` (patauth middleware) or Basic auth with the token as password
-(go-pkgz BasicAuthChecker). Managed at `/user/tokens`. No scopes — a token
+wfp_…` or Basic auth with the token as password (both resolved by the
+`middleware/authn` middleware, which also reads the `wf_session` browser
+cookie). Managed at `/user/tokens`. No scopes — a token
 carries its user's full access.
 
 ## Key files by area

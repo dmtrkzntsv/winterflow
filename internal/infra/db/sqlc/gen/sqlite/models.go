@@ -8,6 +8,22 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+type AccessToken struct {
+	ID          string
+	UserID      string
+	Kind        string
+	TokenHash   string
+	Scope       string
+	Name        *string
+	TokenPrefix *string
+	UserAgent   *string
+	GrantID     *string
+	CreatedAt   types.DateTime
+	LastUsedAt  *types.DateTime
+	ExpiresAt   *types.DateTime
+	RevokedAt   *types.DateTime
+}
+
 type AgentEnrollment struct {
 	EnrollmentID   string
 	PollSecretHash string
@@ -135,6 +151,58 @@ type NotificationChannel struct {
 	LastError      string
 	LastSentAt     *types.DateTime
 	CreatedAt      types.DateTime
+}
+
+type OauthClient struct {
+	ID           string
+	Name         string
+	RedirectUris string
+	SecretHash   *string
+	CreatedAt    types.DateTime
+	LastUsedAt   *types.DateTime
+}
+
+type OauthCode struct {
+	CodeHash      string
+	ClientID      string
+	UserID        string
+	RedirectUri   string
+	CodeChallenge string
+	Resource      string
+	CreatedAt     types.DateTime
+	ExpiresAt     types.DateTime
+}
+
+type OauthGrant struct {
+	ID                   string
+	UserID               string
+	ClientID             string
+	RefreshTokenHash     string
+	PrevRefreshTokenHash *string
+	RotatedAt            *types.DateTime
+	CreatedAt            types.DateTime
+	LastUsedAt           types.DateTime
+	ExpiresAt            types.DateTime
+	RevokedAt            *types.DateTime
+}
+
+type OauthLoginState struct {
+	StateHash    string
+	Provider     string
+	Nonce        string
+	CodeVerifier string
+	FlowHash     string
+	Intent       string
+	ReturnTo     string
+	LinkUserID   *string
+	CreatedAt    types.DateTime
+	ExpiresAt    types.DateTime
+}
+
+type OauthRefreshTokensSpent struct {
+	TokenHash string
+	GrantID   string
+	SpentAt   types.DateTime
 }
 
 type Organization struct {
@@ -311,6 +379,9 @@ type UserConnectedAccount struct {
 	Provider   string
 	ExternalID string
 	UserID     string
+	Email      *string
+	CreatedAt  types.DateTime
+	Issuer     *string
 }
 
 type UserCredential struct {
@@ -319,16 +390,4 @@ type UserCredential struct {
 	PasswordHash       string
 	MustChangePassword bool
 	UpdatedAt          types.DateTime
-}
-
-type UserToken struct {
-	TokenID     string
-	UserID      string
-	Name        string
-	TokenPrefix string
-	TokenHash   string
-	TokenType   string
-	ExpiresAt   *types.DateTime
-	LastUsedAt  *types.DateTime
-	CreatedAt   types.DateTime
 }

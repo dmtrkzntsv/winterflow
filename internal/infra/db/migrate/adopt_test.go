@@ -38,7 +38,7 @@ func TestAdoptBunDatabase(t *testing.T) {
 				if n := count(t, db, d, `SELECT count(*) FROM organizations WHERE organization_id = ? AND name = 'frozen org' AND icon = 'server'`, frozenOrg); n != 1 {
 					t.Fatal("seeded organization lost or altered")
 				}
-				if n := count(t, db, d, `SELECT count(*) FROM user_tokens WHERE token_id = ? AND name = 'ci; deploy'`, frozenToken); n != 1 {
+				if n := count(t, db, d, `SELECT count(*) FROM access_tokens WHERE id = ? AND name = 'ci; deploy'`, frozenToken); n != 1 {
 					t.Fatal("seeded token lost: a Bun migration re-ran")
 				}
 				if n := count(t, db, d, `SELECT count(*) FROM app_domains`); n != 2 {

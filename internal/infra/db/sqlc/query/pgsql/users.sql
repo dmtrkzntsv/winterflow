@@ -37,9 +37,33 @@ SELECT * FROM user_credentials WHERE email = $1;
 SELECT * FROM user_credentials WHERE user_id = $1;
 
 -- name: EmailTaken :one
-SELECT EXISTS (SELECT 1 FROM user_credentials WHERE email = $1);
+-- Whether an account already answers to this (normalized, lower-case)
+-- address: a password account's email, or the email a linked sign-in
+-- provider vouched for. Compared case-insensitively.
+SELECT EXISTS (
+    SELECT 1 FROM user_credentials c WHERE lower(c.email) = sqlc.arg(email)::text
+    UNION ALL
+    SELECT 1 FROM user_connected_accounts a WHERE a.provider <> 'local' AND lower(a.email) = sqlc.arg(email)::text
+);
+
+-- LockUserCreation serializes account creation on Postgres: a
+-- transaction-scoped advisory lock on one fixed key, taken first by every
+-- transaction that creates a user, so the first-user (owner) decision and
+-- the email-in-use check each see every account committed before the
+-- insert (under READ COMMITTED two creators would otherwise miss each
+-- other's uncommitted rows). The two-int4 form keeps the key out of the
+-- single-key space the other advisory locks use.
+-- name: LockUserCreation :exec
+SELECT pg_advisory_xact_lock(hashtext('winterflow'), hashtext('user-creation'));
 
 -- name: UpdatePassword :execrows
 UPDATE user_credentials
 SET password_hash = $1, must_change_password = $2, updated_at = $3
 WHERE user_id = $4;
+
+-- name: RehashPassword :execrows
+-- Replaces a verified legacy hash only while it is still the stored one, so a
+-- password changed meanwhile is never overwritten with the old one.
+UPDATE user_credentials
+SET password_hash = $1, updated_at = $2
+WHERE user_id = $3 AND password_hash = sqlc.arg(old_hash);

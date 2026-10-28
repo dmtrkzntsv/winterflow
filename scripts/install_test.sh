@@ -114,7 +114,8 @@ out="$(bash "$INSTALL_SH" --dry-run --port 9090 --cpu-quota 250 --memory-max 1G 
 
 assert_contains "env: api port applied" "$out" "API_PORT=9090"
 assert_contains "env: sqlite database" "$out" "DATABASE_URL=sqlite:///var/lib/winterflow/winterflow.sqlite"
-assert_contains "env: jwt secret placeholder (not generated in dry-run)" "$out" "JWT_SECRET=<generated-at-install-time>"
+assert_contains "env: encryption key placeholder (not generated in dry-run)" "$out" "ENCRYPTION_KEY=<generated-at-install-time>"
+assert_not_contains "env: no legacy JWT_SECRET" "$out" "JWT_SECRET"
 assert_contains "env: ingress documented as off by default" "$out" "#INGRESS_ENABLED=false"
 assert_contains "env: agent identity directory" "$out" "HUB_CERT_DIR=/var/lib/winterflow/data/hub-certs"
 assert_not_contains "env: no legacy CA subject" "$out" "HUB_CA_SUBJECT"
@@ -183,6 +184,76 @@ fi
 cores="$(nproc 2>/dev/null || echo 2)"
 want=$(( (cores - 1) * 100 )); [ "$want" -ge 100 ] || want=100
 assert_contains "default cpu quota from core count" "$out_default" "CPUQuota=${want}%"
+
+# --- Pinned release: JWT_SECRET compat line -----------------------------------
+
+# Releases before the rename sign sessions with JWT_SECRET (an empty one is
+# accepted), so a pinned install writes it too, with the key's value.
+out_pin="$(bash "$INSTALL_SH" --dry-run --version v260823.1 2>&1)" || fail "pinned dry-run exits 0" "exit $?"
+assert_contains "pinned: encryption key" "$out_pin" "ENCRYPTION_KEY=<generated-at-install-time>"
+assert_contains "pinned: compat JWT_SECRET with the same value" "$out_pin" "JWT_SECRET=<generated-at-install-time>"
+assert_contains "pinned: compat line explained" "$out_pin" "# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+
+# --- Rerun: JWT_SECRET is renamed to ENCRYPTION_KEY --------------------------
+
+# A rerun keeps the env file but reconciles the key lines, value unchanged
+# (a new key would make stored alert channels unreadable). The function is
+# exercised on its own: the real rerun path needs root.
+mig_tmp="$(mktemp -d)"
+eval "$(awk '$0 == "# --- shared: legacy-jwt-secret ---" {on=1} on {print} on && $0 == "# --- end shared ---" {on=0}' "$INSTALL_SH")"
+eval "$(sed -n '/^reconcile_encryption_key() {$/,/^}$/p' "$INSTALL_SH")"
+if declare -F reconcile_encryption_key >/dev/null && declare -F render_legacy_jwt_secret >/dev/null; then
+    log() { :; }; warn() { :; }; die() { echo "die: $*" >&2; return 1; }
+    compat_comment="# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+    reconcile() { RELEASE_VERSION="$2" reconcile_encryption_key "$mig_tmp/$1"; cat "$mig_tmp/$1"; }
+
+    printf 'API_PORT=8080\nJWT_SECRET=abc123def456\nDATABASE_URL=sqlite://x\n' > "$mig_tmp/legacy.env"
+    mig="$(reconcile legacy.env "")"
+    [ "$mig" = "$(printf 'API_PORT=8080\nENCRYPTION_KEY=abc123def456\nDATABASE_URL=sqlite://x')" ] \
+        && pass "rerun migration: renamed in place, value kept" || fail "rerun migration: renamed in place, value kept" "$mig"
+    [ "$(reconcile legacy.env "")" = "$mig" ] && pass "rerun migration: idempotent" || fail "rerun migration: idempotent" "$(cat "$mig_tmp/legacy.env")"
+
+    printf 'ENCRYPTION_KEY=\nJWT_SECRET=abc123\n' > "$mig_tmp/empty.env"
+    mig="$(reconcile empty.env "")"
+    [ "$mig" = "ENCRYPTION_KEY=abc123" ] && pass "rerun migration: an empty ENCRYPTION_KEY takes JWT_SECRET" \
+        || fail "rerun migration: an empty ENCRYPTION_KEY takes JWT_SECRET" "$mig"
+
+    printf 'ENCRYPTION_KEY=new\nJWT_SECRET=old\n' > "$mig_tmp/both.env"
+    mig="$(reconcile both.env "")"
+    [ "$mig" = "$(printf 'ENCRYPTION_KEY=new\nJWT_SECRET=old')" ] \
+        && pass "rerun migration: a different JWT_SECRET is left alone" || fail "rerun migration: a different JWT_SECRET is left alone" "$mig"
+
+    printf 'A=1\nENCRYPTION_KEY=same\n%s\nJWT_SECRET=same\nB=2\n' "$compat_comment" > "$mig_tmp/equal.env"
+    mig="$(reconcile equal.env "")"
+    [ "$mig" = "$(printf 'A=1\nENCRYPTION_KEY=same\nB=2')" ] \
+        && pass "rerun migration: unpinned drops an equal JWT_SECRET and its comment" || fail "rerun migration: unpinned drops an equal JWT_SECRET and its comment" "$mig"
+
+    printf 'ENCRYPTION_KEY=kept\n' > "$mig_tmp/new.env"
+    mig="$(reconcile new.env "")"
+    [ "$mig" = "ENCRYPTION_KEY=kept" ] && pass "rerun migration: a current file is unchanged" || fail "rerun migration: a current file is unchanged" "$mig"
+
+    printf 'A=1\nJWT_SECRET=abc123\nB=2\n' > "$mig_tmp/pinned.env"
+    mig="$(reconcile pinned.env v260823.1)"
+    want="$(printf 'A=1\nENCRYPTION_KEY=abc123\n%s\nJWT_SECRET=abc123\nB=2' "$compat_comment")"
+    [ "$mig" = "$want" ] && pass "rerun pinned: key renamed and the compat line written" || fail "rerun pinned: key renamed and the compat line written" "$mig"
+    [ "$(reconcile pinned.env v260823.1)" = "$want" ] && pass "rerun pinned: idempotent" || fail "rerun pinned: idempotent" "$(cat "$mig_tmp/pinned.env")"
+    mig="$(reconcile pinned.env "")"
+    [ "$mig" = "$(printf 'A=1\nENCRYPTION_KEY=abc123\nB=2')" ] \
+        && pass "rerun after unpinning: compat line removed" || fail "rerun after unpinning: compat line removed" "$mig"
+
+    printf 'ENCRYPTION_KEY=new\nJWT_SECRET=old\n' > "$mig_tmp/pin-differ.env"
+    mig="$(reconcile pin-differ.env v260823.1)"
+    [ "$mig" = "$(printf 'ENCRYPTION_KEY=new\n%s\nJWT_SECRET=new' "$compat_comment")" ] \
+        && pass "rerun pinned: compat line follows ENCRYPTION_KEY" || fail "rerun pinned: compat line follows ENCRYPTION_KEY" "$mig"
+
+    printf 'A=1\n' > "$mig_tmp/none.env"
+    mig="$(reconcile none.env v260823.1)"
+    [ "$mig" = "A=1" ] && pass "rerun: no key at all is left alone" || fail "rerun: no key at all is left alone" "$mig"
+else
+    fail "rerun migration: reconcile_encryption_key found" "not defined in $INSTALL_SH"
+fi
+rm -rf "$mig_tmp"
+assert_contains "rerun reconciles a kept env file" "$(cat "$INSTALL_SH")" 'reconcile_encryption_key "$ENV_FILE"'
 
 # Dry run must not require root and must not write anything.
 if [ "$(id -u)" -ne 0 ]; then

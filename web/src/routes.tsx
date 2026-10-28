@@ -1,6 +1,7 @@
 import type { RouteObject } from "react-router-dom";
 
 import { LegacyRedirect } from "@/components/legacy-redirect";
+import { RequireAuth } from "@/components/require-auth";
 import { NotFound } from "@/components/not-found";
 import { DefaultServer, ServerScope } from "@/components/server-routes";
 import { SettingsIndex, SettingsLayout } from "@/layouts/settings-layout";
@@ -29,6 +30,8 @@ import {
   ServerStoragesPage,
 } from "@/pages/server-settings";
 import NotificationsSettingsPage from "@/pages/settings-notifications";
+import OAuthAuthorizePage from "@/pages/oauth-authorize";
+import SecretRequestPage from "@/pages/secret-request";
 import SharedVariablesSettingsPage from "@/pages/settings-shared-variables";
 import TemplatePage from "@/pages/template-page";
 import UserConnectedAppsPage from "@/pages/user-connected-apps";
@@ -115,4 +118,26 @@ export const appRoutes: RouteObject[] = [
   { path: "/user/identities", element: <LegacyRedirect to={settingsPath("identities")} /> },
   { path: "/user/connected-apps", element: <LegacyRedirect to={settingsPath("connected-apps")} /> },
   { path: "*", element: <NotFound /> },
+];
+
+// fullPageRoutes are the signed-in pages outside the shell, each behind
+// RequireAuth (a signed-out visit goes to /login?next= and comes back): an
+// MCP client's consent screen and a secret link an agent handed the user.
+export const fullPageRoutes: RouteObject[] = [
+  {
+    path: "/oauth/authorize",
+    element: (
+      <RequireAuth>
+        <OAuthAuthorizePage />
+      </RequireAuth>
+    ),
+  },
+  {
+    path: "/secrets/:token",
+    element: (
+      <RequireAuth>
+        <SecretRequestPage />
+      </RequireAuth>
+    ),
+  },
 ];

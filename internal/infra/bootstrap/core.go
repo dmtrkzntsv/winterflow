@@ -13,7 +13,9 @@ import (
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/domain/usecase/agentauth"
 	"winterflow/internal/domain/usecase/authn"
+	"winterflow/internal/domain/usecase/cmdresult"
 	"winterflow/internal/domain/usecase/hubs"
+	"winterflow/internal/domain/usecase/secretreq"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
 	accesstokenrepo "winterflow/internal/infra/db/repository/accesstoken"
@@ -21,9 +23,11 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	authserverrepo "winterflow/internal/infra/db/repository/authserver"
+	cmdresultrepo "winterflow/internal/infra/db/repository/cmdresult"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	oauthloginrepo "winterflow/internal/infra/db/repository/oauthlogin"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
+	secretreqrepo "winterflow/internal/infra/db/repository/secretreq"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -77,7 +81,13 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	}
 
 	tokens := authn.New(r.accessToken, nil)
-	startTokenMaintenance(ctx, tokens, log)
+	results := cmdresult.New(r.cmdResult, log, nil)
+	secrets := secretreq.New(secretreq.Deps{Repo: r.secretReq, Orgs: r.user, Servers: r.server, Apps: r.app})
+	startHourlyMaintenance(ctx, log,
+		hourlyJob{name: "access tokens: prune", run: tokens.Prune},
+		hourlyJob{name: "command results: sweep", run: results.Sweep},
+		hourlyJob{name: "secret requests: sweep", run: secrets.Sweep},
+	)
 	authServer := newAuthServer(r.authServer, tokens, conn, o, cfg, log)
 	// Removing a user revokes their OAuth grants too.
 	tokens.SetGrantRevoker(authServer)
@@ -137,6 +147,9 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		CatalogRepository:        r.template,
 		Instances:                instances,
 		Rollouts:                 queue,
+		CommandResults:           results,
+		SecretRequestRepository:  r.secretReq,
+		SecretRequests:           secrets,
 		CommandDispatcher:        dispatcher,
 		NotificationManager:      nm,
 		StatusCache:              statusCache,
@@ -172,6 +185,8 @@ type repos struct {
 	enrollment    *enrollmentrepo.Repo
 	hubToken      *hubtokenrepo.Repo
 	hubCert       *hubcertrepo.Repo
+	cmdResult     *cmdresultrepo.Repo
+	secretReq     *secretreqrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -227,6 +242,12 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.hubToken, err = hubtokenrepo.New(conn.Tx, conn.Driver); err != nil {
 		return r, err
 	}
-	r.hubCert, err = hubcertrepo.New(conn.Tx, conn.Driver)
+	if r.hubCert, err = hubcertrepo.New(conn.Tx, conn.Driver); err != nil {
+		return r, err
+	}
+	if r.cmdResult, err = cmdresultrepo.New(conn.Tx, conn.Driver); err != nil {
+		return r, err
+	}
+	r.secretReq, err = secretreqrepo.New(conn.Tx, conn.Driver)
 	return r, err
 }

@@ -2,12 +2,12 @@ package authserver
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/db/dbtest"
 )
 
 func TestRegister(t *testing.T) {
@@ -107,7 +107,7 @@ func TestRegisterRefusedOverUnusedCap(t *testing.T) {
 	f := newFixture(t)
 	for i := range MaxUnusedClients {
 		if err := f.repo.InsertClient(f.ctx, model.OAuthClient{
-			ID: fmt.Sprintf("c-%05d", i), Name: "x", RedirectURIs: []string{"https://a.test/cb"}, CreatedAt: f.clock.Now(),
+			ID: dbtest.ID(50000 + i), Name: "x", RedirectURIs: []string{"https://a.test/cb"}, CreatedAt: f.clock.Now(),
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestRegisterRefusedOverUnusedCap(t *testing.T) {
 		t.Fatalf("registration over the cap: %v", err)
 	}
 	// Approved clients do not count, and the purge frees the store.
-	if err := f.repo.MarkClientUsed(f.ctx, "c-00000", f.clock.Now()); err != nil {
+	if err := f.repo.MarkClientUsed(f.ctx, dbtest.ID(50000), f.clock.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.s.Register(f.ctx, model.ClientRegistration{RedirectURIs: []string{"https://a.test/cb"}}); err != nil {

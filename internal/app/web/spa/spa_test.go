@@ -48,6 +48,8 @@ func TestHandler(t *testing.T) {
 		{"auth path reserved", "GET", "/auth/google/login", 404, "", ""},
 		{"well-known path reserved", "GET", "/.well-known/oauth-authorization-server", 404, "", ""},
 		{"internal path reserved", "GET", "/_/nope", 404, "", ""},
+		{"mcp path reserved", "GET", "/mcp", 404, "", ""},
+		{"mcp subpath reserved", "GET", "/mcp/x", 404, "", ""},
 		// http.ServeFileFS itself rejects raw ".." URL paths with 400.
 		{"traversal rejected by stdlib", "GET", "/../../etc/passwd", 400, "", ""},
 		{"traversal to extensioned file 404s", "GET", "/../../etc/ssl/cert.pem", 404, "", ""},

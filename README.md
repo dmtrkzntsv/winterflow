@@ -78,6 +78,9 @@ Rerun the install one-liner: it downloads the latest release and restarts the
 service, keeping your config and data. Pin a specific release with
 `--version v260823.1` (versions are `vYYMMDD.{build}`; every push to main cuts one).
 
+Upgrading from a release that used JWT sign-in? See [docs/upgrading-auth.md](docs/upgrading-auth.md).
+To connect Claude or Codex over MCP, see [docs/mcp-setup.md](docs/mcp-setup.md).
+
 ## Uninstall
 
 ```sh

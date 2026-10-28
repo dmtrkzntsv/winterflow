@@ -8,11 +8,13 @@ import (
 	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/authn"
 	"winterflow/internal/domain/usecase/authserver"
+	"winterflow/internal/domain/usecase/cmdresult"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/oauthlogin"
 	"winterflow/internal/domain/usecase/rollouts"
+	"winterflow/internal/domain/usecase/secretreq"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -61,10 +63,19 @@ type Deps struct {
 	// by StartRollouts once commands can flow (after the in-process bridge
 	// or the response subscriber). Every handler that queues a rollout must
 	// use this one value (its Wake reaches that worker).
-	Rollouts            *rollouts.UseCase
-	CommandDispatcher   port.CommandDispatcher
-	NotificationManager port.NotificationManager
-	StatusCache         *status.Cache
+	Rollouts *rollouts.UseCase
+	// CommandResults records the commands MCP tools dispatch and their
+	// outcomes (swept hourly by WireCore's maintenance loop).
+	CommandResults *cmdresult.Store
+	// SecretRequestRepository stores secret links; SecretRequests is the
+	// usecase over it the link page's routes use (swept hourly by
+	// WireCore's maintenance loop). The MCP tools build their own over the
+	// repository, with an agent read of the app's secret variables.
+	SecretRequestRepository port.SecretRequestRepository
+	SecretRequests          *secretreq.UseCase
+	CommandDispatcher       port.CommandDispatcher
+	NotificationManager     port.NotificationManager
+	StatusCache             *status.Cache
 	// MetricRepository serves the monitoring charts; LatestMetrics holds
 	// each server's newest host sample for the dashboard.
 	MetricRepository port.MetricRepository

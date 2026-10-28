@@ -115,6 +115,18 @@ type AppDomain struct {
 	UpdatedAt    types.DateTime
 }
 
+type CommandResult struct {
+	RequestID  string
+	OrgID      string
+	ServerID   string
+	Kind       string
+	Status     string
+	Result     *string
+	Error      *string
+	CreatedAt  types.DateTime
+	FinishedAt *types.DateTime
+}
+
 type HubCertificate struct {
 	Fingerprint string
 	HubID       string
@@ -242,6 +254,27 @@ type Rollout struct {
 	CreatedAt       types.DateTime
 	CreatedBy       string
 	FinishedAt      *types.DateTime
+}
+
+type SecretRequest struct {
+	ID           string
+	OrgID        string
+	ServerID     string
+	AppID        *string
+	CreatedBy    string
+	Names        string
+	Notes        string
+	Message      string
+	TokenHash    string
+	Status       string
+	Ciphertexts  *string
+	CreatedAt    types.DateTime
+	ExpiresAt    types.DateTime
+	SubmittedAt  *types.DateTime
+	UsedAt       *types.DateTime
+	EndedAt      *types.DateTime
+	ClaimID      *string
+	ClaimedUntil *types.DateTime
 }
 
 type Server struct {

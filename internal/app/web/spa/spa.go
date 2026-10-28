@@ -16,7 +16,7 @@ const indexFile = "index.html"
 
 // Handler returns an http.Handler that serves static files from fsys, falling
 // back to index.html for unknown paths (SPA history mode). Requests under the
-// server-side route groups (/api, /auth, /.well-known, /_) are never rewritten to
+// server-side route groups (/api, /auth, /.well-known, /mcp, /_) are never rewritten to
 // index.html — if they reach here they 404 honestly rather than masquerade as
 // the SPA shell.
 func Handler(fsys fs.FS) http.Handler {
@@ -106,10 +106,10 @@ func setCacheControl(w http.ResponseWriter, cleaned string) {
 }
 
 // isReservedPath reports whether the path belongs to a server-side route
-// group (API, auth, discovery documents, internal) that must never be served the SPA
+// group (API, auth, discovery documents, MCP, internal) that must never be served the SPA
 // shell.
 func isReservedPath(p string) bool {
-	for _, prefix := range []string{"/api", "/auth", "/.well-known", "/_"} {
+	for _, prefix := range []string{"/api", "/auth", "/.well-known", "/mcp", "/_"} {
 		if p == prefix || strings.HasPrefix(p, prefix+"/") {
 			return true
 		}

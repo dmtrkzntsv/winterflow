@@ -2,6 +2,9 @@ package dockercompose
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"winterflow/internal/domain/command"
@@ -109,5 +112,105 @@ func TestParseComposeLogLine(t *testing.T) {
 				t.Errorf("level = %d, want %d", entry.Level, tc.wantLevel)
 			}
 		})
+	}
+}
+
+// logsDocker installs a docker stub that logs its argv and prints one
+// compose log line, or, for a service named "nope", compose's error.
+func logsDocker(t *testing.T) string {
+	t.Helper()
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\n" +
+		"for a; do last=$a; done\n" +
+		"if [ \"$last\" = nope ]; then echo 'no such service: nope' >&2; exit 1; fi\n" +
+		"echo 'my-postgres  | 2026-06-20T12:00:00.000000000Z ready'\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return log
+}
+
+// TestGetLogsService: a service is passed to `docker compose logs` as its
+// last argument (compose filters it, container_name or not) and echoed.
+func TestGetLogsService(t *testing.T) {
+	r := newTestRepo(t)
+	dir := r.appDataDir("app-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("services:\n  db:\n    image: postgres\n    container_name: my-postgres\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	log := logsDocker(t)
+	resp, err := r.GetLogs(ctx, command.GetLogsRequest{AppID: "app-1", Tail: 10, Service: "db"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := dockerCalls(t, log)
+	if len(calls) != 1 || !strings.HasSuffix(calls[0], " logs --no-color --timestamps --tail 10 db") {
+		t.Fatalf("calls = %q", calls)
+	}
+	if resp.Service != "db" || len(resp.Logs) != 1 || resp.Logs[0].Container != "my-postgres" {
+		t.Fatalf("resp = %+v", resp)
+	}
+
+	log = logsDocker(t)
+	resp, err = r.GetLogs(ctx, command.GetLogsRequest{AppID: "app-1", Tail: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls := dockerCalls(t, log); len(calls) != 1 || !strings.HasSuffix(calls[0], " logs --no-color --timestamps --tail 10") {
+		t.Fatalf("calls without a service = %q", calls)
+	}
+	if resp.Service != "" {
+		t.Fatalf("service echoed without one: %+v", resp)
+	}
+
+	logsDocker(t)
+	if _, err := r.GetLogs(ctx, command.GetLogsRequest{AppID: "app-1", Service: "nope"}); err == nil || !strings.Contains(err.Error(), `no service "nope"`) {
+		t.Fatalf("unknown service = %v", err)
+	}
+}
+
+func TestGetLogsRequestService(t *testing.T) {
+	for name, ok := range map[string]bool{"": true, "db": true, "my_app.web-2": true, "--follow": false, "-f": false,
+		"db web": false, "a/b": false, strings.Repeat("a", 129): false} {
+		err := command.GetLogsRequest{AppID: "app-1", Service: name}.Validate()
+		if (err == nil) != ok {
+			t.Errorf("service %q: Validate = %v", name, err)
+		}
+	}
+}
+
+// TestGetLogsComposeFailsQuietly: compose failing with nothing on stdout
+// (some versions do with no containers) reads as no logs, not an error;
+// only an unknown service is one.
+func TestGetLogsComposeFailsQuietly(t *testing.T) {
+	r := newTestRepo(t)
+	dir := r.appDataDir("app-1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "compose.yml"), []byte("services:\n  web:\n    image: nginx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho 'no containers to show' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	resp, err := r.GetLogs(context.Background(), command.GetLogsRequest{AppID: "app-1", Tail: 10})
+	if err != nil || len(resp.Logs) != 0 || resp.AppID != "app-1" {
+		t.Fatalf("GetLogs = %+v, %v; want an empty result", resp, err)
+	}
+	// A service compose does not reject by name fails quietly too.
+	resp, err = r.GetLogs(context.Background(), command.GetLogsRequest{AppID: "app-1", Tail: 10, Service: "web"})
+	if err != nil || len(resp.Logs) != 0 || resp.Service != "web" {
+		t.Fatalf("GetLogs(web) = %+v, %v; want an empty result", resp, err)
 	}
 }

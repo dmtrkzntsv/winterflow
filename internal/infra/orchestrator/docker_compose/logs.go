@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
@@ -40,6 +41,13 @@ func (r *Repository) GetLogs(ctx context.Context, in command.GetLogsRequest) (co
 	if in.Since > 0 {
 		args = append(args, "--since", strconv.FormatInt(in.Since, 10))
 	}
+	if in.Service != "" {
+		// Compose filters by service name, which also covers a service
+		// whose container_name hides it from the line prefix. Validate
+		// (the dispatcher's) has checked its shape: never a flag.
+		args = append(args, in.Service)
+		resp.Service = in.Service
+	}
 
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = runDir
@@ -51,7 +59,11 @@ func (r *Repository) GetLogs(ctx context.Context, in command.GetLogsRequest) (co
 		// captured nothing, return an empty (non-error) result so the UI shows
 		// "no logs" rather than an error.
 		if stdout.Len() == 0 {
-			r.log.Warn("compose logs failed", "app_id", in.AppID, "stderr", strings.TrimSpace(stderr.String()))
+			msg := strings.TrimSpace(stderr.String())
+			if in.Service != "" && strings.Contains(msg, "no such service") {
+				return resp, fmt.Errorf("the app has no service %q", in.Service)
+			}
+			r.log.Warn("compose logs failed", "app_id", in.AppID, "stderr", msg)
 			return resp, nil
 		}
 	}

@@ -48,6 +48,10 @@ type Guards struct {
 	// dynamic client registration, which stores a row per call; its 429 is
 	// an RFC 7591 JSON error readable from any origin.
 	OAuthRegisterLimit Middleware
+	// UserLimit is the per-user limiter of /mcp and the secret link
+	// routes (keyed by the authenticated user, not the IP: MCP clients
+	// share egress IPs); it runs behind the auth middleware.
+	UserLimit Middleware
 	// OAuthTokenLimit is AuthLimit's bucket for the OAuth token endpoint,
 	// answering its 429 as an RFC 6749 JSON error readable from any origin.
 	OAuthTokenLimit Middleware

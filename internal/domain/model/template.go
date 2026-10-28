@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // Template errors. ErrTemplateNameTaken matches ErrRejected (400 naming
 // the field); ErrCatalogReadOnly matches ErrForbidden (403).
@@ -30,15 +33,27 @@ const (
 // template don't block each other.
 func UpgradeScopeKey(orgID, templateID string) string { return orgID + ":" + templateID }
 
+// ErrManagedByTemplate marks ManagedByTemplate's refusal (it also matches
+// ErrConflict).
+var ErrManagedByTemplate = errors.New("managed by a template instance")
+
 // ManagedByTemplate refuses save-app or rollback-app on an app a live
 // (pending or created) instance manages: its changes go through the
-// instance. name is the template's ("" when it is gone).
+// instance. name is the template's ("" when it is gone). The error matches
+// ErrConflict and ErrManagedByTemplate.
 func ManagedByTemplate(name string) error {
 	by := "a template"
 	if name != "" {
 		by = "template " + name
 	}
-	return &classified{"this app is managed by " + by + ": update the instance or unlink it", ErrConflict}
+	return &managedError{classified{"this app is managed by " + by + ": update the instance or unlink it", ErrConflict}}
+}
+
+// managedError is ManagedByTemplate's error.
+type managedError struct{ classified }
+
+func (e *managedError) Is(target error) bool {
+	return target == ErrManagedByTemplate || e.classified.Is(target)
 }
 
 // Template is a stack definition; its body lives in revisions. An org

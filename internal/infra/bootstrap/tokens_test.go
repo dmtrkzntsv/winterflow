@@ -2,38 +2,45 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"winterflow/pkg/logger"
 )
 
-type countingPruner chan struct{}
-
-func (c countingPruner) Prune(context.Context) error {
-	select {
-	case c <- struct{}{}:
-	default:
-	}
-	return nil
+// counter is an hourly job that reports each run.
+func counter(name string, runs chan string, err error) hourlyJob {
+	return hourlyJob{name: name, run: func(context.Context) error {
+		select {
+		case runs <- name:
+		default:
+		}
+		return err
+	}}
 }
 
-// The first prune runs shortly after start, not a full interval later: a
-// process restarted more often than hourly must still prune.
-func TestTokenMaintenancePrunesSoonAfterStart(t *testing.T) {
-	if tokenPruneFirst > 5*time.Minute || tokenPruneFirst >= tokenPruneInterval {
-		t.Fatalf("first prune after %v (interval %v)", tokenPruneFirst, tokenPruneInterval)
+// The first run comes shortly after start, not a full interval later: a
+// process restarted more often than hourly must still prune; every job
+// runs even when an earlier one fails.
+func TestHourlyMaintenanceRunsSoonAfterStart(t *testing.T) {
+	if hourlyFirst > 5*time.Minute || hourlyFirst >= hourlyInterval {
+		t.Fatalf("first run after %v (interval %v)", hourlyFirst, hourlyInterval)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	calls := make(countingPruner, 4)
+	runs := make(chan string, 8)
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"})
-	go runTokenMaintenance(ctx, calls, log, 10*time.Millisecond, 20*time.Millisecond)
-	for i := range 2 {
+	jobs := []hourlyJob{counter("tokens", runs, errors.New("db down")), counter("results", runs, nil)}
+	go runHourlyMaintenance(ctx, jobs, log, 10*time.Millisecond, 20*time.Millisecond)
+	for i, want := range []string{"tokens", "results", "tokens", "results"} {
 		select {
-		case <-calls:
+		case got := <-runs:
+			if got != want {
+				t.Fatalf("run %d = %s, want %s", i+1, got, want)
+			}
 		case <-time.After(5 * time.Second):
-			t.Fatalf("prune %d did not run", i+1)
+			t.Fatalf("run %d (%s) did not happen", i+1, want)
 		}
 	}
 }

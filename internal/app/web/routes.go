@@ -22,12 +22,16 @@ import (
 	hoauthlogin "winterflow/internal/app/web/handler/oauthlogin"
 	horg "winterflow/internal/app/web/handler/org"
 	hrollouts "winterflow/internal/app/web/handler/rollouts"
+	hsecretreq "winterflow/internal/app/web/handler/secretreq"
 	"winterflow/internal/app/web/handler/server"
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
 	huser "winterflow/internal/app/web/handler/user"
+	webmcp "winterflow/internal/app/web/mcp"
+	mcptools "winterflow/internal/app/web/mcp/tools"
 	"winterflow/internal/app/web/middleware/authn"
 	"winterflow/internal/app/web/middleware/ratelimit"
+	"winterflow/internal/app/web/middleware/userlimit"
 	"winterflow/internal/app/web/util"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/bootstrap"
@@ -50,13 +54,18 @@ func (s *Server) registerRoutes() {
 	// OAuth client registration is open and stores a row: one every 5 s
 	// per IP, burst 10.
 	oauthRegisterLimiter := ratelimit.New(0.2, 10)
+	// /mcp is limited per user, not per IP: MCP clients run by an AI
+	// provider share its egress IPs. 10 calls a second, burst 30. The
+	// secret link page's routes share it (per user, too).
+	mcpUserLimiter := userlimit.New(10, 30)
 	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
 		EnrollStartLimit: enrollStartLimiter.Middleware,
 		// The OAuth endpoints' clients read JSON errors cross-origin, so
 		// their limiters answer in that format (the token endpoint shares
 		// the auth bucket).
 		OAuthRegisterLimit: oauthRegisterLimiter.MiddlewareWith(hauthserver.TooManyRegistrations),
-		OAuthTokenLimit:    authLimiter.MiddlewareWith(hauthserver.TooManyTokenRequests)}
+		OAuthTokenLimit:    authLimiter.MiddlewareWith(hauthserver.TooManyTokenRequests),
+		UserLimit:          mcpUserLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to
@@ -251,6 +260,23 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Instances:               d.Instances,
 	})
 	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: rollouts})
+	// Typed nils must not become non-nil interfaces: the spec-only route
+	// table has no secret links usecase or server repository.
+	var (
+		secretRequests hsecretreq.Requests
+		keys           util.CapabilityReader
+	)
+	if d.SecretRequests != nil {
+		secretRequests = d.SecretRequests
+	}
+	if d.ServerRepository != nil {
+		keys = d.ServerRepository
+	}
+	secretsAPI := hsecretreq.NewHandler(&hsecretreq.Deps{Logger: d.Log, Requests: secretRequests, Keys: keys, Cfg: d.Cfg})
+	mcpRoutes := webmcp.Routes(webmcp.Edge{
+		Auth: sessionAuth, AllowOAuth: d.AuthServer.Enabled(), Challenge: d.AuthServer.Challenge(),
+		Register: mcptools.New(mcptools.FromDeps(d)),
+	}, g)
 
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
@@ -274,6 +300,8 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
 		rolloutsAPI.Routes(g),
+		secretsAPI.Routes(g),
+		mcpRoutes,
 	} {
 		routes = append(routes, table...)
 	}

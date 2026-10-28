@@ -112,3 +112,81 @@ func TestObservedDispatchesKeepTheirResult(t *testing.T) {
 		t.Errorf("ObservedResultTTL = %v", ObservedResultTTL)
 	}
 }
+
+// The …Observed variants the MCP tools use dispatch what their plain
+// forms do, keep their result for ObservedResultTTL and run the observer
+// after their own result handling; the plain forms set no wait.
+// saveProbe is a save with nothing to check beyond its compose file.
+var saveProbe = command.AppPayload{
+	Config: []byte(`{"name":"web"}`),
+	Files:  []command.ContentItem{{Name: "compose.yml", Content: []byte("services:\n  web:\n    image: nginx\n")}},
+}
+
+func TestObservedVariants(t *testing.T) {
+	disp := &recordingDispatcher{}
+	uc := NewUseCase(&Deps{
+		CommandDispatcher:      disp,
+		AppRepository:          noopAppRepo{},
+		ServerDomainRepository: newFakeIndex[model.RegisteredDomain](),
+		Log:                    logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
+	})
+	ctx := context.Background()
+	for _, tc := range []struct {
+		typ      command.Type
+		observed func(Observer) (string, error)
+		plain    func() (string, error)
+	}{
+		{command.TypeAppsList,
+			func(o Observer) (string, error) { return uc.RefreshAppsObserved(ctx, "u", "srv", o) },
+			func() (string, error) { return uc.RefreshApps(ctx, "u", "srv") }},
+		{command.TypeAppGet,
+			func(o Observer) (string, error) { return uc.GetAppObserved(ctx, "u", "srv", "a1", o) },
+			func() (string, error) { return uc.GetApp(ctx, "u", "srv", "a1") }},
+		{command.TypeAppRevisions,
+			func(o Observer) (string, error) { return uc.GetRevisionsObserved(ctx, "u", "srv", "a1", o) },
+			func() (string, error) { return uc.GetRevisions(ctx, "u", "srv", "a1") }},
+		{command.TypeAppRollback,
+			func(o Observer) (string, error) { return uc.RollbackAppObserved(ctx, "u", "srv", "a1", "abc", o) },
+			func() (string, error) { return uc.RollbackApp(ctx, "u", "srv", "a1", "abc") }},
+		{command.TypeAppRename,
+			func(o Observer) (string, error) { return uc.RenameAppObserved(ctx, "u", "srv", "a1", "n", o) },
+			func() (string, error) { return uc.RenameApp(ctx, "u", "srv", "a1", "n") }},
+		{command.TypeAppLogs,
+			func(o Observer) (string, error) { return uc.GetLogsObserved(ctx, "u", "srv", "a1", 0, 100, o) },
+			func() (string, error) { return uc.GetLogs(ctx, "u", "srv", "a1", 0, 100) }},
+		{command.TypeImageTags,
+			func(o Observer) (string, error) { return uc.GetImageTagsObserved(ctx, "u", "srv", "nginx", o) },
+			func() (string, error) { return uc.GetImageTags(ctx, "u", "srv", "nginx") }},
+		{command.TypeDomainList,
+			func(o Observer) (string, error) { return uc.ListServerDomainsObserved(ctx, "u", "srv", o) },
+			func() (string, error) { return uc.ListServerDomains(ctx, "u", "srv") }},
+		{command.TypeDomainCreate,
+			func(o Observer) (string, error) {
+				return uc.CreateDomainObserved(ctx, "u", "srv", command.CreateDomainRequest{}, o)
+			},
+			func() (string, error) { return uc.CreateDomain(ctx, "u", "srv", command.CreateDomainRequest{}) }},
+		{command.TypeDomainDelete,
+			func(o Observer) (string, error) { return uc.DeleteDomainObserved(ctx, "u", "srv", "x.test", o) },
+			func() (string, error) { return uc.DeleteDomain(ctx, "u", "srv", "x.test") }},
+		{command.TypeAppSave,
+			func(o Observer) (string, error) {
+				return uc.SaveAppObserved(ctx, "u", "srv", model.App{Name: "web"}, saveProbe, false, o)
+			},
+			func() (string, error) { return uc.SaveApp(ctx, "u", "srv", model.App{Name: "web"}, saveProbe, false) }},
+	} {
+		seen := 0
+		id, err := tc.observed(func(port.CommandResult) { seen++ })
+		in := disp.last()
+		if err != nil || id != "req-"+string(tc.typ) || in.Type != tc.typ || in.Wait != ObservedResultTTL || in.OnResult == nil {
+			t.Errorf("%s observed: id %q, type %s, wait %v, %v", tc.typ, id, in.Type, in.Wait, err)
+			continue
+		}
+		in.OnResult(port.CommandResult{Error: "boom"})
+		if seen != 1 {
+			t.Errorf("%s: observer ran %d times", tc.typ, seen)
+		}
+		if _, err := tc.plain(); err != nil || disp.last().Type != tc.typ || disp.last().Wait != 0 {
+			t.Errorf("%s plain: type %s, wait %v, %v", tc.typ, disp.last().Type, disp.last().Wait, err)
+		}
+	}
+}

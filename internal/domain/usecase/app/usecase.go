@@ -85,7 +85,13 @@ func (uc *UseCase) ListDomains(ctx context.Context, serverID string) (map[string
 // cache is reconciled (SyncApps: upsert reported, delete missing) and the
 // reconciled list is delivered to the user over SSE.
 func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.RefreshAppsObserved(ctx, userID, serverID, nil)
+}
+
+// RefreshAppsObserved is RefreshApps with an observer on the result (it runs
+// after the DB cache is reconciled).
+func (uc *UseCase) RefreshAppsObserved(ctx context.Context, userID, serverID string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppsList,
@@ -108,7 +114,9 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 				}
 			}
 		},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // ControlApp dispatches a lifecycle action (start/stop/restart/update) to the
@@ -125,7 +133,7 @@ func (uc *UseCase) ControlAppObserved(ctx context.Context, userID, serverID, app
 		Type:    command.TypeAppControl,
 		Payload: command.ControlAppRequest{AppID: appID, Action: action},
 	}
-	observed(&in, observe)
+	Observe(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)
 }
 
@@ -164,14 +172,20 @@ func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appI
 			}
 		},
 	}
-	observed(&in, observe)
+	Observe(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // RenameApp dispatches an app.rename to the agent and, on success, updates the
 // app's name in the DB cache.
 func (uc *UseCase) RenameApp(ctx context.Context, userID, serverID, appID, name string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.RenameAppObserved(ctx, userID, serverID, appID, name, nil)
+}
+
+// RenameAppObserved is RenameApp with an observer on the result (it runs
+// after the catalog row is renamed).
+func (uc *UseCase) RenameAppObserved(ctx context.Context, userID, serverID, appID, name string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppRename,
@@ -184,29 +198,45 @@ func (uc *UseCase) RenameApp(ctx context.Context, userID, serverID, appID, name 
 				uc.log.Error("RenameApp: update row", "error", err, "app_id", appID)
 			}
 		},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // GetApp dispatches an app.get to the agent (its filesystem holds the config).
 // The result is delivered over SSE, correlated by request id.
 func (uc *UseCase) GetApp(ctx context.Context, userID, serverID, appID string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.GetAppObserved(ctx, userID, serverID, appID, nil)
+}
+
+// GetAppObserved is GetApp with an observer on the result.
+func (uc *UseCase) GetAppObserved(ctx context.Context, userID, serverID, appID string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppGet,
 		Payload: command.GetAppRequest{AppID: appID},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // GetRevisions dispatches an app.revisions to the agent: the app's git
 // history, newest first. The result is delivered over SSE.
 func (uc *UseCase) GetRevisions(ctx context.Context, userID, serverID, appID string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.GetRevisionsObserved(ctx, userID, serverID, appID, nil)
+}
+
+// GetRevisionsObserved is GetRevisions with an observer on the result.
+func (uc *UseCase) GetRevisionsObserved(ctx context.Context, userID, serverID, appID string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppRevisions,
 		Payload: command.GetRevisionsRequest{AppID: appID},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // RollbackApp dispatches an app.rollback: the agent restores the given commit
@@ -214,10 +244,16 @@ func (uc *UseCase) GetRevisions(ctx context.Context, userID, serverID, appID str
 // success the restored config is re-fetched so the domain index follows the
 // rollback. An app a live template instance manages is refused.
 func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, hash string) (string, error) {
+	return uc.RollbackAppObserved(ctx, userID, serverID, appID, hash, nil)
+}
+
+// RollbackAppObserved is RollbackApp with an observer on the result (it runs
+// once the follow-up app.get is dispatched, before its result).
+func (uc *UseCase) RollbackAppObserved(ctx context.Context, userID, serverID, appID, hash string, observe Observer) (string, error) {
 	if err := uc.requireUnmanaged(ctx, serverID, appID); err != nil {
 		return "", err
 	}
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppRollback,
@@ -257,28 +293,56 @@ func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, has
 				uc.log.Error("RollbackApp: dispatch app.get", "error", err)
 			}
 		},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // GetImageTags dispatches an image.tags to the agent, which queries the
 // registry with its own docker credentials. The tag list returns over SSE.
 func (uc *UseCase) GetImageTags(ctx context.Context, userID, serverID, image string) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.GetImageTagsObserved(ctx, userID, serverID, image, nil)
+}
+
+// GetImageTagsObserved is GetImageTags with an observer on the result.
+func (uc *UseCase) GetImageTagsObserved(ctx context.Context, userID, serverID, image string, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeImageTags,
 		Payload: command.ImageTagsRequest{Image: image},
-	})
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // GetLogs dispatches an app.logs to the agent. The log entries return over SSE.
 func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, since int64, tail int32) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.GetLogsObserved(ctx, userID, serverID, appID, since, tail, nil)
+}
+
+// GetLogsObserved is GetLogs with an observer on the result.
+func (uc *UseCase) GetLogsObserved(ctx context.Context, userID, serverID, appID string, since int64, tail int32, observe Observer) (string, error) {
+	return uc.GetServiceLogsObserved(ctx, userID, serverID, appID, "", since, tail, observe)
+}
+
+// GetServiceLogsObserved is GetLogsObserved for one compose service
+// (service "" is every service). An agent that read only the service's
+// lines echoes it in the result's service; an older one answers every
+// service's lines without it.
+func (uc *UseCase) GetServiceLogsObserved(ctx context.Context, userID, serverID, appID, service string, since int64, tail int32, observe Observer) (string, error) {
+	req := command.GetLogsRequest{AppID: appID, Since: since, Tail: tail, Service: service}
+	if err := req.Validate(); err != nil {
+		return "", model.Rejected(err.Error())
+	}
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppLogs,
-		Payload: command.GetLogsRequest{AppID: appID, Since: since, Tail: tail},
-	})
+		Payload: req,
+	}
+	Observe(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // DomainCheck answers GET /api/v1/domains/check: the apps on the server
@@ -409,14 +473,45 @@ func (s CheckedSave) AppID() string { return s.app.ID }
 // over SSE. An app a live template instance manages is refused: it changes
 // through its instance (the instance routes use CheckSave and DispatchSave).
 func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
+	return uc.SaveAppObserved(ctx, userID, serverID, app, payload, draft, nil)
+}
+
+// SaveAppObserved is SaveApp with an observer on the result (it runs after
+// the catalog record is persisted).
+func (uc *UseCase) SaveAppObserved(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool, observe Observer) (string, error) {
+	_, requestID, err := uc.SaveAppAssigned(ctx, userID, serverID, app, payload, draft, observe)
+	return requestID, err
+}
+
+// SaveAppAssigned is SaveAppObserved that also returns the id the save
+// addresses: app.ID, or the one assigned to a new app. A caller that
+// retries a failed create passes it back, so the retry changes the app the
+// agent may already hold instead of creating another. It is "" only when
+// the save was refused before the id was assigned.
+func (uc *UseCase) SaveAppAssigned(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool, observe Observer) (appID, requestID string, err error) {
+	return uc.SaveAppGated(ctx, userID, serverID, app, payload, draft, observe, nil)
+}
+
+// SaveAppGated is SaveAppAssigned with gate, when set, run after every
+// check passed and right before the save is dispatched: its error refuses
+// the save (nothing is sent, appID is ""). A caller whose save carries
+// something to be sent at most once marks it sent there.
+func (uc *UseCase) SaveAppGated(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool,
+	observe Observer, gate func(context.Context) error) (appID, requestID string, err error) {
 	if err := uc.requireUnmanaged(ctx, serverID, app.ID); err != nil {
-		return "", err
+		return "", "", err
 	}
 	checked, err := uc.CheckSave(ctx, serverID, app, payload, draft)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return uc.DispatchSave(ctx, userID, checked, nil)
+	if gate != nil {
+		if err := gate(ctx); err != nil {
+			return "", "", err
+		}
+	}
+	requestID, err = uc.DispatchSave(ctx, userID, checked, observe)
+	return checked.AppID(), requestID, err
 }
 
 // requireUnmanaged refuses an app a live template instance manages
@@ -559,14 +654,15 @@ func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSav
 			}
 		},
 	}
-	observed(&in, observe)
+	Observe(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)
 }
 
-// observed hooks observe, when set, onto in: it runs after in's own
+// Observe hooks observe, when set, onto in: it runs after in's own
 // OnResult (even one that returned early), and the result is awaited for
-// ObservedResultTTL.
-func observed(in *port.DispatchInput, observe Observer) {
+// ObservedResultTTL. It is for a caller that dispatches a command no
+// usecase method covers (the docker resource lists).
+func Observe(in *port.DispatchInput, observe Observer) {
 	if observe == nil {
 		return
 	}

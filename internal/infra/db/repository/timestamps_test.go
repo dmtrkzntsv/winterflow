@@ -18,11 +18,13 @@ import (
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
+	cmdresultrepo "winterflow/internal/infra/db/repository/cmdresult"
 	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
 	hubcertrepo "winterflow/internal/infra/db/repository/hubcert"
 	hubtokenrepo "winterflow/internal/infra/db/repository/hubtoken"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
+	secretreqrepo "winterflow/internal/infra/db/repository/secretreq"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -140,6 +142,43 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 	if err := hubCerts.Trust(ctx, "hub-01", "fp-2", time.Now().In(zone)); err != nil {
 		t.Fatal(err)
+	}
+
+	cmdResults := must(cmdresultrepo.New(d.Tx, d.Driver))
+	if err := cmdResults.Create(ctx, model.CommandRecord{
+		RequestID: "req-1", OrgID: "org-1", ServerID: srv.ID, Kind: "app.get", Status: model.CommandRunning, CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := cmdResults.Finish(ctx, "req-1", model.CommandSucceeded, nil, "", at); err != nil || !ok {
+		t.Fatalf("finish command result: %v, %v", ok, err)
+	}
+
+	secretReqs := must(secretreqrepo.New(d.Tx, d.Driver))
+	for i, hash := range []string{"sr-1", "sr-2"} {
+		if err := secretReqs.Create(ctx, model.SecretRequest{ID: dbtest.ID(801 + i), OrgID: orgID, ServerID: srv.ID,
+			CreatedBy: admin.ID, Names: []string{"A"}, CreatedAt: at, ExpiresAt: expires}, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ok, err := secretReqs.Submit(ctx, dbtest.ID(801), map[string]string{"A": "c"}, at, expires); err != nil || !ok {
+		t.Fatalf("submit secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.Claim(ctx, dbtest.ID(801), "claim-1", at, expires); err != nil || !ok {
+		t.Fatalf("claim secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.MarkDispatched(ctx, dbtest.ID(801), "claim-1", expires); err != nil || !ok {
+		t.Fatalf("dispatch secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.MarkUsed(ctx, dbtest.ID(801), "claim-1", at); err != nil || !ok {
+		t.Fatalf("use secret request: %v, %v", ok, err)
+	}
+	// The second stays claimed: claimed_until is written.
+	if ok, err := secretReqs.Submit(ctx, dbtest.ID(802), map[string]string{"A": "c"}, at, expires); err != nil || !ok {
+		t.Fatalf("submit secret request: %v, %v", ok, err)
+	}
+	if ok, err := secretReqs.Claim(ctx, dbtest.ID(802), "claim-2", at, expires); err != nil || !ok {
+		t.Fatalf("claim secret request: %v, %v", ok, err)
 	}
 
 	appID := dbtest.ID(301)

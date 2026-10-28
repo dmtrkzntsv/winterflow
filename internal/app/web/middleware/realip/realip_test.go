@@ -62,3 +62,26 @@ func TestClientIPWithoutPort(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestPeerIsLoopbackSurvivesTheRewrite(t *testing.T) {
+	for _, c := range []struct {
+		remote, xff string
+		want        bool
+	}{
+		{"127.0.0.1:1", "192.0.2.9", true},    // rewritten: the peer was the local proxy
+		{"127.0.0.1:1", "", true},             // not rewritten, still loopback
+		{"203.0.113.7:1", "127.0.0.1", false}, // a public peer claiming loopback
+	} {
+		var got bool
+		h := Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = PeerIsLoopback(r) }))
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = c.remote
+		if c.xff != "" {
+			r.Header.Set("X-Forwarded-For", c.xff)
+		}
+		h.ServeHTTP(httptest.NewRecorder(), r)
+		if got != c.want {
+			t.Errorf("peer %s, XFF %q: PeerIsLoopback = %v, want %v", c.remote, c.xff, got, c.want)
+		}
+	}
+}

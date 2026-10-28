@@ -325,7 +325,26 @@ is_debian_like() {
     return 1
 }
 
+# --- shared: legacy-jwt-secret ---
+# Releases before the ENCRYPTION_KEY rename read the same secret as
+# JWT_SECRET, and also sign sessions with it, accepting an empty one. A
+# pinned (--version) install may run such a release, so it writes this line
+# too, with the same value.
+LEGACY_JWT_COMMENT="# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+render_legacy_jwt_secret() {
+    # render_legacy_jwt_secret VALUE -> the comment and JWT_SECRET=VALUE.
+    printf '%s\nJWT_SECRET=%s\n' "$LEGACY_JWT_COMMENT" "$1"
+}
+# --- end shared ---
+
 # --- Kept state (/etc/winterflow/control-plane.env) ---------------------------
+
+env_file_value() {
+    # env_file_value FILE KEY -> KEY's value in FILE (last one wins), empty
+    # when absent. Parsed, never sourced.
+    [ -f "$1" ] || return 0
+    sed -n "s/^$2=//p" "$1" | tail -n 1
+}
 
 state_value() {
     # state_value KEY -> the kept value (last one wins), empty when absent.
@@ -335,7 +354,7 @@ state_value() {
 }
 
 load_state() {
-    local v w
+    local v w src
     if [ -f "$STATE_FILE" ] && [ ! -r "$STATE_FILE" ]; then
         die "cannot read ${STATE_FILE} (run as root)"
     fi
@@ -350,16 +369,21 @@ load_state() {
         REDIS_PASSWORD="$v"
     fi
     # ENCRYPTION_KEY was kept as JWT_SECRET before; the old line is read once
-    # and the state file is rewritten under the new name (same value).
-    w=ENCRYPTION_KEY
-    v="$(state_value ENCRYPTION_KEY)"
-    if [ -z "$v" ]; then
-        w=JWT_SECRET; v="$(state_value JWT_SECRET)"
-    fi
+    # and the state file is rewritten under the new name (same value). A
+    # state file without either (lost or hand-edited) recovers the key from
+    # the API env file rather than generating one stored channels cannot use.
+    src="$STATE_FILE"; w=ENCRYPTION_KEY; v="$(state_value ENCRYPTION_KEY)"
+    [ -n "$v" ] || { w=JWT_SECRET; v="$(state_value JWT_SECRET)"; }
+    [ -n "$v" ] || { src="$API_ENV_FILE"; w=ENCRYPTION_KEY; v="$(env_file_value "$API_ENV_FILE" ENCRYPTION_KEY)"; }
+    [ -n "$v" ] || { w=JWT_SECRET; v="$(env_file_value "$API_ENV_FILE" JWT_SECRET)"; }
     if [ -n "$v" ]; then
-        valid_secret "$v" || die "${STATE_FILE}: ${w} is not a hex string; fix or remove the line"
+        valid_secret "$v" || die "${src}: ${w} is not a hex string; fix or remove the line"
         ENCRYPTION_KEY="$v"
-        [ "$w" = ENCRYPTION_KEY ] || log "The kept JWT_SECRET becomes ENCRYPTION_KEY (same value)"
+        if [ "$src" != "$STATE_FILE" ]; then
+            log "Recovered ENCRYPTION_KEY from ${w} in ${src} (same value)"
+        elif [ "$w" != ENCRYPTION_KEY ]; then
+            log "The kept JWT_SECRET becomes ENCRYPTION_KEY (same value)"
+        fi
     fi
     if [ "$WEB_URL_SET" -eq 0 ]; then
         v="$(state_value WEB_URL)"; [ -z "$v" ] || WEB_URL="$v"
@@ -552,6 +576,8 @@ EOF
 }
 
 render_api_env() {
+    local compat="" nl=$'\n'
+    [ -z "$RELEASE_VERSION" ] || compat="$(render_legacy_jwt_secret "$(shown "$ENCRYPTION_KEY")")"
     cat <<EOF
 # WinterFlow API (written by install-control-plane.sh from
 # ${STATE_FILE}; a rerun rewrites it). See .env.example in the repo.
@@ -562,7 +588,7 @@ API_LISTEN_ADDR=127.0.0.1
 API_PORT=${API_PORT}
 WEB_URL=${WEB_URL}
 CORS_ALLOW_ORIGINS=$(url_origin "$WEB_URL")
-ENCRYPTION_KEY=$(shown "$ENCRYPTION_KEY")
+ENCRYPTION_KEY=$(shown "$ENCRYPTION_KEY")${compat:+${nl}${compat}}
 DATABASE_URL=postgres://${DB_USER}:$(shown "$POSTGRES_PASSWORD")@127.0.0.1:${PG_PORT:-5432}/${DB_NAME}?sslmode=disable
 REDIS_ADDR=127.0.0.1:${REDIS_PORT}
 REDIS_PASSWORD=$(shown "$REDIS_PASSWORD")

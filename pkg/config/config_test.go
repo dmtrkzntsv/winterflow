@@ -775,27 +775,26 @@ func TestGetEncryptionKey(t *testing.T) {
 	c := NewServerConfig("standalone")
 	tests := []struct {
 		name, key, legacy string
-		want              string
-		wantLegacy        bool
+		want              EncryptionKey
 	}{
-		{"neither", "", "", "", false},
-		{"encryption key", "new", "", "new", false},
-		{"legacy fallback", "", "old", "old", true},
-		{"encryption key wins", "new", "old", "new", false},
+		{"neither", "", "", EncryptionKey{}},
+		{"encryption key", "new", "", EncryptionKey{Value: "new"}},
+		{"legacy fallback", "", "old", EncryptionKey{Value: "old", FromLegacy: true}},
+		{"both equal", "same", "same", EncryptionKey{Value: "same"}},
+		{"both differ: legacy ignored", "new", "old", EncryptionKey{Value: "new", LegacyIgnored: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			unsetenv(t, "ENCRYPTION_KEY")
+			unsetenv(t, EncryptionKeyEnv)
 			unsetenv(t, LegacyEncryptionKeyEnv)
 			if tt.key != "" {
-				t.Setenv("ENCRYPTION_KEY", tt.key)
+				t.Setenv(EncryptionKeyEnv, tt.key)
 			}
 			if tt.legacy != "" {
 				t.Setenv(LegacyEncryptionKeyEnv, tt.legacy)
 			}
-			got, legacy := c.GetEncryptionKey()
-			if got != tt.want || legacy != tt.wantLegacy {
-				t.Fatalf("GetEncryptionKey() = %q, %v; want %q, %v", got, legacy, tt.want, tt.wantLegacy)
+			if got := c.GetEncryptionKey(); got != tt.want {
+				t.Fatalf("GetEncryptionKey() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

@@ -237,6 +237,7 @@ func TestWireCoreUsesEncryptionKey(t *testing.T) {
 	noEncryptionKey(t)
 	t.Setenv("ENCRYPTION_KEY", "new-key")
 	legacyKeyWarning = sync.Once{}
+	t.Cleanup(func() { legacyKeyWarning = sync.Once{} })
 	log, out := warnLog()
 	deps := wireCoreForTest(t, log)
 	if deps.ChannelBox == nil {
@@ -263,6 +264,35 @@ func TestWireCoreLegacyKeyWarnsOnce(t *testing.T) {
 	const want = "JWT_SECRET is deprecated; rename it to ENCRYPTION_KEY"
 	if n := strings.Count(out.String(), want); n != 1 {
 		t.Fatalf("deprecation warning logged %d times, want 1: %s", n, out.String())
+	}
+}
+
+// ENCRYPTION_KEY beside a different JWT_SECRET: the legacy value is ignored
+// with one warning that names neither value; an equal one warns nothing.
+func TestWireCoreWarnsOnceWhenLegacyKeyIgnored(t *testing.T) {
+	noEncryptionKey(t)
+	t.Setenv("ENCRYPTION_KEY", "new-key-value")
+	t.Setenv(config.LegacyEncryptionKeyEnv, "old-key-value")
+	legacyKeyWarning = sync.Once{}
+	t.Cleanup(func() { legacyKeyWarning = sync.Once{} })
+	log, out := warnLog()
+	for range 2 {
+		wireCoreForTest(t, log)
+	}
+	const want = "JWT_SECRET is ignored: ENCRYPTION_KEY is set to a different value"
+	if n := strings.Count(out.String(), want); n != 1 {
+		t.Fatalf("ignored warning logged %d times, want 1: %s", n, out.String())
+	}
+	if strings.Contains(out.String(), "new-key-value") || strings.Contains(out.String(), "old-key-value") {
+		t.Fatalf("a key value was logged: %s", out.String())
+	}
+
+	t.Setenv(config.LegacyEncryptionKeyEnv, "new-key-value")
+	legacyKeyWarning = sync.Once{}
+	log, out = warnLog()
+	wireCoreForTest(t, log)
+	if strings.Contains(out.String(), "JWT_SECRET") {
+		t.Fatalf("equal keys warned: %s", out.String())
 	}
 }
 

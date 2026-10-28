@@ -48,9 +48,16 @@ channel fail with "cannot decrypt" until its URL is entered again.
   `JWT_SECRET=` line of `/etc/winterflow/winterflow.env` to `ENCRYPTION_KEY=`
   with the same value; `install-control-plane.sh` moves the kept secret to
   `ENCRYPTION_KEY` in its state file and the API env file.
+- Installing or rolling back to an older release with `--version` writes a
+  `JWT_SECRET` line too, with the same value and the comment "read only by
+  releases before the ENCRYPTION_KEY rename; safe to remove after
+  upgrading": those releases sign sessions with `JWT_SECRET` and would
+  accept an empty one. A later rerun without `--version` removes that line.
 - Manual installs: rename the line in your env file
   (`JWT_SECRET=...` -> `ENCRYPTION_KEY=...`), keeping the value.
 - Until you do, the old name still works: with `ENCRYPTION_KEY` unset, a set
   `JWT_SECRET` is used (the derived key is identical, so stored channels keep
   decrypting) and the API logs "JWT_SECRET is deprecated; rename it to
-  ENCRYPTION_KEY" at startup. The fallback will be removed in a later release.
+  ENCRYPTION_KEY" at startup. With both set to different values,
+  `ENCRYPTION_KEY` wins and the API warns that `JWT_SECRET` is ignored. The
+  fallback will be removed in a later release.

@@ -415,23 +415,67 @@ release_asset_name() {
 
 # --- Config migration --------------------------------------------------------
 
-migrate_encryption_key() {
-    # migrate_encryption_key FILE: ENCRYPTION_KEY was called JWT_SECRET. A
-    # kept env file with a JWT_SECRET line and no ENCRYPTION_KEY gets the line
-    # renamed, value unchanged, so stored alert channels keep decrypting.
-    local f="$1"
-    grep -q '^JWT_SECRET=' "$f" || return 0
-    if grep -q '^ENCRYPTION_KEY=' "$f"; then
+# --- shared: legacy-jwt-secret ---
+# Releases before the ENCRYPTION_KEY rename read the same secret as
+# JWT_SECRET, and also sign sessions with it, accepting an empty one. A
+# pinned (--version) install may run such a release, so it writes this line
+# too, with the same value.
+LEGACY_JWT_COMMENT="# read only by releases before the ENCRYPTION_KEY rename; safe to remove after upgrading"
+render_legacy_jwt_secret() {
+    # render_legacy_jwt_secret VALUE -> the comment and JWT_SECRET=VALUE.
+    printf '%s\nJWT_SECRET=%s\n' "$LEGACY_JWT_COMMENT" "$1"
+}
+# --- end shared ---
+
+reconcile_encryption_key() {
+    # reconcile_encryption_key FILE: a kept env file on a rerun. ENCRYPTION_KEY
+    # was called JWT_SECRET; an absent or empty ENCRYPTION_KEY takes the
+    # JWT_SECRET value (never a new one: stored alert channels must keep
+    # decrypting). A pinned (--version) install then writes the JWT_SECRET
+    # compat line with the same value; an unpinned one drops a JWT_SECRET
+    # equal to the key and leaves a different one alone (the API ignores it
+    # and says so).
+    local f="$1" enc jwt keep=0 compat="" tmp
+    enc="$(sed -n 's/^ENCRYPTION_KEY=//p' "$f" | tail -n 1)"
+    jwt="$(sed -n 's/^JWT_SECRET=//p' "$f" | tail -n 1)"
+    [ -n "$enc" ] || enc="$jwt"
+    if [ -z "$enc" ]; then
+        warn "${f} has no ENCRYPTION_KEY: alert channels cannot be saved until one is set"
         return 0
     fi
-    sed -i 's/^JWT_SECRET=/ENCRYPTION_KEY=/' "$f"
-    log "Renamed JWT_SECRET to ENCRYPTION_KEY in ${f} (same value)"
+    if [ -n "$RELEASE_VERSION" ]; then
+        compat="$(render_legacy_jwt_secret "$enc")"
+    elif [ -n "$jwt" ] && [ "$jwt" != "$enc" ]; then
+        keep=1
+    fi
+    tmp="$(mktemp "${f}.XXXXXX")" || die "cannot write next to ${f}"
+    WF_KEY="$enc" WF_COMPAT="$compat" WF_COMMENT="$LEGACY_JWT_COMMENT" awk -v keep="$keep" '
+        $0 == ENVIRON["WF_COMMENT"] { next }
+        keep && /^JWT_SECRET=/ { print; next }
+        /^(ENCRYPTION_KEY|JWT_SECRET)=/ {
+            if (!done) {
+                print "ENCRYPTION_KEY=" ENVIRON["WF_KEY"]
+                if (ENVIRON["WF_COMPAT"] != "") print ENVIRON["WF_COMPAT"]
+                done = 1
+            }
+            next
+        }
+        { print }
+    ' "$f" > "$tmp" || { rm -f "$tmp"; die "cannot rewrite ${f}"; }
+    if cmp -s "$tmp" "$f"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    cat "$tmp" > "$f"
+    rm -f "$tmp"
+    log "Updated ENCRYPTION_KEY in ${f} (value kept)"
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
 
 render_env_file() {
-    local encryption_key="$1"
+    local encryption_key="$1" compat="" nl=$'\n'
+    [ -z "$RELEASE_VERSION" ] || compat="$(render_legacy_jwt_secret "$encryption_key")"
     cat <<EOF
 # WinterFlow standalone configuration.
 # Loaded by systemd (EnvironmentFile); see .env.example in the repo for all options.
@@ -442,7 +486,7 @@ WEB_URL=http://localhost:${API_PORT}
 
 # Generated at install time: the key alert notification channel URLs are
 # encrypted with. Rotating it means re-entering every channel URL.
-ENCRYPTION_KEY=${encryption_key}
+ENCRYPTION_KEY=${encryption_key}${compat:+${nl}${compat}}
 
 DATABASE_URL=sqlite://${DATA_DIR}/winterflow.sqlite
 AGENT_DATA_DIR=${DATA_DIR}/data
@@ -806,7 +850,7 @@ main() {
 
     if [ -f "$ENV_FILE" ]; then
         log "Keeping existing config ${ENV_FILE}"
-        migrate_encryption_key "$ENV_FILE"
+        reconcile_encryption_key "$ENV_FILE"
     else
         log "Writing ${ENV_FILE}"
         encryption_key="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"

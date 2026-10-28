@@ -886,7 +886,7 @@ func (t *tools) getAppLogs(ctx context.Context, in logsInput) *sdk.CallToolResul
 	// with a container_name is not recognized this way).
 	kept := logs.Logs[:0]
 	for _, e := range logs.Logs {
-		if fromService(e.Container, in.AppID, in.Service) {
+		if fromService(e.Container, in.AppID, service) {
 			kept = append(kept, e)
 		}
 	}

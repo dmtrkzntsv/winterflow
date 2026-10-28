@@ -382,18 +382,21 @@ func TestGetAppLogsFiltersService(t *testing.T) {
 			{Message: "from another app", Container: "wf-app-2-db-1"},
 		}}}
 	})
-	var out struct {
-		Result struct {
-			Logs []command.LogEntry `json:"logs"`
-		} `json:"result"`
-	}
-	ok(t, e.session(t, alice), "get_app_logs", map[string]any{"server_id": alice.serverID, "app_id": "app-1", "service": "db"}, &out)
-	var got []string
-	for _, l := range out.Result.Logs {
-		got = append(got, l.Message)
-	}
-	if want := []string{"from db", "from db, second replica", "from db, whole name"}; !slices.Equal(got, want) {
-		t.Fatalf("get_app_logs = %q, want %q", got, want)
+	// The filter uses the trimmed service, the one the command carried.
+	for _, service := range []string{"db", " db "} {
+		var out struct {
+			Result struct {
+				Logs []command.LogEntry `json:"logs"`
+			} `json:"result"`
+		}
+		ok(t, e.session(t, alice), "get_app_logs", map[string]any{"server_id": alice.serverID, "app_id": "app-1", "service": service}, &out)
+		var got []string
+		for _, l := range out.Result.Logs {
+			got = append(got, l.Message)
+		}
+		if want := []string{"from db", "from db, second replica", "from db, whole name"}; !slices.Equal(got, want) {
+			t.Fatalf("get_app_logs(%q) = %q, want %q", service, got, want)
+		}
 	}
 }
 

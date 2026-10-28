@@ -2,7 +2,7 @@
 -- per-target overrides, the live state of each (rule, target) and the
 -- event history. A target is (server_id, app_id) with app_id '' for the
 -- server itself, as in metric_samples. Channel URLs carry secrets and are
--- stored AES-GCM encrypted (key derived from ENCRYPTION_KEY).
+-- stored AES-GCM encrypted (key derived from JWT_SECRET).
 
 ALTER TABLE organizations ADD COLUMN alert_defaults_seeded BOOLEAN NOT NULL DEFAULT FALSE;
 

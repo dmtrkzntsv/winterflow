@@ -37,7 +37,7 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/user/change-password", Handler: h.ChangePassword, Auth: api.User,
 			Middleware: []api.Middleware{g.AuthLimit},
 			Summary:    "Change the caller's local password", Tag: "user",
-			Request: ChangePasswordRequest{}, Errors: bad,
+			Request: ChangePasswordRequest{}, Errors: []int{http.StatusBadRequest, http.StatusTooManyRequests},
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/user/set-password", Handler: h.SetPassword, Auth: api.User,
@@ -45,7 +45,7 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 			Summary:    "Give an account without a password (made through a sign-in provider) its first one", Tag: "user",
 			Description: "No current password is asked. `email` must be an address one of the caller's linked sign-in " +
 				"providers vouched for, and no other account may use it (409); an account that has a password gets a 409.",
-			Request: SetPasswordRequest{}, Errors: []int{http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError},
+			Request: SetPasswordRequest{}, Errors: []int{http.StatusBadRequest, http.StatusConflict, http.StatusTooManyRequests, http.StatusInternalServerError},
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/user/logout-all", Handler: h.LogoutAll, Auth: api.User,

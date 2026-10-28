@@ -6062,6 +6062,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Forbidden
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
       security:
       - bearer: []
       - cookie: []
@@ -6498,6 +6504,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Conflict
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
         "500":
           content:
             application/json:

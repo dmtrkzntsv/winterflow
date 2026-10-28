@@ -42,7 +42,7 @@ func (plainBox) Open(sealed string) (string, error) {
 	if url, ok := strings.CutPrefix(sealed, "sealed:"); ok {
 		return url, nil
 	}
-	return "", errors.New("cannot decrypt the stored URL (was JWT_SECRET changed?); re-enter it")
+	return "", errors.New("cannot decrypt the stored URL (was ENCRYPTION_KEY changed?); re-enter it")
 }
 
 func channel(id string, def, enabled bool, url string) alert.Channel {
@@ -90,7 +90,7 @@ func TestDeliverRecordsDecryptFailure(t *testing.T) {
 	if len(sender.sent) != 0 {
 		t.Fatalf("sent with an undecryptable URL: %v", sender.sent)
 	}
-	if d := store.delivered["e1"]; len(d) != 1 || !strings.Contains(d[0].Error, "JWT_SECRET") {
+	if d := store.delivered["e1"]; len(d) != 1 || !strings.Contains(d[0].Error, "ENCRYPTION_KEY") {
 		t.Fatalf("deliveries = %+v", d)
 	}
 }

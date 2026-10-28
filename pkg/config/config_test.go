@@ -41,7 +41,6 @@ func TestSimpleEnvGetters(t *testing.T) {
 		{"GetLogLevel", "LOG_LEVEL", c.GetLogLevel},
 		{"GetApiPort", "API_PORT", c.GetApiPort},
 		{"GetWebURL", "WEB_URL", c.GetWebURL},
-		{"GetJwtSecret", "JWT_SECRET", c.GetJwtSecret},
 		{"GetHubHost", "HUB_HOST", c.GetHubHost},
 		{"GetHubPort", "HUB_PORT", c.GetHubPort},
 		{"GetHubCertDir", "HUB_CERT_DIR", c.GetHubCertDir},
@@ -769,5 +768,35 @@ func TestGetRedisUsername(t *testing.T) {
 	t.Setenv("REDIS_USERNAME", "hub:hub-01.winterflow.dev")
 	if got := NewServerConfig("distributed").GetRedisUsername(); got != "hub:hub-01.winterflow.dev" {
 		t.Fatalf("GetRedisUsername() = %q", got)
+	}
+}
+
+func TestGetEncryptionKey(t *testing.T) {
+	c := NewServerConfig("standalone")
+	tests := []struct {
+		name, key, legacy string
+		want              string
+		wantLegacy        bool
+	}{
+		{"neither", "", "", "", false},
+		{"encryption key", "new", "", "new", false},
+		{"legacy fallback", "", "old", "old", true},
+		{"encryption key wins", "new", "old", "new", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			unsetenv(t, "ENCRYPTION_KEY")
+			unsetenv(t, LegacyEncryptionKeyEnv)
+			if tt.key != "" {
+				t.Setenv("ENCRYPTION_KEY", tt.key)
+			}
+			if tt.legacy != "" {
+				t.Setenv(LegacyEncryptionKeyEnv, tt.legacy)
+			}
+			got, legacy := c.GetEncryptionKey()
+			if got != tt.want || legacy != tt.wantLegacy {
+				t.Fatalf("GetEncryptionKey() = %q, %v; want %q, %v", got, legacy, tt.want, tt.wantLegacy)
+			}
+		})
 	}
 }

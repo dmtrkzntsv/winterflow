@@ -18,8 +18,8 @@ const (
 	SendTimeout = 10 * time.Second
 	// maxErrorLen bounds a stored delivery error.
 	maxErrorLen = 500
-	// encryptionUnavailable is the delivery error without JWT_SECRET.
-	encryptionUnavailable = "channel encryption is unavailable: set JWT_SECRET"
+	// encryptionUnavailable is the delivery error without ENCRYPTION_KEY.
+	encryptionUnavailable = "channel encryption is unavailable: set ENCRYPTION_KEY"
 )
 
 // Sender delivers one notification to a channel URL (notify.Shoutrrr).
@@ -53,7 +53,7 @@ type Notifier struct {
 	now     func() time.Time
 }
 
-// NewNotifier builds a notifier. A nil box (no JWT_SECRET) records every
+// NewNotifier builds a notifier. A nil box (no ENCRYPTION_KEY) records every
 // delivery as failed instead of sending.
 func NewNotifier(store ChannelStore, sender Sender, box Opener, log *logger.Logger) *Notifier {
 	return &Notifier{

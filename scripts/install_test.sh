@@ -114,7 +114,8 @@ out="$(bash "$INSTALL_SH" --dry-run --port 9090 --cpu-quota 250 --memory-max 1G 
 
 assert_contains "env: api port applied" "$out" "API_PORT=9090"
 assert_contains "env: sqlite database" "$out" "DATABASE_URL=sqlite:///var/lib/winterflow/winterflow.sqlite"
-assert_contains "env: jwt secret placeholder (not generated in dry-run)" "$out" "JWT_SECRET=<generated-at-install-time>"
+assert_contains "env: encryption key placeholder (not generated in dry-run)" "$out" "ENCRYPTION_KEY=<generated-at-install-time>"
+assert_not_contains "env: no legacy JWT_SECRET" "$out" "JWT_SECRET"
 assert_contains "env: ingress documented as off by default" "$out" "#INGRESS_ENABLED=false"
 assert_contains "env: agent identity directory" "$out" "HUB_CERT_DIR=/var/lib/winterflow/data/hub-certs"
 assert_not_contains "env: no legacy CA subject" "$out" "HUB_CA_SUBJECT"
@@ -183,6 +184,39 @@ fi
 cores="$(nproc 2>/dev/null || echo 2)"
 want=$(( (cores - 1) * 100 )); [ "$want" -ge 100 ] || want=100
 assert_contains "default cpu quota from core count" "$out_default" "CPUQuota=${want}%"
+
+# --- Rerun: JWT_SECRET is renamed to ENCRYPTION_KEY --------------------------
+
+# A rerun keeps the env file but renames a legacy JWT_SECRET line, value
+# unchanged (a new key would make stored alert channels unreadable). The
+# function is exercised on its own: the real rerun path needs root.
+mig_tmp="$(mktemp -d)"
+eval "$(sed -n '/^migrate_encryption_key() {$/,/^}$/p' "$INSTALL_SH")"
+if declare -F migrate_encryption_key >/dev/null; then
+    log() { :; }
+    printf 'API_PORT=8080\nJWT_SECRET=abc123def456\nDATABASE_URL=sqlite://x\n' > "$mig_tmp/legacy.env"
+    migrate_encryption_key "$mig_tmp/legacy.env"
+    mig="$(cat "$mig_tmp/legacy.env")"
+    assert_contains "rerun migration: line renamed, value kept" "$mig" "ENCRYPTION_KEY=abc123def456"
+    assert_not_contains "rerun migration: no JWT_SECRET left" "$mig" "JWT_SECRET"
+    assert_contains "rerun migration: other lines untouched" "$mig" "DATABASE_URL=sqlite://x"
+    migrate_encryption_key "$mig_tmp/legacy.env"
+    [ "$(grep -c '^ENCRYPTION_KEY=' "$mig_tmp/legacy.env")" -eq 1 ] \
+        && pass "rerun migration: idempotent" || fail "rerun migration: idempotent" "$(cat "$mig_tmp/legacy.env")"
+    printf 'ENCRYPTION_KEY=new\nJWT_SECRET=old\n' > "$mig_tmp/both.env"
+    migrate_encryption_key "$mig_tmp/both.env"
+    [ "$(cat "$mig_tmp/both.env")" = "$(printf 'ENCRYPTION_KEY=new\nJWT_SECRET=old')" ] \
+        && pass "rerun migration: an existing ENCRYPTION_KEY is left alone" \
+        || fail "rerun migration: an existing ENCRYPTION_KEY is left alone" "$(cat "$mig_tmp/both.env")"
+    printf 'ENCRYPTION_KEY=kept\n' > "$mig_tmp/new.env"
+    migrate_encryption_key "$mig_tmp/new.env"
+    [ "$(cat "$mig_tmp/new.env")" = "ENCRYPTION_KEY=kept" ] \
+        && pass "rerun migration: a current file is unchanged" || fail "rerun migration: a current file is unchanged" "$(cat "$mig_tmp/new.env")"
+else
+    fail "rerun migration: migrate_encryption_key found" "not defined in $INSTALL_SH"
+fi
+rm -rf "$mig_tmp"
+assert_contains "rerun migrates a kept env file" "$(cat "$INSTALL_SH")" 'migrate_encryption_key "$ENV_FILE"'
 
 # Dry run must not require root and must not write anything.
 if [ "$(id -u)" -ne 0 ]; then

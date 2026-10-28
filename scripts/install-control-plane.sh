@@ -26,7 +26,7 @@
 # global Postgres/Redis configuration. Terminate TLS for the web UI in your
 # own proxy; the installer prints the address to proxy to.
 #
-# Generated passwords and the JWT secret are kept in
+# Generated passwords and the encryption key are kept in
 # /etc/winterflow/control-plane.env (root only, back it up) and reused on
 # every rerun, as are the CA and the data. A rerun updates the binaries and
 # units and restarts the services.
@@ -133,7 +133,7 @@ REDIS_BIND_SET=0
 REDIS_HOSTS_SET=0
 POSTGRES_PASSWORD=""
 REDIS_PASSWORD=""
-JWT_SECRET=""
+ENCRYPTION_KEY=""
 POSTGRES_PASSWORD_KEPT=0
 # The local hub's own Redis user, from winterflow-api hub-trust
 # --redis-env-out (reset on every run; never the admin password).
@@ -349,10 +349,17 @@ load_state() {
         valid_secret "$v" || die "${STATE_FILE}: REDIS_PASSWORD is not a hex string; fix or remove the line"
         REDIS_PASSWORD="$v"
     fi
-    v="$(state_value JWT_SECRET)"
+    # ENCRYPTION_KEY was kept as JWT_SECRET before; the old line is read once
+    # and the state file is rewritten under the new name (same value).
+    w=ENCRYPTION_KEY
+    v="$(state_value ENCRYPTION_KEY)"
+    if [ -z "$v" ]; then
+        w=JWT_SECRET; v="$(state_value JWT_SECRET)"
+    fi
     if [ -n "$v" ]; then
-        valid_secret "$v" || die "${STATE_FILE}: JWT_SECRET is not a hex string; fix or remove the line"
-        JWT_SECRET="$v"
+        valid_secret "$v" || die "${STATE_FILE}: ${w} is not a hex string; fix or remove the line"
+        ENCRYPTION_KEY="$v"
+        [ "$w" = ENCRYPTION_KEY ] || log "The kept JWT_SECRET becomes ENCRYPTION_KEY (same value)"
     fi
     if [ "$WEB_URL_SET" -eq 0 ]; then
         v="$(state_value WEB_URL)"; [ -z "$v" ] || WEB_URL="$v"
@@ -529,11 +536,11 @@ shown() {
 render_state() {
     cat <<EOF
 # WinterFlow control plane, kept by install-control-plane.sh and reused on
-# every rerun. Root only: holds the database and Redis passwords and the JWT
-# secret. Back it up with the database and ${PKI_DIR}.
+# every rerun. Root only: holds the database and Redis passwords and the
+# encryption key. Back it up with the database and ${PKI_DIR}.
 POSTGRES_PASSWORD=$(shown "$POSTGRES_PASSWORD")
 REDIS_PASSWORD=$(shown "$REDIS_PASSWORD")
-JWT_SECRET=$(shown "$JWT_SECRET")
+ENCRYPTION_KEY=$(shown "$ENCRYPTION_KEY")
 WEB_URL=${WEB_URL}
 API_PORT=${API_PORT}
 HUB_PUBLIC_ADDR=${HUB_PUBLIC_ADDR}
@@ -555,7 +562,7 @@ API_LISTEN_ADDR=127.0.0.1
 API_PORT=${API_PORT}
 WEB_URL=${WEB_URL}
 CORS_ALLOW_ORIGINS=$(url_origin "$WEB_URL")
-JWT_SECRET=$(shown "$JWT_SECRET")
+ENCRYPTION_KEY=$(shown "$ENCRYPTION_KEY")
 DATABASE_URL=postgres://${DB_USER}:$(shown "$POSTGRES_PASSWORD")@127.0.0.1:${PG_PORT:-5432}/${DB_NAME}?sslmode=disable
 REDIS_ADDR=127.0.0.1:${REDIS_PORT}
 REDIS_PASSWORD=$(shown "$REDIS_PASSWORD")
@@ -1354,7 +1361,7 @@ main() {
     # never loses a password a database role already has.
     [ -n "$POSTGRES_PASSWORD" ] || POSTGRES_PASSWORD="$(random_hex)"
     [ -n "$REDIS_PASSWORD" ] || REDIS_PASSWORD="$(random_hex)"
-    [ -n "$JWT_SECRET" ] || JWT_SECRET="$(random_hex)"
+    [ -n "$ENCRYPTION_KEY" ] || ENCRYPTION_KEY="$(random_hex)"
     note_hub_change
     [ -d "$CONFIG_DIR" ] || install -d -m 755 -o root -g root "$CONFIG_DIR"
     put_file "$STATE_FILE" 600 root root < <(render_state)

@@ -84,7 +84,7 @@ type Deps struct {
 	// history; AlertNotifier sends (the Test button uses it directly).
 	AlertRepository port.AlertRepository
 	AlertNotifier   *alerting.Notifier
-	// ChannelBox encrypts channel URLs; nil when JWT_SECRET is unset
+	// ChannelBox encrypts channel URLs; nil when ENCRYPTION_KEY is unset
 	// (saving or testing a channel then answers 400).
 	ChannelBox *secretbox.Box
 	// HubPicker assigns an enrolling server its hub from the live hub list;

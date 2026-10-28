@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"winterflow/internal/domain/service/alerting"
@@ -22,11 +23,14 @@ const (
 	alertLoadTimeout = 30 * time.Second
 )
 
+// legacyKeyWarning logs the JWT_SECRET deprecation once per process.
+var legacyKeyWarning sync.Once
+
 // alerts is the alerting wiring WireCore hands to the events sink and Deps.
 type alerts struct {
 	evaluator *alerting.Evaluator
 	notifier  *alerting.Notifier
-	// box encrypts channel URLs; nil without JWT_SECRET.
+	// box encrypts channel URLs; nil without ENCRYPTION_KEY.
 	box *secretbox.Box
 }
 
@@ -35,9 +39,15 @@ type alerts struct {
 // from the stored states and the last hour of samples, and starts the
 // maintenance loop. history is nil when metrics are off.
 func wireAlerts(ctx context.Context, repo *alertrepo.Repo, history alerting.History, fan *statusFanout, cfg *config.ServerConfig, log *logger.Logger) alerts {
-	box, err := secretbox.New(cfg.GetJwtSecret())
+	key, legacy := cfg.GetEncryptionKey()
+	if legacy {
+		legacyKeyWarning.Do(func() {
+			log.Warn(config.LegacyEncryptionKeyEnv + " is deprecated; rename it to ENCRYPTION_KEY")
+		})
+	}
+	box, err := secretbox.New(key)
 	if err != nil {
-		log.Warn("notification channels unavailable: cannot build the channel URL cipher from JWT_SECRET", "error", err)
+		log.Warn("notification channels unavailable: cannot build the channel URL cipher from ENCRYPTION_KEY", "error", err)
 		box = nil
 	}
 	// A nil *Box must not become a non-nil Opener.

@@ -25,7 +25,7 @@ func TestMain(m *testing.M) {
 	// depend on the developer's machine.
 	time.Local = time.UTC
 	for k, v := range map[string]string{
-		"JWT_SECRET":      "contract-secret",
+		"ENCRYPTION_KEY":  "contract-secret",
 		"WEB_URL":         "http://127.0.0.1",
 		"AGENT_DATA_DIR":  tmp,
 		"INGRESS_ENABLED": "false",

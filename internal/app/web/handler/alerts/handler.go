@@ -42,7 +42,7 @@ type Tester interface {
 }
 
 // Deps are the handler's collaborators (all from bootstrap.Deps). Box is
-// nil without JWT_SECRET: saving and testing channels then answer 400.
+// nil without ENCRYPTION_KEY: saving and testing channels then answer 400.
 type Deps struct {
 	Logger  *logger.Logger
 	Users   OrgResolver
@@ -73,8 +73,8 @@ func NewHandler(d *Deps) *Handler {
 	}
 }
 
-// errNoBox is the answer to channel writes without JWT_SECRET.
-const errNoBox = "channel encryption is unavailable: set JWT_SECRET"
+// errNoBox is the answer to channel writes without ENCRYPTION_KEY.
+const errNoBox = "channel encryption is unavailable: set ENCRYPTION_KEY"
 
 // callerOrg resolves the authenticated user and their organization,
 // writing the error response itself on failure.

@@ -100,22 +100,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Mirror every binary (standalone, agent, api, hub) to the shared R2
-      # bucket under winterflow/<tag>/ and winterflow/latest/ (see the
-      # release-binaries and cdn-upload Makefile targets). The R2_* secrets are
-      # added by the repository owner; without them the mirror is skipped.
-      - name: Mirror binaries to R2
+      # Publish every binary (standalone, agent, api, hub) with its systemd
+      # unit template and env example to R2 with ship, as winterflow/<tag>/
+      # and the latest channel (see the release-binaries and cdn-upload
+      # Makefile targets); hosts install them with `ship install`. The R2_*
+      # secrets (a Read & Write token on the lab bucket) are added by the
+      # repository owner; without them the publish is skipped.
+      - uses: dmtrkzntsv/ship@v0
+        if: steps.released.outputs.skip != 'true'
+
+      - name: Publish to R2 with ship
         if: steps.released.outputs.skip != 'true'
         env:
-          WINTERFLOW_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          WINTERFLOW_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          WINTERFLOW_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SHIP_R2_BUCKET: lab
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          if [ -z "$WINTERFLOW_R2_ENDPOINT" ]; then
-            echo "::warning::R2_ENDPOINT secret is empty; skipping the R2 mirror"
+          if [ -z "$SHIP_R2_ENDPOINT" ]; then
+            echo "::warning::R2_ENDPOINT secret is empty; skipping the R2 publish"
             exit 0
           fi
           make release-binaries VERSION="${TAG#v}"
-          make cdn-upload CHANNEL="$TAG"
-          make cdn-upload CHANNEL=latest
+          make cdn-upload VERSION="${TAG#v}" CHANNELS=latest

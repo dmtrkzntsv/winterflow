@@ -120,6 +120,17 @@ prebuilt binaries.
   both rely on this exact naming — it is defined in
   [.goreleaser.yaml](.goreleaser.yaml) and must stay in sync with
   `scripts/install.sh` and the self-updater.
+- **R2 / ship**: the same workflow publishes all four binaries (standalone,
+  `agent`, `api`, `hub`) with their systemd unit templates
+  ([deploy/systemd](deploy/systemd)) to Cloudflare R2 with
+  [ship](https://github.com/dmtrkzntsv/ship) (`make release-binaries` then
+  `make cdn-upload`), as version `vYYMMDD.N` and channel `latest`. A host with
+  ship installs them as hardened services:
+  `sudo ship install winterflow --version latest` (standalone), or
+  `ship install winterflow/api|hub|agent --version latest [--service S]`;
+  the api, hub and agent may share one service. Then edit
+  `/etc/<service>/<name>.env` (seeded from the env example) and
+  `ship start <ref>`.
 - **Dry run locally**: `goreleaser release --snapshot --clean` builds
   everything without tagging or publishing (requires Go, node + pnpm).
 - **Re-run**: the workflow can also be started manually from the Actions tab

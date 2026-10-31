@@ -101,9 +101,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Publish every binary (standalone, agent, api, hub) with its systemd
-      # unit template and env example to R2 with ship, as winterflow/<tag>/
-      # and the latest channel (see the release-binaries and cdn-upload
-      # Makefile targets); hosts install them with `ship install`. The R2_*
+      # unit template and env example to R2 with ship, as version <tag> and
+      # the latest channel (the ship-dist and ship-publish Makefile targets);
+      # hosts install them with `ship install`. ship-dist runs after
+      # goreleaser, whose --clean wipes dist/ (dist/ship included). The R2_*
       # secrets (a Read & Write token on the lab bucket) are added by the
       # repository owner; without them the publish is skipped.
       - uses: dmtrkzntsv/ship@v0
@@ -115,12 +116,11 @@ jobs:
           SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          SHIP_R2_BUCKET: lab
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
           if [ -z "$SHIP_R2_ENDPOINT" ]; then
             echo "::warning::R2_ENDPOINT secret is empty; skipping the R2 publish"
             exit 0
           fi
-          make release-binaries VERSION="${TAG#v}"
-          make cdn-upload VERSION="${TAG#v}" CHANNELS=latest
+          make ship-dist VERSION="$TAG"
+          make ship-publish VERSION="$TAG" CHANNELS=latest

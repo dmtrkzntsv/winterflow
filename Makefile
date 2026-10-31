@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build release-binaries cdn-upload third-party-licenses test web-test cover diffcov openapi test-pg test-redis sqlc sqlc-check
+.PHONY: build lint standalone api web web-build ship-dist ship-publish third-party-licenses test web-test cover diffcov openapi test-pg test-redis sqlc sqlc-check
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI) and
@@ -23,21 +23,30 @@ web-build:
 	pnpm --dir web run build
 	@touch web/dist/.gitkeep
 
-# Release folder for ship (https://github.com/dmtrkzntsv/ship), what
-# `make cdn-upload` publishes to R2 and `ship install` puts on hosts:
-# release-out/winterflow-linux-{amd64,arm64,arm} (standalone) and
-# winterflow-{agent,api,hub}-linux-{amd64,arm64,arm}, plus each asset's unit
-# template and env example from deploy/systemd. ship writes SHA256SUMS and
-# release.json itself. The standalone binary embeds the standalone SPA
-# (web/.env.production), the api binary the distributed one, so the web is
-# built twice in that order; hub and agent embed nothing. Same flags as
-# .goreleaser.yaml: static, -trimpath, GOARM=6, version through ldflags
-# (VERSION without the leading v, like goreleaser's {{ .Version }}).
-VERSION ?= $(shell git describe --tags --always 2>/dev/null | sed 's/^v//')
-RELEASE_LDFLAGS = -s -w -X winterflow/pkg/version.version=$(VERSION)
+# Publish folder for ship (https://github.com/dmtrkzntsv/ship), what
+# `make ship-publish` uploads to R2 and `ship install` puts on hosts:
+# dist/ship/winterflow-linux-{amd64,arm64,arm} (standalone, ref winterflow)
+# and winterflow-{agent,api,hub}-linux-{amd64,arm64,arm} (refs
+# winterflow/agent|api|hub), plus each asset's unit template and env example
+# from deploy/ship. ship writes SHA256SUMS and release.json itself. The
+# standalone binary embeds the standalone SPA (web/.env.production), the api
+# binary the distributed one, so the web is built twice in that order; hub
+# and agent embed nothing. Same flags as .goreleaser.yaml: static, -trimpath,
+# GOARM=6, version through ldflags (without the leading v, like goreleaser's
+# {{ .Version }}).
+#
+# dist/ itself is goreleaser's output folder and `goreleaser release --clean`
+# wipes it, dist/ship included: build ship-dist after goreleaser (the release
+# workflow does), never before. ship-dist only ever removes dist/ship.
+#
+# VERSION is the release tag (vYYMMDD.N); empty or dev builds stamp the
+# binaries with `git describe`.
+VERSION ?=
+BUILD_VERSION = $(patsubst v%,%,$(if $(filter-out dev,$(VERSION)),$(VERSION),$(shell git describe --tags --always 2>/dev/null)))
+RELEASE_LDFLAGS = -s -w -X winterflow/pkg/version.version=$(BUILD_VERSION)
 RELEASE_ARCHES = amd64 arm64 arm
-RELEASE_OUT = release-out
-SYSTEMD_DIR = deploy/systemd
+SHIP_DIST = dist/ship
+SHIP_FILES = deploy/ship
 # The ship asset of a cmd/ directory: the standalone is the project itself
 # (ref winterflow), the rest are components (refs winterflow/agent, ...).
 release_asset = $(if $(filter standalone,$(1)),winterflow,winterflow-$(1))
@@ -46,10 +55,10 @@ define NL
 
 
 endef
-release_build = CGO_ENABLED=0 GOOS=linux GOARCH=$(2) $(if $(filter arm,$(2)),GOARM=6) $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_OUT)/$(call release_asset,$(1))-linux-$(2) ./cmd/$(1)$(NL)
+release_build = CGO_ENABLED=0 GOOS=linux GOARCH=$(2) $(if $(filter arm,$(2)),GOARM=6) $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(SHIP_DIST)/$(call release_asset,$(1))-linux-$(2) ./cmd/$(1)$(NL)
 
-release-binaries:
-	rm -rf $(RELEASE_OUT) && mkdir -p $(RELEASE_OUT)
+ship-dist:
+	rm -rf $(SHIP_DIST) && mkdir -p $(SHIP_DIST)
 	pnpm --dir web install --frozen-lockfile
 	pnpm --dir web run build
 	@touch web/dist/.gitkeep
@@ -57,18 +66,21 @@ release-binaries:
 	VITE_APP_MODE=distributed pnpm --dir web run build
 	@touch web/dist/.gitkeep
 	$(foreach a,$(RELEASE_ARCHES),$(call release_build,api,$(a)))
-	cp $(SYSTEMD_DIR)/*.service $(SYSTEMD_DIR)/*.env.example $(RELEASE_OUT)/
+	cp $(SHIP_FILES)/*.service $(SHIP_FILES)/*.env.example $(SHIP_DIST)/
 
-# Publish $(RELEASE_OUT) with ship to R2 as version v$(VERSION) (immutable,
-# s3://<bucket>/winterflow/v<VERSION>/) and the moving $(CHANNELS) (latest,
-# dev). Needs the ship CLI and its R2 settings: SHIP_R2_ENDPOINT,
-# SHIP_R2_ACCESS_KEY_ID, SHIP_R2_SECRET_ACCESS_KEY (Read & Write token) and
-# SHIP_R2_BUCKET, or ~/.config/ship/config.toml.
-CHANNELS ?= latest
+# Publish $(SHIP_DIST) with ship (it does not build: run ship-dist first, as
+# CI does). VERSION=vYYMMDD.N makes an immutable version
+# (s3://<bucket>/winterflow/vYYMMDD.N/; dev or empty publishes none);
+# CHANNELS moves channels (latest, dev). At least one of them is required.
+# Needs the ship CLI and its R2 settings: SHIP_R2_ENDPOINT,
+# SHIP_R2_ACCESS_KEY_ID, SHIP_R2_SECRET_ACCESS_KEY (Read & Write token), or
+# ~/.config/ship/config.toml; the bucket defaults to lab.
+SHIP_VERSION_ARG = $(if $(filter-out dev,$(VERSION)),--version $(VERSION))
+SHIP_CHANNELS_ARG = $(if $(CHANNELS),--channels $(CHANNELS))
 
-cdn-upload:
-	@test -n "$(VERSION)" || { echo "cdn-upload: set VERSION (YYMMDD.N, without the v)"; exit 1; }
-	ship publish winterflow --path $(RELEASE_OUT) --version v$(VERSION) --channels $(CHANNELS)
+ship-publish:
+	@test -n "$(strip $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG))" || { echo "ship-publish: set VERSION (vYYMMDD.N) and/or CHANNELS (latest, dev)" >&2; exit 1; }
+	ship publish winterflow --path $(SHIP_DIST) $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG)
 
 # Attribution notices for every Go module and bundled npm package; goreleaser
 # regenerates and attaches this to each release (see .goreleaser.yaml).

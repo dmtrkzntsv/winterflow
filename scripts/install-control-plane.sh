@@ -55,7 +55,7 @@
 #   --redis-host NAME  Extra name for the Redis certificate, e.g. this host's
 #                      Tailscale name (repeatable; replaces the kept list).
 #   --version TAG      Release to download instead of latest, e.g. v260823.1.
-#   --r2-bucket NAME   R2 bucket holding the release mirror (default: econumo).
+#   --r2-bucket NAME   R2 bucket holding the release mirror (default: lab).
 #   --yes              Non-interactive: assume "yes" (install missing
 #                      packages) and take the defaults above.
 #   --dry-run          Print every file and command that would be used and
@@ -139,7 +139,7 @@ POSTGRES_PASSWORD_KEPT=0
 # --redis-env-out (reset on every run; never the admin password).
 HUB_REDIS_USERNAME=""
 HUB_REDIS_PASSWORD=""
-R2_BUCKET="econumo"
+R2_BUCKET="lab"
 RELEASE_VERSION=""
 CHANNEL="latest"
 ASSUME_YES=0

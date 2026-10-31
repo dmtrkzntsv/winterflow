@@ -74,7 +74,7 @@
 #   --api-url URL        Control plane API to join (default:
 #                        https://api.winterflow.dev). Used on the first install.
 #   --version TAG        Release to download instead of latest, e.g. v260823.1.
-#   --r2-bucket NAME     R2 bucket holding the release mirror (default: econumo).
+#   --r2-bucket NAME     R2 bucket holding the release mirror (default: lab).
 #   --yes                Non-interactive: assume "yes" to questions.
 #   --dry-run            Print every file and command that would be used and
 #                        exit without changing anything. Does not require root.
@@ -116,7 +116,7 @@ REDIS_ADDR=""
 # in hub.env.
 REDIS_USERNAME=""
 REDIS_PASSWORD=""
-R2_BUCKET="econumo"
+R2_BUCKET="lab"
 RELEASE_VERSION=""
 CHANNEL="latest"
 ASSUME_YES=0

@@ -157,8 +157,8 @@ assert_contains "enrolls_and_writes_env: api url option" "$(dry "${join_args[@]}
 assert_not_contains "enrolls_and_writes_env: token never printed" "$out" "$TOKEN"
 assert_not_contains "enrolls_and_writes_env: r2 secret never printed" "$out" "$SECRET"
 assert_contains "downloads: sigv4" "$out" '--aws-sigv4 "aws:amz:auto:s3"'
-assert_contains "downloads: latest hub" "$out" "https://acct.r2.cloudflarestorage.com/econumo/winterflow/latest/winterflow-hub-linux-"
-assert_contains "downloads: checksums" "$out" "/econumo/winterflow/latest/SHA256SUMS"
+assert_contains "downloads: latest hub" "$out" "https://acct.r2.cloudflarestorage.com/lab/winterflow/latest/winterflow-hub-linux-"
+assert_contains "downloads: checksums" "$out" "/lab/winterflow/latest/SHA256SUMS"
 assert_contains "--version picks the channel" "$(dry "${join_args[@]}" --version 260101.1 --r2-bucket other-bucket)" "/other-bucket/winterflow/v260101.1/winterflow-hub-linux-"
 assert_not_contains "secret not on the curl command line" "$src" 'SECRET_ACCESS_KEY" "'
 assert_contains "token travels on stdin" "$src" "printf '%s\\n' \"\$JOIN_TOKEN\" | "

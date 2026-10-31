@@ -1,0 +1,53 @@
+# WinterFlow API (distributed control plane + web UI), installed by ship:
+# `ship install winterflow/api [--service S]`. A unit TEMPLATE: ship fills in
+# its placeholders at install time. It works as the only unit of a service or
+# next to the hub and agent in one (ship then names it S-api): its env example
+# keeps its files in their own subdirectory of {{DATA_DIR}}. PostgreSQL and
+# Redis are external: the After= below only orders against them when they run
+# on this host (the names scripts/install-control-plane.sh and the
+# distribution use).
+[Unit]
+Description=WinterFlow API (control plane + web UI)
+Documentation=https://github.com/dmtrkzntsv/winterflow
+After=network-online.target postgresql.service redis-server.service redis-server@winterflow.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+EnvironmentFile={{ENV_FILE}}
+# Relative paths in the env file (HUB_CERT_DIR, REDIS_CA_CERT_PATH) resolve
+# against {{DATA_DIR}}, here and under `ship run winterflow/api -- ...`.
+WorkingDirectory={{DATA_DIR}}
+ExecStart={{BIN}}
+Restart=on-failure
+RestartSec=5
+CapabilityBoundingSet=
+
+# Logging: one journald namespace per service (`ship logs` reads it), plus a
+# rate limit.
+LogNamespace={{SERVICE}}
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=10000
+
+# Resource limits.
+CPUWeight=90
+TasksMax=512
+LimitNOFILE=65536
+
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{DATA_DIR}}
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

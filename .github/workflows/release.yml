@@ -105,7 +105,7 @@ jobs:
       # the latest channel (the ship-dist and ship-publish Makefile targets);
       # hosts install them with `ship install`. ship-dist runs after
       # goreleaser, whose --clean wipes dist/ (dist/ship included). The R2_*
-      # secrets (a Read & Write token on the lab bucket) are added by the
+      # secrets (a Read & Write token on the ship bucket) are added by the
       # repository owner; without them the publish is skipped.
       - uses: dmtrkzntsv/ship@v0
         if: steps.released.outputs.skip != 'true'

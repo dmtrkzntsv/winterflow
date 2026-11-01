@@ -52,7 +52,7 @@ default 8080), `--hub-addr host:port` (its host goes into the hub certificate
 and is the hub's id), `--capacity` (default 1000), `--redis-bind` and
 `--redis-host` (extra address and certificate name for hubs on other machines,
 e.g. a Tailscale IP and name; repeatable), `--version`, `--r2-bucket`
-(default `lab`), `--yes`, `--dry-run` (prints every file and command, no
+(default `ship`), `--yes`, `--dry-run` (prints every file and command, no
 root needed), `--uninstall`.
 
 ## What it creates
@@ -288,7 +288,7 @@ curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url https://app.
 ## Owner to-dos
 
 - Add the GitHub Actions secrets `R2_ENDPOINT`, `R2_ACCESS_KEY_ID` and
-  `R2_SECRET_ACCESS_KEY` (an Object Read & Write token on the `lab` bucket) so
+  `R2_SECRET_ACCESS_KEY` (an Object Read & Write token on the `ship` bucket) so
   the release workflow can publish binaries to R2 with ship (without them the
   publish is skipped with a warning). The installers read with their own
   `WINTERFLOW_R2_*` credentials; a read-only token is enough.

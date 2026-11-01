@@ -101,9 +101,9 @@ out="$(dry --web-url https://flow.example.com --port 8090 --hub-addr hub-01.exam
     --redis-bind 100.64.0.7 --redis-host cp.tail1234.ts.net)" || fail "dry-run exits 0" "exit $?: $out"
 
 assert_contains "downloads_from_r2_with_sigv4: sigv4" "$out" '--aws-sigv4 "aws:amz:auto:s3"'
-assert_contains "downloads_from_r2_with_sigv4: latest api" "$out" "https://acct.r2.cloudflarestorage.com/lab/winterflow/latest/winterflow-api-linux-"
-assert_contains "downloads_from_r2_with_sigv4: latest hub" "$out" "/lab/winterflow/latest/winterflow-hub-linux-"
-assert_contains "downloads_from_r2_with_sigv4: checksums" "$out" "/lab/winterflow/latest/SHA256SUMS"
+assert_contains "downloads_from_r2_with_sigv4: latest api" "$out" "https://acct.r2.cloudflarestorage.com/ship/winterflow/latest/winterflow-api-linux-"
+assert_contains "downloads_from_r2_with_sigv4: latest hub" "$out" "/ship/winterflow/latest/winterflow-hub-linux-"
+assert_contains "downloads_from_r2_with_sigv4: checksums" "$out" "/ship/winterflow/latest/SHA256SUMS"
 assert_not_contains "downloads_from_r2_with_sigv4: secret never printed" "$out" "$SECRET"
 assert_not_contains "secret not on the curl command line" "$src" 'SECRET_ACCESS_KEY" "'
 out_ver="$(dry --version 260101.1 --r2-bucket other-bucket)"

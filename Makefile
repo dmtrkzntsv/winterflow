@@ -74,7 +74,7 @@ ship-dist:
 # CHANNELS moves channels (latest, dev). At least one of them is required.
 # Needs the ship CLI and its R2 settings: SHIP_R2_ENDPOINT,
 # SHIP_R2_ACCESS_KEY_ID, SHIP_R2_SECRET_ACCESS_KEY (Read & Write token), or
-# ~/.config/ship/config.toml; the bucket defaults to lab.
+# ~/.config/ship/config.toml; the bucket defaults to ship.
 SHIP_VERSION_ARG = $(if $(filter-out dev,$(VERSION)),--version $(VERSION))
 SHIP_CHANNELS_ARG = $(if $(CHANNELS),--channels $(CHANNELS))
 

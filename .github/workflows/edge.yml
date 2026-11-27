@@ -21,13 +21,6 @@ on:
 permissions:
   contents: read
 
-# A newer push supersedes a build in flight: only main's head is worth
-# publishing. The ref is in the group so that a manual run from another
-# branch, which publishes nothing, cannot cancel main's.
-concurrency:
-  group: edge-${{ github.ref }}
-  cancel-in-progress: true
-
 # Two jobs: build runs the repository's build code and its dependencies and
 # holds no secret; publish holds the R2 credentials and runs only make and
 # ship over the folder build staged.
@@ -36,6 +29,12 @@ jobs:
     name: Build
     # A manual run from another branch must not put that branch on edge.
     if: github.ref == 'refs/heads/main'
+    # A newer push supersedes a build in flight: only main's head is worth
+    # publishing. The ref is in the group so that a manual run from another
+    # branch, which publishes nothing, cannot cancel main's.
+    concurrency:
+      group: edge-build-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.describe.outputs.sha }}
@@ -100,6 +99,12 @@ jobs:
   publish:
     name: Publish edge to R2
     needs: build
+    # Never cancelled: a publish killed halfway would leave the channel with
+    # files from two builds. A newer run's publish waits for this one; a stale
+    # one skips itself below.
+    concurrency:
+      group: edge-publish
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       # For the Makefile only; nothing here is built or run from the tree.

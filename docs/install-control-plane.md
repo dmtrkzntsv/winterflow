@@ -52,7 +52,9 @@ default 8080), `--hub-addr host:port` (its host goes into the hub certificate
 and is the hub's id), `--capacity` (default 1000), `--redis-bind` and
 `--redis-host` (extra address and certificate name for hubs on other machines,
 e.g. a Tailscale IP and name; repeatable), `--version`, `--r2-bucket`
-(default `ship`), `--yes`, `--dry-run` (prints every file and command, no
+(default `ship`; releases published before the move to ship are only in
+the old `econumo` bucket: pin one of those with `--r2-bucket econumo` and a
+token for that bucket), `--yes`, `--dry-run` (prints every file and command, no
 root needed), `--uninstall`.
 
 ## What it creates

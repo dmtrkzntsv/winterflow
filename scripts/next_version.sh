@@ -7,7 +7,7 @@
 # calver ones) is ignored. Reads the tags of the git repository it runs in.
 set -euo pipefail
 
-semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
+semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 requested="${1:-}"
 last="$(git tag -l 'v*' | grep -E "$semver" | sort -V | tail -n 1 || true)"
 

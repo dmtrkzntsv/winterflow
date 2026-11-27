@@ -107,6 +107,7 @@ nv v0.1.10 >/dev/null && fail "next_version refuses the latest" || ok "next_vers
 nv v0.1.2 >/dev/null && fail "next_version refuses an older one" || ok "next_version refuses an older one"
 nv 1.2 >/dev/null && fail "next_version refuses a non-semver" || ok "next_version refuses a non-semver"
 nv v1.2.3-rc1 >/dev/null && fail "next_version refuses a suffix" || ok "next_version refuses a suffix"
+nv v0.1.08 >/dev/null && fail "next_version refuses leading zeros" || ok "next_version refuses leading zeros"
 contains "release uses next_version" "$rel" 'bash scripts/next_version.sh "$REQUESTED"'
 
 # Every asset ships a unit template and an env example.

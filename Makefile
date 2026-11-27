@@ -39,7 +39,7 @@ web-build:
 # wipes it, dist/ship included: build ship-dist after goreleaser (the release
 # workflow does), never before. ship-dist only ever removes dist/ship.
 #
-# VERSION is the release tag (vYYMMDD.N); empty or dev builds stamp the
+# VERSION is the release tag (vX.Y.Z); empty or dev builds stamp the
 # binaries with `git describe`.
 VERSION ?=
 BUILD_VERSION = $(patsubst v%,%,$(if $(filter-out dev,$(VERSION)),$(VERSION),$(shell git describe --tags --always 2>/dev/null)))
@@ -69,8 +69,8 @@ ship-dist:
 	cp $(SHIP_FILES)/*.service $(SHIP_FILES)/*.env.example $(SHIP_DIST)/
 
 # Publish $(SHIP_DIST) with ship (it does not build: run ship-dist first, as
-# CI does). VERSION=vYYMMDD.N makes an immutable version
-# (s3://<bucket>/winterflow/vYYMMDD.N/; dev or empty publishes none);
+# CI does). VERSION=vX.Y.Z makes an immutable version
+# (s3://<bucket>/winterflow/vX.Y.Z/; dev or empty publishes none);
 # CHANNELS moves channels (latest, dev, edge). At least one of them is
 # required. The release workflow publishes VERSION=<tag> CHANNELS=latest;
 # edge.yml publishes CHANNELS=edge (main's head, no version) on every push to
@@ -82,7 +82,7 @@ SHIP_VERSION_ARG = $(if $(filter-out dev,$(VERSION)),--version $(VERSION))
 SHIP_CHANNELS_ARG = $(if $(CHANNELS),--channels $(CHANNELS))
 
 ship-publish:
-	@test -n "$(strip $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG))" || { echo "ship-publish: set VERSION (vYYMMDD.N) and/or CHANNELS (latest, dev, edge)" >&2; exit 1; }
+	@test -n "$(strip $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG))" || { echo "ship-publish: set VERSION (vX.Y.Z) and/or CHANNELS (latest, dev, edge)" >&2; exit 1; }
 	ship publish winterflow --path $(SHIP_DIST) $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG)
 
 # Attribution notices for every Go module and bundled npm package; goreleaser

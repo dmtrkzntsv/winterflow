@@ -91,6 +91,24 @@ contains "edge publishes the channel only" "$edge" "make ship-publish CHANNELS=e
 contains "edge builds with git describe" "$edge" 'make ship-dist VERSION="$EDGE_VERSION"'
 [ "$(grep -c 'make ship-publish' .github/workflows/edge.yml)" -eq 1 ] && ok "edge has one publish" || fail "edge has one publish"
 
+# next_version: semver tags only; empty bumps the patch, v0.1.0 first; a
+# requested version must be vX.Y.Z and above the latest release.
+NV="$ROOT/scripts/next_version.sh"
+repo="$TMP/tags"; git init -q "$repo"
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+nv() { (cd "$repo" && bash "$NV" "$@") 2>&1; }
+git -C "$repo" tag v261126.1   # a calver tag is ignored
+[ "$(nv)" = "v0.1.0" ] && ok "next_version first release" || fail "next_version first release" "$(nv)"
+[ "$(nv 0.3.0)" = "v0.3.0" ] && ok "next_version requested without v" || fail "next_version requested without v" "$(nv 0.3.0)"
+git -C "$repo" tag v0.1.0; git -C "$repo" tag v0.1.9; git -C "$repo" tag v0.1.10
+[ "$(nv)" = "v0.1.11" ] && ok "next_version bumps the patch (version order)" || fail "next_version bumps the patch" "$(nv)"
+[ "$(nv v0.2.0)" = "v0.2.0" ] && ok "next_version requested minor" || fail "next_version requested minor" "$(nv v0.2.0)"
+nv v0.1.10 >/dev/null && fail "next_version refuses the latest" || ok "next_version refuses the latest"
+nv v0.1.2 >/dev/null && fail "next_version refuses an older one" || ok "next_version refuses an older one"
+nv 1.2 >/dev/null && fail "next_version refuses a non-semver" || ok "next_version refuses a non-semver"
+nv v1.2.3-rc1 >/dev/null && fail "next_version refuses a suffix" || ok "next_version refuses a suffix"
+contains "release uses next_version" "$rel" 'bash scripts/next_version.sh "$REQUESTED"'
+
 # Every asset ships a unit template and an env example.
 for a in winterflow winterflow-agent winterflow-api winterflow-hub; do
     [ -f "deploy/ship/$a.service" ] && ok "unit template $a" || fail "unit template $a" "missing deploy/ship/$a.service"

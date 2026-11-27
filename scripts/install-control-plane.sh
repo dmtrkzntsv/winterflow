@@ -54,7 +54,7 @@
 #                      replaces the kept list).
 #   --redis-host NAME  Extra name for the Redis certificate, e.g. this host's
 #                      Tailscale name (repeatable; replaces the kept list).
-#   --version TAG      Release to download instead of latest, e.g. v260823.1.
+#   --version TAG      Release to download instead of latest, e.g. v0.1.0.
 #   --r2-bucket NAME   R2 bucket holding the release mirror (default: ship).
 #   --yes              Non-interactive: assume "yes" (install missing
 #                      packages) and take the defaults above.

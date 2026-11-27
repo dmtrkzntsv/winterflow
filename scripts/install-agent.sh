@@ -46,7 +46,7 @@
 #   --binary PATH    Prebuilt agent binary to install. Default: build
 #                    ./cmd/agent when run from a repo checkout, otherwise
 #                    download the latest GitHub release for this OS/arch.
-#   --version TAG    Release to download instead of the latest, e.g. v260823.1
+#   --version TAG    Release to download instead of the latest, e.g. v0.1.0
 #                    (a bare 260823.1 works too). Ignored with --binary or a
 #                    repo build.
 #   --user NAME      Run the service as NAME instead of asking. Created as a

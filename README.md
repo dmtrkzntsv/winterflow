@@ -76,7 +76,7 @@ Configuration lives in `/etc/winterflow/winterflow.env`;
 
 Rerun the install one-liner: it downloads the latest release and restarts the
 service, keeping your config and data. Pin a specific release with
-`--version v260823.1` (versions are `vYYMMDD.{build}`).
+`--version v0.1.0` (versions are semver, `vMAJOR.MINOR.PATCH`).
 
 Upgrading from a release that used JWT sign-in? See [docs/upgrading-auth.md](docs/upgrading-auth.md).
 To connect Claude or Codex over MCP, see [docs/mcp-setup.md](docs/mcp-setup.md).
@@ -108,13 +108,12 @@ guide and [CLAUDE.md](CLAUDE.md) for the architecture overview.
 
 Releases are cut by hand from `main` once CI is green on it:
 `gh workflow run release.yml --ref main` (or the Actions tab). The
-[release workflow](.github/workflows/release.yml) tags the commit with the
-next calver version and uploads the prebuilt binaries.
+[release workflow](.github/workflows/release.yml) tags the commit and uploads
+the prebuilt binaries.
 
-- **Versioning** is `vYYMMDD.{build}`: the UTC date plus a build number
-  counting up from 1 within the day (`v260823.1`, `v260823.2`, …). The next
-  number is derived from existing tags, and runs are serialized, so two
-  releases cannot collide.
+- **Versioning** is semver, `vMAJOR.MINOR.PATCH`. Pass the version to the
+  workflow (`-f version=v0.2.0`; it must be above the latest release), or
+  leave it empty to bump the latest release's patch (`v0.1.0` → `v0.1.1`).
 - **Assets** per release: `winterflow-linux-{amd64|arm64|arm}` (standalone) and
   `agent-linux-{amd64|arm64|arm}` raw binaries plus `checksums.txt`. The installer and the agent self-updater
   both rely on this exact naming — it is defined in

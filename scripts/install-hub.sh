@@ -73,7 +73,7 @@
 #                        kept, else the public address's port).
 #   --api-url URL        Control plane API to join (default:
 #                        https://api.winterflow.dev). Used on the first install.
-#   --version TAG        Release to download instead of latest, e.g. v260823.1.
+#   --version TAG        Release to download instead of latest, e.g. v0.1.0.
 #   --r2-bucket NAME     R2 bucket holding the release mirror (default: ship).
 #   --yes                Non-interactive: assume "yes" to questions.
 #   --dry-run            Print every file and command that would be used and

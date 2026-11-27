@@ -68,7 +68,7 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 	if r.cfg.IsStandalone() {
 		component = "winterflow"
 	}
-	// Release tags are v-prefixed calver (v260823.1); accept a bare version too.
+	// Release tags are v-prefixed semver (v0.1.0); accept a bare version too.
 	tag := in.Version
 	if !strings.HasPrefix(tag, "v") {
 		tag = "v" + tag

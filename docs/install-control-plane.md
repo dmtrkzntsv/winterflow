@@ -113,7 +113,7 @@ Rerunning keeps the CA, passwords, JWT secret and data, updates the binaries
 and units, and restarts the services. A changed `--hub-addr` reissues the hub
 certificate (the CA is kept) and, once the new one is trusted, retires the
 old hub id's certificates (`winterflow-api hub-retire`); a retire that fails
-only warns and is retried on the next run. Pass `--version vYYMMDD.N` to pin a release.
+only warns and is retried on the next run. Pass `--version vX.Y.Z` to pin a release.
 
 ### Upgrading to this version
 

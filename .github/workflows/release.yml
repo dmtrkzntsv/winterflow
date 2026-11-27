@@ -1,21 +1,27 @@
 # Cuts a release of main's tip when dispatched by hand:
-# `gh workflow run release.yml --ref main`. Pushing to main publishes no
+# `gh workflow run release.yml --ref main [-f version=v1.2.0]`. Pushing to main publishes no
 # release, only the R2 `edge` channel (edge.yml); check that CI is green on
 # the commit before releasing it. It publishes a GitHub release with prebuilt
 # binaries and the ship version + `latest` channel on R2.
-# Versions are calver: vYYMMDD.{build} (UTC date, build number counting up
-# from 1 within the day) — computed and tagged here automatically.
+# Versions are semver tags vMAJOR.MINOR.PATCH. The `version` input picks
+# one (it must be above the latest release); left empty, the patch of the
+# latest vX.Y.Z tag is bumped (v0.1.0 when there is none yet).
 # Asset naming and platforms live in .goreleaser.yaml.
 name: release
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (vX.Y.Z); empty bumps the latest release's patch"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
-# One release at a time: parallel runs would compute the same next build
-# number and race on the tag push.
+# One release at a time: parallel runs would compute the same next version
+# and race on the tag push.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -36,7 +42,8 @@ jobs:
           fetch-depth: 0
 
       # Skip a commit that is already released: dispatching twice must not
-      # tag the same build again under a newer version number.
+      # tag the same build again under a newer version number. Only semver
+      # tags count (vX.Y.Z; the glob needs two dots).
       # The tag is pushed before the R2 publish below, so a release whose
       # publish failed is skipped on a re-dispatch too. Recover it from a
       # checkout of the tag with ship's R&W credentials:
@@ -46,7 +53,7 @@ jobs:
       - name: Check whether this commit is already released
         id: released
         run: |
-          if [ -n "$(git tag --contains HEAD -l 'v*')" ]; then
+          if [ -n "$(git tag --contains HEAD -l 'v*.*.*')" ]; then
             echo "HEAD is already covered by a release tag; skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -68,15 +75,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Tag calver release
+      - name: Tag release
         id: tag
         if: steps.released.outputs.skip != 'true'
+        env:
+          REQUESTED: ${{ inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          today="$(date -u +%y%m%d)"
-          last="$(git tag -l "v${today}.*" | sed "s/^v${today}\.//" | sort -n | tail -1)"
-          tag="v${today}.$(( ${last:-0} + 1 ))"
+          tag="$(bash scripts/next_version.sh "$REQUESTED")"
           echo "Releasing ${tag}"
           git tag "$tag"
           git push origin "$tag"

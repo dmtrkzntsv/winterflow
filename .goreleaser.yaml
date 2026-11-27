@@ -8,7 +8,8 @@
 #   - the self-updater (internal/infra/orchestrator/docker_compose/
 #     updater.go) downloads winterflow-{os}-{arch} (standalone) or
 #     agent-{os}-{arch} (agent) for the tag it is told to update to
-# The R2 mirror (make release-binaries / cdn-upload) uses its own names.
+# The R2 mirror (make ship-dist / ship-publish) uses its own names and
+# folder, dist/ship: --clean wipes all of dist/, so build that after this.
 #
 # CGO is off so cross-compilation works everywhere; SQLite is the pure-Go
 # modernc.org/sqlite driver.

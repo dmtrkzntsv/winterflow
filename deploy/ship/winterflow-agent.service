@@ -1,0 +1,67 @@
+# WinterFlow agent (hub client + orchestrator), installed by ship:
+# `ship install winterflow/agent [--service S]`. A unit TEMPLATE: ship fills
+# in its placeholders at install time. It works as the only unit of a
+# service or next to the api and hub in one (ship then names it S-agent):
+# its env example keeps its files in their own subdirectory of {{DATA_DIR}}.
+# Same unit as scripts/install-agent.sh writes, minus its per-host CPUQuota=
+# and MemoryMax=.
+[Unit]
+Description=WinterFlow agent (hub client + orchestrator)
+Documentation=https://github.com/dmtrkzntsv/winterflow
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User={{USER}}
+Group={{USER}}
+# Deploying apps drives `docker compose` through the Docker socket. Note:
+# docker group membership is effectively root on this host.
+SupplementaryGroups=docker
+EnvironmentFile={{ENV_FILE}}
+# Relative paths in the env file (AGENT_DATA_DIR, HUB_CERT_DIR) resolve
+# against {{DATA_DIR}}, here and under `ship run winterflow/agent -- ...`.
+WorkingDirectory={{DATA_DIR}}
+ExecStart={{BIN}}
+Restart=on-failure
+RestartSec=5
+# The agent exits 78 when the hub keeps refusing its certificate (the server
+# was removed): restarting would only hammer the hub.
+RestartPreventExitStatus=78
+
+# Logging: one journald namespace per service (`ship logs` reads it), plus a
+# rate limit so a runaway log loop cannot flood the journal.
+LogNamespace={{SERVICE}}
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=10000
+
+# Resource limits. App containers run under dockerd and are NOT limited here.
+CPUWeight=90
+TasksMax=512
+LimitNOFILE=65536
+
+# Allow binding the ingress ports 80/443 without root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Hardening. The Docker socket stays writable: app deployment shells out to
+# 'docker compose'. /mnt and /media stay writable for local backup storages;
+# any other folder needs a drop-in, see docs/recipes/backup-storage.md.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths={{DATA_DIR}}
+ReadWritePaths=-/run/docker.sock
+ReadWritePaths=-/var/run/docker.sock
+ReadWritePaths=-/mnt
+ReadWritePaths=-/media
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

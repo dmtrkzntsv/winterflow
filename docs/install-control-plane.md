@@ -52,7 +52,9 @@ default 8080), `--hub-addr host:port` (its host goes into the hub certificate
 and is the hub's id), `--capacity` (default 1000), `--redis-bind` and
 `--redis-host` (extra address and certificate name for hubs on other machines,
 e.g. a Tailscale IP and name; repeatable), `--version`, `--r2-bucket`
-(default `econumo`), `--yes`, `--dry-run` (prints every file and command, no
+(default `ship`; releases published before the move to ship are only in
+the old `econumo` bucket: pin one of those with `--r2-bucket econumo` and a
+token for that bucket), `--yes`, `--dry-run` (prints every file and command, no
 root needed), `--uninstall`.
 
 ## What it creates
@@ -111,7 +113,7 @@ Rerunning keeps the CA, passwords, JWT secret and data, updates the binaries
 and units, and restarts the services. A changed `--hub-addr` reissues the hub
 certificate (the CA is kept) and, once the new one is trusted, retires the
 old hub id's certificates (`winterflow-api hub-retire`); a retire that fails
-only warns and is retried on the next run. Pass `--version vYYMMDD.N` to pin a release.
+only warns and is retried on the next run. Pass `--version vX.Y.Z` to pin a release.
 
 ### Upgrading to this version
 
@@ -288,8 +290,10 @@ curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url https://app.
 ## Owner to-dos
 
 - Add the GitHub Actions secrets `R2_ENDPOINT`, `R2_ACCESS_KEY_ID` and
-  `R2_SECRET_ACCESS_KEY` so the release workflow can mirror binaries to R2
-  (without them the upload is skipped with a warning).
+  `R2_SECRET_ACCESS_KEY` (an Object Read & Write token on the `ship` bucket) so
+  the release workflow can publish binaries to R2 with ship (without them the
+  publish is skipped with a warning). The installers read with their own
+  `WINTERFLOW_R2_*` credentials; a read-only token is enough.
 - Set up the redirect `https://get.winterflow.dev/agent` to the raw
   `scripts/install-agent.sh` on GitHub
   (`https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install-agent.sh`).

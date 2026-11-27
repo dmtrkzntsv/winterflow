@@ -42,7 +42,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// RELEASES_URL lists Winterflow's releases (calver tags, v261014.1).
+// RELEASES_URL lists Winterflow's releases (semver tags, v0.1.0).
 const RELEASES_URL = "https://github.com/dmtrkzntsv/winterflow/releases";
 
 // AgentUpdate shows the agent's running version with the releases, and
@@ -93,7 +93,7 @@ function AgentUpdate({ docker, running }: { docker: Docker; running: string }) {
             <Label htmlFor="agent-version">Version</Label>
             <Input
               id="agent-version"
-              placeholder="e.g. v261014.1"
+              placeholder="e.g. v0.1.0"
               autoComplete="off"
               spellCheck={false}
               value={version}

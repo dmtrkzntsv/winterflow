@@ -1,0 +1,157 @@
+name: edge
+
+# Every push to main moves the `edge` channel of the ship bucket on R2 to
+# main's head, so `ship install winterflow[/api|/hub|/agent] --version edge`
+# runs what is merged before a release is cut. It publishes dist/ship/ only
+# (the four binaries with their unit templates and env examples, as the
+# release workflow publishes): no tag, no GitHub release and no immutable ship
+# version, so edge builds never count against the versions ship keeps.
+#
+# The test suites do not run here: a squash merge lands the tree its pull
+# request already tested (ci.yml).
+#
+# No paths filter: the publish job skips a build once main has moved past it,
+# trusting the newer push's run to publish, so every push to main must start
+# one.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two jobs: build runs the repository's build code and its dependencies and
+# holds no secret; publish holds the R2 credentials and runs only make and
+# ship over the folder build staged.
+jobs:
+  build:
+    name: Build
+    # A manual run from another branch must not put that branch on edge.
+    if: github.ref == 'refs/heads/main'
+    # A newer push supersedes a build in flight: only main's head is worth
+    # publishing. The ref is in the group so that a manual run from another
+    # branch, which publishes nothing, cannot cancel main's.
+    concurrency:
+      group: edge-build-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.describe.outputs.sha }}
+    steps:
+      # main's head rather than the commit that started the run, so a re-run
+      # of an old run never moves edge backward. Full history with tags: the
+      # binaries report `git describe` without the leading v, the last release
+      # plus the commits since (261126.1-3-g20c3b2f), which tells one edge
+      # build from another and from the release.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      # The pnpm version comes from "packageManager" in web/package.json;
+      # pinned the same way as ci.yml and release.yml.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Describe
+        id: describe
+        run: |
+          echo "version=$(git describe --tags --always)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build dist/ship
+        env:
+          EDGE_VERSION: ${{ steps.describe.outputs.version }}
+        run: make ship-dist VERSION="$EDGE_VERSION"
+
+      # A binary that is not static (the agent runs itself inside an alpine
+      # backup helper), or does not report the version it was stamped with,
+      # never reaches the channel.
+      - name: Runtime check
+        env:
+          EDGE_VERSION: ${{ steps.describe.outputs.version }}
+        run: |
+          file dist/ship/winterflow-*linux-* | tee -a "$GITHUB_STEP_SUMMARY"
+          for f in dist/ship/winterflow-*linux-*; do
+            file "$f" | grep -q 'statically linked' || { echo "::error::$f is not statically linked"; exit 1; }
+          done
+          dist/ship/winterflow-linux-amd64 version | tee -a "$GITHUB_STEP_SUMMARY" | grep -qxF "${EDGE_VERSION#v}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ship
+          path: dist/ship/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish edge to R2
+    needs: build
+    # Never cancelled: a publish killed halfway would leave the channel with
+    # files from two builds. A newer run's publish waits for this one; a stale
+    # one skips itself below.
+    concurrency:
+      group: edge-publish
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      # For the Makefile only; nothing here is built or run from the tree.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      # A re-run of this job alone would publish the folder an earlier
+      # attempt built. Once main has moved past it, a newer run owns edge.
+      - name: Check main's head
+        id: head
+        env:
+          BUILT: ${{ needs.build.outputs.sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" = "$BUILT" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main has moved past $BUILT, which this run built; leaving edge to the newer run."
+          fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.head.outputs.current == 'true'
+        with:
+          name: ship
+          path: dist/ship
+
+      # Artifacts do not keep file modes.
+      - name: Restore executable bit
+        if: steps.head.outputs.current == 'true'
+        run: chmod +x dist/ship/winterflow-*linux-*
+
+      # Puts ship on the PATH; it takes no credentials.
+      - uses: dmtrkzntsv/ship@v0
+        if: steps.head.outputs.current == 'true'
+
+      # No VERSION here, on the command line or in the environment: make
+      # ship-publish passes --version for any VERSION but `dev`, and that
+      # would publish an immutable version. This moves the channel only.
+      - name: Publish to R2 with ship
+        if: steps.head.outputs.current == 'true'
+        env:
+          SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          if [ -z "$SHIP_R2_ENDPOINT" ]; then
+            echo "::warning::R2_ENDPOINT secret is empty; skipping the edge publish"
+            exit 0
+          fi
+          make ship-publish CHANNELS=edge

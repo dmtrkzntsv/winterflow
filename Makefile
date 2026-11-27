@@ -71,7 +71,10 @@ ship-dist:
 # Publish $(SHIP_DIST) with ship (it does not build: run ship-dist first, as
 # CI does). VERSION=vYYMMDD.N makes an immutable version
 # (s3://<bucket>/winterflow/vYYMMDD.N/; dev or empty publishes none);
-# CHANNELS moves channels (latest, dev). At least one of them is required.
+# CHANNELS moves channels (latest, dev, edge). At least one of them is
+# required. The release workflow publishes VERSION=<tag> CHANNELS=latest;
+# edge.yml publishes CHANNELS=edge (main's head, no version) on every push to
+# main.
 # Needs the ship CLI and its R2 settings: SHIP_R2_ENDPOINT,
 # SHIP_R2_ACCESS_KEY_ID, SHIP_R2_SECRET_ACCESS_KEY (Read & Write token), or
 # ~/.config/ship/config.toml; the bucket defaults to ship.
@@ -79,7 +82,7 @@ SHIP_VERSION_ARG = $(if $(filter-out dev,$(VERSION)),--version $(VERSION))
 SHIP_CHANNELS_ARG = $(if $(CHANNELS),--channels $(CHANNELS))
 
 ship-publish:
-	@test -n "$(strip $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG))" || { echo "ship-publish: set VERSION (vYYMMDD.N) and/or CHANNELS (latest, dev)" >&2; exit 1; }
+	@test -n "$(strip $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG))" || { echo "ship-publish: set VERSION (vYYMMDD.N) and/or CHANNELS (latest, dev, edge)" >&2; exit 1; }
 	ship publish winterflow --path $(SHIP_DIST) $(SHIP_VERSION_ARG) $(SHIP_CHANNELS_ARG)
 
 # Attribution notices for every Go module and bundled npm package; goreleaser

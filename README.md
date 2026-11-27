@@ -76,7 +76,7 @@ Configuration lives in `/etc/winterflow/winterflow.env`;
 
 Rerun the install one-liner: it downloads the latest release and restarts the
 service, keeping your config and data. Pin a specific release with
-`--version v260823.1` (versions are `vYYMMDD.{build}`; every push to main cuts one).
+`--version v260823.1` (versions are `vYYMMDD.{build}`).
 
 Upgrading from a release that used JWT sign-in? See [docs/upgrading-auth.md](docs/upgrading-auth.md).
 To connect Claude or Codex over MCP, see [docs/mcp-setup.md](docs/mcp-setup.md).
@@ -106,15 +106,15 @@ guide and [CLAUDE.md](CLAUDE.md) for the architecture overview.
 
 ## Releases
 
-Every push to `main` publishes a release automatically — there is nothing to
-do by hand. The [release workflow](.github/workflows/release.yml) runs the
-test suite, tags the commit with the next calver version, and uploads the
-prebuilt binaries.
+Releases are cut by hand from `main` once CI is green on it:
+`gh workflow run release.yml --ref main` (or the Actions tab). The
+[release workflow](.github/workflows/release.yml) tags the commit with the
+next calver version and uploads the prebuilt binaries.
 
 - **Versioning** is `vYYMMDD.{build}`: the UTC date plus a build number
   counting up from 1 within the day (`v260823.1`, `v260823.2`, …). The next
-  number is derived from existing tags, and runs are serialized, so parallel
-  pushes cannot collide.
+  number is derived from existing tags, and runs are serialized, so two
+  releases cannot collide.
 - **Assets** per release: `winterflow-linux-{amd64|arm64|arm}` (standalone) and
   `agent-linux-{amd64|arm64|arm}` raw binaries plus `checksums.txt`. The installer and the agent self-updater
   both rely on this exact naming — it is defined in
@@ -122,8 +122,8 @@ prebuilt binaries.
   `scripts/install.sh` and the self-updater.
 - **Dry run locally**: `goreleaser release --snapshot --clean` builds
   everything without tagging or publishing (requires Go, node + pnpm).
-- **Re-run**: the workflow can also be started manually from the Actions tab
-  (`workflow_dispatch`); it cuts a fresh release of whatever `main` points at.
+- **Re-run**: dispatching it again releases whatever `main` points at; a
+  commit that is already released is skipped.
 
 ## Topologies
 

@@ -41,6 +41,10 @@ contains "ship_publish channels only" "$log" "ship publish winterflow --path dis
 lacks "ship_publish channels only: no version" "$log" "--version"
 out="$(publish VERSION=dev CHANNELS=dev)" || fail "ship_publish VERSION=dev run" "$out"
 lacks "ship_publish VERSION=dev: no version" "$(cat "$SHIP_LOG")" "--version"
+out="$(publish CHANNELS=edge)" || fail "ship_publish edge run" "$out"
+log="$(cat "$SHIP_LOG")"
+contains "ship_publish edge" "$log" "ship publish winterflow --path dist/ship --channels edge"
+lacks "ship_publish edge: no version" "$log" "--version"
 out="$(publish VERSION=v261020.1)" || fail "ship_publish version-only run" "$out"
 log="$(cat "$SHIP_LOG")"
 contains "ship_publish version only" "$log" "ship publish winterflow --path dist/ship --version v261020.1"
@@ -72,6 +76,20 @@ contains "ship_dist_names distributed web" "$plan" "VITE_APP_MODE=distributed pn
 pos() { printf '%s\n' "$plan" | grep -n -m1 -- "$1" | cut -d: -f1; }
 [ "$(pos 'winterflow-linux-arm ')" -lt "$(pos 'VITE_APP_MODE=distributed')" ] && [ "$(pos 'VITE_APP_MODE=distributed')" -lt "$(pos 'winterflow-api-linux-amd64 ')" ] \
     && ok "ship_dist_names web build order" || fail "ship_dist_names web build order"
+
+# Workflow contract: releases are cut by hand (release.yml has no push or
+# workflow_run trigger) and publish the tag + latest; every push to main
+# publishes the edge channel only, never an immutable version.
+rel="$(cat .github/workflows/release.yml)"
+edge="$(cat .github/workflows/edge.yml)"
+lacks "release is manual: no workflow_run" "$rel" "workflow_run"
+lacks "release is manual: no push" "$rel" "push:"
+contains "release publishes tag + latest" "$rel" 'make ship-publish VERSION="$TAG" CHANNELS=latest'
+contains "release rebuilds edge" "$rel" "gh workflow run edge.yml"
+contains "edge runs on push to main" "$edge" "branches: [main]"
+contains "edge publishes the channel only" "$edge" "make ship-publish CHANNELS=edge"
+contains "edge builds with git describe" "$edge" 'make ship-dist VERSION="$EDGE_VERSION"'
+[ "$(grep -c 'make ship-publish' .github/workflows/edge.yml)" -eq 1 ] && ok "edge has one publish" || fail "edge has one publish"
 
 # Every asset ships a unit template and an env example.
 for a in winterflow winterflow-agent winterflow-api winterflow-hub; do

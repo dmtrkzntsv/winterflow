@@ -37,6 +37,12 @@ jobs:
 
       # Skip a commit that is already released: dispatching twice must not
       # tag the same build again under a newer version number.
+      # The tag is pushed before the R2 publish below, so a release whose
+      # publish failed is skipped on a re-dispatch too. Recover it from a
+      # checkout of the tag with ship's R&W credentials:
+      #   make ship-dist VERSION=<tag> && make ship-publish VERSION=<tag> CHANNELS=latest
+      # (ship replaces a version folder a failed publish left without
+      # SHA256SUMS).
       - name: Check whether this commit is already released
         id: released
         run: |
